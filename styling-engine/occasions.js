@@ -13,6 +13,7 @@ export const OCCASION_PROFILES = [
     label: "Outdoor Daytime Social / Festivals",
     keywords: ["festival", "crafts", "wine festival", "market", "fair", "picnic", "outdoor cafe"],
     vibe: "relaxed, creative, textured, airy, intentional",
+    explore_vibe: "relaxed, creative, intentional",
     register_ceiling: "elevated",
     register_target: "elevated",
     rules: {
@@ -34,6 +35,7 @@ export const OCCASION_PROFILES = [
     label: "City Smart Casual / Everyday",
     keywords: ["city", "museum", "shopping", "dinner", "brunch", "office", "everyday", "smart casual", "smart-casual", "work"],
     vibe: "polished, comfortable, walk-friendly, clean columns",
+    explore_vibe: "polished, comfortable, walk-friendly",
     register_ceiling: "elevated",
     rules: {
       discouraged_footwear: ["athletic running shoe", "athletic running shoes"],
@@ -57,6 +59,7 @@ export const OCCASION_PROFILES = [
     label: "Evening Social / Dining",
     keywords: ["evening", "dinner date", "wine bar", "theater", "evening drinks", "night out"],
     vibe: "sharp, artistic, low-key drama, deep color palettes, rich textures",
+    explore_vibe: "sharp, artistic, low-key drama",
     register_ceiling: "dressy",
     rules: {
       preferred_materials: ["silk", "satin", "textured knits", "fine wool"],
@@ -90,6 +93,7 @@ export const OCCASION_PROFILES = [
     label: "Home / Loungewear",
     keywords: ["home", "lounge", "sleep", "lazy day", "bed"],
     vibe: "comfort-first, soft, unstructured",
+    explore_vibe: "comfort-first, soft",
     register_ceiling: "everyday",
     rules: {
       discouraged_footwear: ["heeled shoe", "heeled shoes"],
@@ -169,9 +173,20 @@ runOccasionStartupAssertions();
 // vibe) survives, because those are what the engine actually enforces. Scoring keeps reading the
 // unmodified profiles: this is a prompt-serialization filter, not a policy change.
 const SOFT_RANKING_RULE_KEYS = /^(preferred|discouraged)_/
-export function stripSoftRankingRules(profiles = []) {
-  return (profiles || []).map(profile => ({
+// EXPLORE VIBES (docs/selected-piece-explore-mode-spec.md §2.2.1, owner-approved 2026-10-24). In Explore a
+// vibe keeps what the occasion asks for (register, comfort, movement, the mood of the event) and drops
+// the words that prescribe how the outfit looks, which are what Explore asks the stylist to go beyond.
+// A profile without `explore_vibe` uses its `vibe` in both modes. Explore is opt-in per request.
+export function occasionVibe(profile, { explore = false } = {}) {
+  return (explore && profile?.explore_vibe) || profile?.vibe || ''
+}
+
+// The prompt projection of the profiles. `explore_vibe` never reaches a prompt as its own field: in
+// Explore it replaces `vibe`, otherwise it is dropped, so every default prompt is unchanged.
+export function stripSoftRankingRules(profiles = [], { explore = false } = {}) {
+  return (profiles || []).map(({ explore_vibe, ...profile }) => ({
     ...profile,
+    ...(profile.vibe !== undefined ? { vibe: occasionVibe({ ...profile, explore_vibe }, { explore }) } : {}),
     rules: Object.fromEntries(
       Object.entries(profile?.rules || {}).filter(([key]) => !SOFT_RANKING_RULE_KEYS.test(key))
     ),

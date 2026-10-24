@@ -138,3 +138,4 @@ scratch/*
 !scratch/selected_piece_roster_live.mjs
 !scratch/selected_piece_roster_live_sheets.mjs
 !scratch/selected_piece_roster_prompt_replay.mjs
+!scratch/flare_vibe_mood_replay.mjs

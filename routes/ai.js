@@ -52,7 +52,8 @@ import {
 } from '../styling-engine/promptRuntime.js'
 import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT, GEMINI_TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
 
-import { OCCASION_PROFILES, stripSoftRankingRules } from '../styling-engine/occasions.js'
+import { OCCASION_PROFILES, occasionVibe, stripSoftRankingRules } from '../styling-engine/occasions.js'
+import { EXPLORE_INSTRUCTION, OUTFIT_VARIETY_RULE } from '../styling-engine/prompts.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   garmentKind,
@@ -1642,6 +1643,8 @@ export async function chooseSelectedPieceRoster({
   weatherProfile = null,
   occasionProfile = null,
   activityProfile = null,
+  explore = false,
+  outfitCount = null,
   providerOverride = stylistProviderOverride,
 } = {}) {
   const debug = { source: 'code_ranked_fallback', fallbackReason: null, catalogCount: 0, catalogCounts: {}, pickedCount: 0, pickedCounts: {}, unknownIds: [], trimmedIds: [], addedForCoverageIds: [], removedForCoverageIds: [], selectionNote: '', usage: null, error: null }
@@ -1668,7 +1671,7 @@ export async function chooseSelectedPieceRoster({
     requestLines: [
       `Occasion: ${occasion}`,
       `Season: ${season}`,
-      mission && mission !== 'mix' ? `Mission: ${mission}` : '',
+      styleDirectionLine(mission),
       mood ? `Mood: ${mood}` : '',
       activity && activity !== 'none' ? `Activity: ${activity}` : '',
       question ? `Request: ${question}` : '',
@@ -1690,7 +1693,7 @@ export async function chooseSelectedPieceRoster({
   let value = null
   try {
     const result = await withTimeout(signal => askStylistStructuredWithUsage({
-      system: selectedPieceRosterSystemPrompt(),
+      system: selectedPieceRosterSystemPrompt(SELECTED_PIECE_ROSTER_MAX, { explore, outfitCount }),
       maxTokens: 1500,
       messages: [{ role: 'user', content }],
       providerOverride,
@@ -1781,6 +1784,7 @@ export async function correctComposerNameMismatches({ parsed, candidatePieces, s
 }
 
 async function composeSelectedPieceVisualWardrobeOutfits({
+  explore = false,
   selectedPiece,
   rankedCandidates = [],
   allPieces = [],
@@ -1899,10 +1903,12 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     grouped.get(group).push(p)
   }
 
+  const outfitCount = selectedPieceOutfitCount({ explore })
+  const composerSystemPrompt = selectedItemVisualComposerSystemPrompt({ explore })
   let occasionProfileGuidance = ''
   if (occasionProfile?.rules) {
     occasionProfileGuidance = [
-      occasionProfile.vibe ? `Occasion vibe: ${occasionProfile.vibe}` : '',
+      occasionVibe(occasionProfile, { explore }) ? `Occasion vibe: ${occasionVibe(occasionProfile, { explore })}` : '',
       occasionProfile.rules.required_footwear?.length ? `Required footwear: ${occasionProfile.rules.required_footwear.join(', ')}` : '',
       occasionProfile.rules.prohibited_footwear?.length ? `Avoid footwear: ${occasionProfile.rules.prohibited_footwear.join(', ')}` : '',
       occasionProfile.rules.prohibited_materials?.length ? `Avoid materials: ${occasionProfile.rules.prohibited_materials.join(', ')}` : ''
@@ -1935,13 +1941,15 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     '',
     `Occasion: ${occasion}`,
     `Season: ${season}`,
-    mission && mission !== 'mix' ? `Mission: ${mission}` : '',
+    styleDirectionLine(mission),
     mood ? `Mood: ${mood}` : '',
     activity && activity !== 'none' ? `Activity: ${activity}` : '',
     occasionProfileGuidance ? `Occasion/activity guidance:\n${occasionProfileGuidance}` : '',
     memoryText ? `Taste and selected-garment memory:\n${memoryText.slice(0, 7000)}` : '',
     '',
-    `Compose ${SELECTED_PIECE_OUTFIT_COUNT.minOutfits}-${SELECTED_PIECE_OUTFIT_COUNT.maxOutfits} complete outfits using only shown saved wardrobe pieces.`,
+    outfitCount.minOutfits === outfitCount.maxOutfits
+      ? `Compose ${outfitCount.minOutfits} complete outfits using only shown saved wardrobe pieces.`
+      : `Compose ${outfitCount.minOutfits}-${outfitCount.maxOutfits} complete outfits using only shown saved wardrobe pieces.`,
     `Every outfit must include selected anchor id ${selectedPiece.id}. Do not replace it with another ${wardrobeCategoryGroup(selectedPiece) || selectedPiece.category}.`,
     'Use the selected garment as the visual/thematic anchor; choose support pieces around its actual role, risks, and confidence-aware garment truth.',
     'Reference pieces only by exact IDs shown in labels. Do not invent missing pieces in this wardrobe mode.',
@@ -1986,16 +1994,16 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   let composerErrorIsTruncation = false
   let composerErrorIsTimeout = false
   let composerUsage = null
-  const composerMaxTokens = structuredResponseMaxTokens(4)
+  const composerMaxTokens = structuredResponseMaxTokens(Math.max(4, outfitCount.maxOutfits))
   try {
     const composerStartedAt = Date.now()
     const composerResult = await withTimeout(signal => askStylistStructuredWithUsage({
-      system: selectedItemVisualComposerSystemPrompt(),
+      system: composerSystemPrompt,
       maxTokens: composerMaxTokens,
       messages: [{ role: 'user', content }],
       providerOverride,
       // The user message asks for this same range of outfits; the schema carries it too.
-      schema: composerOutfitSlotsSchema(SELECTED_PIECE_OUTFIT_COUNT),
+      schema: composerOutfitSlotsSchema(outfitCount),
       name: 'wardrobe_outfits',
       description: 'Return the composed outfits, each garment named by ID in the slot for its job.',
       subflow: 'selected_piece_visual_composer',
@@ -2013,8 +2021,8 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   let nameCheck = null
   if (!composerError) {
     const checked = await correctComposerNameMismatches({
-      parsed, candidatePieces, system: selectedItemVisualComposerSystemPrompt(), content,
-      schema: composerOutfitSlotsSchema(SELECTED_PIECE_OUTFIT_COUNT), maxTokens: composerMaxTokens,
+      parsed, candidatePieces, system: composerSystemPrompt, content,
+      schema: composerOutfitSlotsSchema(outfitCount), maxTokens: composerMaxTokens,
       providerOverride, subflow: 'selected_piece_visual_composer',
     })
     parsed = checked.parsed
@@ -2098,8 +2106,10 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     })
   }
 
-  outfits = [...outfits.slice(0, 4), ...needsReviewOutfits].map(outfit => ({
+  outfits = [...outfits.slice(0, outfitCount.maxOutfits), ...needsReviewOutfits].map(outfit => ({
     ...outfit,
+    // Explore cards are not ranked against each other; the model's own rating is kept beside it.
+    ...(explore && !outfit.broken ? { strength: 'explore', modelStrength: outfit.strength || null, exploreMode: true } : {}),
     selectedPieceId: selectedPiece.id,
     wholeWardrobe: false,
     textOnly: true
@@ -2148,7 +2158,8 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       rosterCounts: rosterDebug.categoryCounts,
       unresolvedReferences,
       unresolvedReferencesCount: unresolvedReferences.length,
-      outfitCountCheck: composerOutfitCountCheck(parsed, SELECTED_PIECE_OUTFIT_COUNT),
+      outfitCountCheck: composerOutfitCountCheck(parsed, outfitCount),
+      explore,
       nameCheck,
     }
   }
@@ -2502,6 +2513,8 @@ export async function generateOutfitsForPieceInternal({
   currentDate = null,
   statedWeather = '',
   resolvedWeatherProfile = null,
+  // Explore (docs/selected-piece-explore-mode-spec.md): opt-in from the piece form, wardrobe mode only.
+  explore = false,
   // Owner ruling 2026-08-30: defaults to the shared app-wide config so the direct
   // /generate-outfits-for-piece route (which passes req.body straight through, no providerOverride
   // key) picks it up automatically, same as the freeform-chat selected-piece path.
@@ -2511,6 +2524,7 @@ export async function generateOutfitsForPieceInternal({
   console.log(`    - pieceId: ${pieceId}`)
   console.log(`    - occasion: "${occasion}" | season: "${season}" | mission: "${mission}" | mood: "${mood}" | activity: "${activity}"`)
   console.log(`    - includeMissingPieces: ${includeMissingPieces} | idealOnly: ${idealOnly}`)
+  explore = explore === true
   
   const piece = db.prepare('SELECT * FROM pieces WHERE id = ?').get(pieceId)
   if (!piece) {
@@ -2575,6 +2589,8 @@ export async function generateOutfitsForPieceInternal({
       weatherProfile,
       occasionProfile: stylingContext.occasionProfile,
       activityProfile: stylingContext.activityProfile,
+      explore,
+      outfitCount: selectedPieceOutfitCount({ explore }).maxOutfits,
       providerOverride,
     })
     rankedCandidates = rosterSelection.rankedCandidates
@@ -2625,6 +2641,7 @@ export async function generateOutfitsForPieceInternal({
   let composed = null
   if (!idealMode && !idealOnlyMode) {
     composed = await composeSelectedPieceVisualWardrobeOutfits({
+      explore,
       selectedPiece: parsedPiece,
       rankedCandidates,
       allPieces,
@@ -2736,6 +2753,7 @@ export async function generateOutfitsForPieceInternal({
     })
   }
   const answer = formatStructuredOutfitFeedback({
+    explore: explore && !idealMode && !idealOnlyMode,
     selectedPiece: parsedPiece,
     occasion,
     season,
@@ -2759,6 +2777,7 @@ export async function generateOutfitsForPieceInternal({
         : 'selected_piece_visual_composer',
     idealMode,
     idealOnlyMode,
+    explore: explore && !idealMode && !idealOnlyMode,
     compositionSkipped: composed.compositionSkipped || null,
     debug: {
       visualCritic: visualCriticDebug,
@@ -2934,9 +2953,24 @@ export function wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance = '
 // never carried PROMPT_CACHE_BREAKPOINT; named here so that stays a verifiable fact rather than an
 // inline string nobody checks.
 const SELECTED_PIECE_OUTFIT_COUNT = Object.freeze({ minOutfits: 3, maxOutfits: 4 })
+// Explore asks for exactly five, each its own direction (docs/selected-piece-explore-mode-spec.md §2.2).
+const SELECTED_PIECE_EXPLORE_OUTFIT_COUNT = Object.freeze({ minOutfits: 5, maxOutfits: 5 })
+export const selectedPieceOutfitCount = ({ explore = false } = {}) => explore ? SELECTED_PIECE_EXPLORE_OUTFIT_COUNT : SELECTED_PIECE_OUTFIT_COUNT
 
-export function selectedItemVisualComposerSystemPrompt() {
-  return `${prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(stripSoftRankingRules(OCCASION_PROFILES), null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(stripSoftRankingRules(ACTIVITY_PROFILES), null, 2)}`
+// The Style direction choice as the stylist should read it: its label and description, not the bare ID
+// (`Mission: unexpected_pairing` used to be all that reached her). 'mix' and unknown IDs add nothing.
+export function styleDirectionLine(mission = '') {
+  if (!mission || mission === 'mix') return ''
+  const known = OUTFIT_MISSIONS.find(entry => entry.id === mission)
+  return known ? `Style direction: ${known.label} — ${known.description}` : `Style direction: ${mission}`
+}
+
+export function selectedItemVisualComposerSystemPrompt({ explore = false } = {}) {
+  // Explore replaces the variety rule whole; it is not appended beside it, so the two never compete.
+  const base = prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM
+  if (explore && base.split(OUTFIT_VARIETY_RULE).length !== 2) throw new Error('Explore: the composer prompt must contain the variety rule exactly once')
+  const composer = explore ? base.replace(OUTFIT_VARIETY_RULE, EXPLORE_INSTRUCTION) : base
+  return `${composer}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(stripSoftRankingRules(OCCASION_PROFILES, { explore }), null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(stripSoftRankingRules(ACTIVITY_PROFILES, { explore }), null, 2)}`
 }
 
 export async function generateWholeWardrobeOutfitsVisualInternal({

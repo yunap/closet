@@ -265,3 +265,25 @@ leave, every departure attributable to capability or season. The ranking A/B (`r
 was run against an isolated baseline — this tree with only the register delta reverted — and its 9
 differing scenarios are identical to the HEAD-based run, establishing that the register change is
 their sole cause.
+
+## Amendment 4: Explore vibes (Yuna 2026-10-24)
+
+Four profiles gain an `explore_vibe`. It is used only when the user turns on **Explore** for a
+first card turn on a piece ([selected-piece-explore-mode-spec.md](selected-piece-explore-mode-spec.md)).
+Every default `vibe` is unchanged and still reaches every default request.
+
+**The rule.** An Explore vibe keeps what the occasion asks for: register, comfort, movement and the
+mood of the event. It drops the words that prescribe how the outfit looks, because those are what
+Explore asks the stylist to go beyond. This follows the outdoor-daytime ruling above: aesthetic
+gravity is a weight, not an occasion property.
+
+| Profile | `explore_vibe` | Dropped |
+|---|---|---|
+| city_smart_casual | polished, comfortable, walk-friendly | clean columns |
+| evening_social | sharp, artistic, low-key drama | deep color palettes, rich textures |
+| outdoor_daytime_social | relaxed, creative, intentional | textured, airy |
+| home_loungewear | comfort-first, soft | unstructured |
+
+Casual, gallery and concert have no look words in their vibe and need no Explore version. No
+rule, keyword or register ceiling changes. `stripSoftRankingRules` never sends `explore_vibe` as
+its own field: in Explore it replaces `vibe`, otherwise it is dropped.

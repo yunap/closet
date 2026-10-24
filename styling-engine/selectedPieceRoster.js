@@ -14,6 +14,7 @@
 import { wardrobeCategoryGroup } from './attributes.js'
 import { sparseGarmentCatalogRow, SPARSE_CATALOG_CONVENTIONS } from './garmentEvidenceLine.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement } from './candidateSet.js'
+import { EXPLORE_INSTRUCTION } from './prompts.js'
 
 export const SELECTED_PIECE_ROSTER_MAX = 40
 export const SELECTED_PIECE_ROSTER_SUBFLOW = 'selected_piece_roster_selection'
@@ -76,14 +77,20 @@ export function selectedPieceRosterSchema(max = SELECTED_PIECE_ROSTER_MAX) {
 // does not have.
 const CATALOG_CONVENTIONS = SPARSE_CATALOG_CONVENTIONS.split(' view_pieces truth')[0]
 
-export function selectedPieceRosterSystemPrompt(max = SELECTED_PIECE_ROSTER_MAX) {
+// Explore (docs/selected-piece-explore-mode-spec.md §2.2): the roster step is told how many outfits will
+// be built and what they are for, so the shortlist is not drawn for the expected outfits only. With
+// `explore` off the prompt is exactly the default one.
+export function selectedPieceRosterSystemPrompt(max = SELECTED_PIECE_ROSTER_MAX, { explore = false, outfitCount = null } = {}) {
+  const exploreBlock = explore
+    ? `\n\nYou are choosing for ${outfitCount || 'several'} outfits, each taking its own direction. ${EXPLORE_INSTRUCTION} Shortlist for those outfits, not for the expected ones.`
+    : ''
   return `You are a personal stylist choosing which garments from a client's own wardrobe you want to look at before styling one garment of theirs, the anchor. You see a photograph of the anchor and a catalog of every garment in the wardrobe that is eligible for this request and can share an outfit with it. In the next step you will compose outfits around the anchor, looking at photographs of exactly the garments you choose here and of nothing else, so a garment you leave out cannot be used.
 
 This is a shortlist to compare, not your final choice: you will decide between garments on their photographs in the next step. Think about the different ways the anchor can be worn and what each would need. For every part those outfits need — what goes with the anchor on the body, any layer, the shoes — bring several real alternatives, so that each part of each outfit is chosen between options you can see rather than settled now from text. A garment whose facts leave you unsure is worth seeing, because its photograph will decide. A list of only the pieces you already expect to use leaves nothing to compare. You may choose up to ${max}. The catalog is in identity order, not ranked; judge each garment from its recorded facts against the anchor and this request.
 
 ${CATALOG_CONVENTIONS}
 
-Answer with \`selection_note\` first: one or two sentences on the directions you are choosing for. Then \`roster_piece_ids\`: the IDs you chose, written as numbers, only from the catalog.`
+Answer with \`selection_note\` first: one or two sentences on the directions you are choosing for. Then \`roster_piece_ids\`: the IDs you chose, written as numbers, only from the catalog.${exploreBlock}`
 }
 
 export function selectedPieceRosterUserText({ anchorPiece, anchorTruth = '', requestLines = [], catalog }) {

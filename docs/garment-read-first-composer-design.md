@@ -1,6 +1,6 @@
 # Read the garment first — selected-piece composer (design, 2026-10-24)
 
-**Status:** replay run and rated 2026-10-24 — **no arm beat control; nothing carried** (§7). Production unchanged.
+**Status:** historical — replay run and rated 2026-10-24; **no arm beat control, nothing carried** (§7). Production unchanged; the follow-up is [selected-piece-model-roster-spec.md](selected-piece-model-roster-spec.md).
 
 ## 1 · What the owner saw
 
