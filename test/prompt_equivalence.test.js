@@ -153,6 +153,19 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
       expected = expected.replace(' — never to fill out a card. Put each garment in the slot', ` — never to fill out a card. ${LAYERED_LOOK_STAGES_FACT} Put each garment in the slot`)
     }
+    // 2026-10-24: SLOT NAMES (docs/composer-slot-name-check-spec.md). Each slot's garment name is
+    // written before its ID so a wrong ID is detectable (thread_1792867254713). Registered as byte
+    // deltas on the 2026-09-13 slot rule and JSON shape; fixture frozen.
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace('`shoes_id` is the pair of shoes. Use null for a slot the outfit does not use.\n',
+        "`shoes_id` is the pair of shoes. Use null for a slot the outfit does not use. Before each ID, write that garment's name in the slot's `_name` field, copied from its label, so the ID and the garment you mean can be checked against each other; null when the slot is empty.\n")
+      const named = (slot, value) => `      "${slot}_name": ${value === 'null' ? 'null' : `"name copied from the label of ID ${value}"`},\n      "${slot}_id": ${value},\n`
+      for (const ids of [['12', '45', 'null', 'null', 'null', '9'], ['21', '33', 'null', '58', '72', '9']]) {
+        const slots = ['base_top', 'bottom', 'dress', 'middle_layer', 'outer_layer', 'shoes']
+        const plain = slots.map((slot, i) => `      "${slot}_id": ${ids[i]},\n`).join('')
+        expected = expected.replace(plain, slots.map((slot, i) => named(slot, ids[i])).join(''))
+      }
+    }
     // 2026-09-06: single-card composition gains one structured intent fact for an explicit
     // removable-layer request. The accepted delta keeps the original fixture frozen while making
     // this additive routing/contract instruction visible at the byte-level prompt rail.

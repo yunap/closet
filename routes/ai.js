@@ -34,7 +34,7 @@ import {
   describeAiError,
   extractPieceIdsFromProse
 } from '../styling-engine/provider.js'
-import { composerOutfitSlotsSchema, composerOutfitCountCheck, resolveComposerSlotOutfit, withSlotFindings } from '../styling-engine/composerSlots.js'
+import { composerNameMismatchCorrection, composerNameMismatches, composerOutfitSlotsSchema, composerOutfitCountCheck, resolveComposerSlotOutfit, withSlotFindings } from '../styling-engine/composerSlots.js'
 
 import {
   applyComfortFootwearRepair,
@@ -1736,6 +1736,50 @@ export async function chooseSelectedPieceRoster({
   }
 }
 
+// ONE CORRECTION CALL for a composer answer whose slot names and IDs disagree
+// (docs/composer-slot-name-check-spec.md). The same request plus the model's own previous answer and
+// a note naming each mismatch; the answer replaces the original only if it parses and returns the
+// same number of outfits. A card that still
+// disagrees is a Needs review card through the ordinary slot-finding path. Code never swaps the ID.
+export async function correctComposerNameMismatches({ parsed, candidatePieces, system, content, schema, maxTokens, providerOverride, subflow, thinkingLevel = null }) {
+  const first = composerNameMismatches(parsed, candidatePieces)
+  const nameCheck = {
+    mismatches: [...first].flatMap(([outfitIndex, findings]) => findings.map(finding => ({ outfitIndex, ...finding.evidence }))),
+    correctionRan: false,
+    correctionUsage: null,
+    correctionError: null,
+    remaining: 0,
+  }
+  if (!first.size) return { parsed, nameCheck }
+  nameCheck.correctionRan = true
+  let corrected = null
+  try {
+    const result = await withTimeout(signal => askStylistStructuredWithUsage({
+      system,
+      maxTokens,
+      messages: [{ role: 'user', content: [...content, { type: 'text', text: composerNameMismatchCorrection(parsed, first) }] }],
+      providerOverride,
+      schema,
+      name: 'wardrobe_outfits',
+      description: 'Return the composed outfits again, each slot ID matching the garment named in it.',
+      subflow: `${subflow}_name_correction`,
+      ...(thinkingLevel ? { thinkingLevel } : {}),
+      signal,
+    }), 120000, 'Composer name correction')
+    nameCheck.correctionUsage = result.usage ? { ...result.usage, estimatedCost: estimateAiUsageCost(result.usage) } : null
+    // Only a full answer replaces the original: a shorter one would silently drop the cards that had
+    // nothing wrong with them.
+    if (Array.isArray(result.value?.outfits) && result.value.outfits.length === parsed.outfits.length) corrected = result.value
+    else nameCheck.correctionError = 'correction answer did not return the same number of outfits'
+  } catch (err) {
+    nameCheck.correctionError = err.message
+    if (err.usage) nameCheck.correctionUsage = { ...err.usage, estimatedCost: estimateAiUsageCost(err.usage) }
+  }
+  const final = corrected ? { ...parsed, ...corrected } : parsed
+  nameCheck.remaining = [...composerNameMismatches(final, candidatePieces).values()].reduce((n, findings) => n + findings.length, 0)
+  return { parsed: final, nameCheck }
+}
+
 async function composeSelectedPieceVisualWardrobeOutfits({
   selectedPiece,
   rankedCandidates = [],
@@ -1966,6 +2010,16 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     composerErrorIsTruncation = Boolean(err.isTruncation)
     composerErrorIsTimeout = Boolean(err.isTimeout)
   }
+  let nameCheck = null
+  if (!composerError) {
+    const checked = await correctComposerNameMismatches({
+      parsed, candidatePieces, system: selectedItemVisualComposerSystemPrompt(), content,
+      schema: composerOutfitSlotsSchema(SELECTED_PIECE_OUTFIT_COUNT), maxTokens: composerMaxTokens,
+      providerOverride, subflow: 'selected_piece_visual_composer',
+    })
+    parsed = checked.parsed
+    nameCheck = checked.nameCheck
+  }
 
   // Slot resolution (composerSlots.js). The anchor used to be unshifted into any card that omitted
   // it, and cards that still lacked it were dropped — both made the model's answer look like
@@ -2095,6 +2149,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       unresolvedReferences,
       unresolvedReferencesCount: unresolvedReferences.length,
       outfitCountCheck: composerOutfitCountCheck(parsed, SELECTED_PIECE_OUTFIT_COUNT),
+      nameCheck,
     }
   }
 }
@@ -2709,6 +2764,7 @@ export async function generateOutfitsForPieceInternal({
       visualCritic: visualCriticDebug,
       composerUsage: visualCriticDebug?.composerUsage || null,
       rosterSelectionUsage: rosterSelection?.debug?.usage || null,
+      nameCorrectionUsage: visualCriticDebug?.nameCheck?.correctionUsage || null,
       recoveryShortfall: composed.recoveryShortfall || null,
       compositionSkipped: composed.compositionSkipped || null,
       weatherProfile,
@@ -3510,6 +3566,17 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       }
     }
 
+    let nameCheck = null
+    if (!composerError) {
+      const checked = await correctComposerNameMismatches({
+        parsed, candidatePieces: allowedPieces, system: systemPrompt, content, schema: composerSchema,
+        maxTokens: composerMaxTokens, providerOverride, subflow: 'whole_wardrobe_visual_composer',
+        thinkingLevel: wantsStylistNote ? 'medium' : null,
+      })
+      parsed = checked.parsed
+      nameCheck = checked.nameCheck
+    }
+
     // Resolve slots (composerSlots.js): IDs only, names from the wardrobe, every stated role kept and
     // none derived. Every card is kept — one the slots or the shared evaluator reject becomes a
     // diagnostic card carrying the model's own fields and all of its findings.
@@ -3807,6 +3874,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       requestedLimit,
       aiReturnedRaw: Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0,
       outfitCountCheck: composerOutfitCountCheck(parsed, { minOutfits: requestedLimit }),
+      nameCheck,
       aiResolvedWithOwnedPieces: resolved.length,
       aiStructurallyValid: modelOutfits.length,
       proseIntegritySanitizedCount: normalizedModelOutfits.filter(outfit => outfit.proseIntegrityIssues?.length).length,
@@ -4637,6 +4705,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
           ...composerUsage,
           estimatedCost: estimateAiUsageCost(composerUsage)
         } : null,
+        nameCorrectionUsage: nameCheck?.correctionUsage || null,
         finalSelection: visualDebugLog,
         sessionMemory: {
           recentSessionCount: sessionInfluence.sessionCount || 0,

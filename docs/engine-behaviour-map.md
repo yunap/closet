@@ -4702,6 +4702,23 @@ the shared `evaluateWearableOutfit` still runs on every card:
 | `outer_layer_id` | outerwear | `outerwear` |
 | `shoes_id` | shoes | `shoes` |
 
+**[amended 2026-10-24 — slots carry the garment's name]** IDs-only made a wrong ID undetectable.
+In `thread_1792867254713`, card 2's label, reason, styling instructions and `layering_check` all
+described the gradient cashmere sweater (996870), but `middle_layer_id` held 996890, the striped
+sweater next to it in the roster. The owner judged the delivered card unwearable.
+
+Each slot now carries a `*_name` field, written immediately before its `*_id`.
+`resolveComposerSlotOutfit` reports a hard `slot_name_mismatch` when the stated name's words are not
+all in the recorded name. The evidence carries both names and the garment the name fits, when
+exactly one does.
+
+Both visual composers make one correction call (`correctComposerNameMismatches`, `routes/ai.js`) with
+their own previous answer and the mismatches named. The correction replaces the answer only if it
+parses and returns every card. A card that still disagrees is Needs review, so a name never rescues
+or swaps an ID. Spec: [composer-slot-name-check-spec.md](composer-slot-name-check-spec.md).
+
+Offline, the captured incident answer resolves to `slot_name_mismatch` on card 2 alone, naming 996870.
+
 **Count.** `composerOutfitSlotsSchema({ minOutfits, maxOutfits })` puts the requested count in the
 schema — exactly `limit` for whole-wardrobe, 3–4 for selected-piece (the same range its user message
 asks for). OpenAI strict mode and Gemini `response_format` enforce `minItems`/`maxItems`; an Anthropic
