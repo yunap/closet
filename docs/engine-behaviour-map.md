@@ -3349,6 +3349,40 @@ and handbag match calibration #26, a sunglasses render matches #24, the Sep 13 d
 be used when they help the outfit; do not add a "likeness only, no setting or props" caption. The
 problem that night was the person, not the setting.
 
+**Amended 2026-10-24 — the single-outfit render no longer goes through gpt-4o; ideal-piece renders
+carry the identity line.** The owner reported renders where the person looked wrong. Reading every
+recorded `revised_prompt` since 2026-09-04 showed two separate causes. (a) The ideal-piece producers
+(`createEditorialConceptImage`, `createIdealAdditionsComparisonSheetImage`, auto-rendered since #336
+on 2026-10-20) never received the identity line added on 2026-10-17. That amendment said to extend
+the line "once a render confirms this works", and that confirmation came the same night, but the
+line was never added. The editorial prompt does send the style profile's `editorial_subject` sentence
+("a real woman with medium curly hair… warm olive skin tone, strong facial features"), and gpt-4o's
+rewrite kept that sentence and dropped the photo captions, so nearly every ideal-piece render
+described her in words. Both producers now state `CALIBRATED_PERSON_LINE` whenever a `real_photo`
+calibration image is attached; the subject sentence stays, because it is the owner's own profile text.
+(b) `createWholeWardrobeOutfitImage` ("Generate outfit image") had the identity line, but the rewrite
+still dropped it on 2026-10-19. That producer now calls the Images API edit endpoint
+(`runOpenAIImageEditFromContentParts`) with the same content parts and our prompt verbatim, so no
+gpt-4o step is involved. The endpoint takes images plus one prompt rather than interleaved parts, so
+`openAIContentPartsToImageEdit` replaces each image with an `[Image N]` marker at the point where
+the image sat. Model `getOpenAIImageToolModel` (flare), quality `medium`, same size. The renderer
+is recorded as `openai-image-edit`. `timings.imageEvidence` is now `openAIImageEditEvidence`:
+the endpoint's own metadata and usage plus image count and prompt length. The prompt itself is not
+copied, because it is ours verbatim. `timings.usage` is left unset, because the chat's cost line
+prices it with gpt-4o's rates. Later the same day, `createSavedOutfitImage` (saved-outfit images
+from the Lookbook) was moved to the same direct path, and `savedOutfitImagePrompt` now states
+`CALIBRATED_PERSON_LINE`. That producer also checks `mockAiEnabled()` now; until this change, it
+was the one single-render producer that skipped the check. The comparison sheets and ideal-piece
+renders still use the gpt-4o tool. Both direct-path renders are priced from OpenAI's own usage
+block by `estimateOpenAIImageCostUsd` (`lib/aiCallTelemetry.js`), at the published rates read
+2026-10-24 (flare and sunburst both charge $5 per million text input tokens, $8 per million image
+input tokens and $30 per million output tokens). The estimate applies no cached-input discount, so
+it can only overstate. The render stores it as `timings.estimatedCostUsd`, which the chat's cost
+line shows. The multipart request body is a stream the telemetry hook cannot read, so the caller
+names the model on a nested telemetry context (`imageRequestModel`), and the `ai_call_log` row
+gets that model and the same estimate instead of the flat $0.07. Models with no listed rates still
+fall back to the flat figure. renders still use the gpt-4o tool. None of this has been checked by a paid render yet.
+
 `getOpenAIImageModel` / `getOpenAIImageFallbackModels` exist and explicitly reject `dall-e-2/3`,
 but the five main paths never consult them — they hard-code `gpt-4o`. The chain resolves to
 **gpt-image-1 → gpt-image-1.5 → gpt-image-1-mini → chatgpt-image-latest** and is reachable only

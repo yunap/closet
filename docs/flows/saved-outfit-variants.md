@@ -76,6 +76,10 @@ Three takeaways for a PM:
     [{ type: 'image_generation' }] })`, fed the source outfit photo (reference
     only), up to 5 garment reference images, 2 identity/taste calibration
     references, and the anchored triptych prompt → returns 3 alternatives.
+    **Amended 2026-10-24:** now the Images API edit endpoint
+    (`runOpenAIImageEditFromContentParts`) with the same inputs and the prompt
+    verbatim, no GPT-4o step; the prompt states `CALIBRATED_PERSON_LINE` when a
+    real calibration photo is attached, and mock-AI mode returns the collage.
   - **Fallback (no model):** when `photoPreservingVisualsEnabled()` (env
     `PHOTO_PRESERVING_VISUALS=true`) or no `OPENAI_API_KEY` — a
     `createPhotoPreservingCollageImage` collage of the saved photo + garment tiles.
