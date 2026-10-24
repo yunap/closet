@@ -25,6 +25,16 @@ export const PHYSICAL_WEARABILITY_REALISM_RULES = `PHYSICAL WEARABILITY & DRESSI
 - Layering & Sleeve Physics: ${NEUTRAL_SLEEVE_LAYERING_STATEMENT}
 - Candor over Rationalization: Never invent warmth, windproofing, or weather protection to justify a styling choice. If an outfit intentionally prioritizes lighter styling over outdoor warmth, disclose that trade-off honestly rather than claiming a lightweight shell provides essential warmth.`
 
+// The composer's variety rule, one constant so a mode can replace it whole instead of adding a rule
+// that competes with it. Explore (docs/selected-piece-explore-mode-spec.md) swaps it for
+// EXPLORE_INSTRUCTION; every other composer keeps it.
+export const OUTFIT_VARIETY_RULE = 'Select each outfit on its own merits. Repeating a strong garment, outerwear choice, or outfit formula is fully acceptable. Prefer a meaningfully different alternative only when it is at least as strong; never weaken an outfit to increase variety across the set.'
+
+// EXPLORE (docs/selected-piece-explore-mode-spec.md §2.1, owner-approved 2026-10-24). Intent only: it names
+// no styling dimension, garment category or technique, and the stylist decides where the less obvious
+// reason comes from. Shared by the roster call and the composer. Wearability is not loosened.
+export const EXPLORE_INSTRUCTION = 'EXPLORE. The outfits anyone would assemble first around this garment, its obvious and expected pairings, are already known, so leave them out. Show outfits that still work, and work for a reason that is not the obvious one. Where that reason comes from is your judgment for this garment and this wardrobe. Each outfit takes its own direction: no two should be variations of the same idea. Every outfit must still be wearable for the request and physically sound, and you should be able to say in its reason what makes it work.'
+
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.
 - Additional expressive pieces are welcome when they share the hero's register (mood, formality, material family) and do a DIFFERENT job — e.g. an expressive skirt + a small accent bag + a structural pendant can coexist. Layered artisan texture in one register is richness, not noise.
@@ -1373,7 +1383,7 @@ Composition rules:
 - Do not invent a physical activity. An occasion's vibe text (e.g. "walk-friendly," "comfortable," "walkable") describes a footwear/register QUALITY the occasion generally calls for — it is not a claim that this specific request involves walking, hiking, or any other named activity. Only use activity language like "walking-heavy day," "all-day walking," or "a walk" in \`bestFor\`/\`silhouette\`/\`watchFor\` when an activity was actually stated for this turn (see the Activity line in the request, if present). Otherwise describe the outfit by its occasion and register only (e.g. "smart casual, everyday" — not "smart casual, walking-heavy day").
 - Footwear Requirement: If the active occasion profile has required_footwear (e.g. for trail/hiking activities), every outfit must use activity-capable footwear: sneakers/athletic/rugged flats.
 - Reference pieces ONLY by the IDs shown in the labels. Never invent pieces.
-- Select each outfit on its own merits. Repeating a strong garment, outerwear choice, or outfit formula is fully acceptable. Prefer a meaningfully different alternative only when it is at least as strong; never weaken an outfit to increase variety across the set.
+- ${OUTFIT_VARIETY_RULE}
 - A little tension is good. If an outfit has no deliberate contrast or graphic decision, it is probably boring.
 - Pattern judgment: prints, patterns and heavy textures are judged by eye, case by case — there is no fixed count per outfit. Before you pair two pieces that both have a print, pattern, or heavy texture, actually look at their two photos side by side and ask whether they compete — similar scale, similar busyness, fighting for the same attention — not whether they share a color-family word. A dark background does not make a busy print "read quiet"; a print's ground color and its pattern discipline are two different things, and one does not fix the other. If you find yourself writing a reason like "shares a warm palette" or "reads quieter because the ground is dark" to justify pairing two patterned or heavily textured pieces, that is the sign to look at the photographs again: keep the pairing only if the prints visibly work together, and change one piece if they compete — do not use that reasoning in place of looking.
 ${requiredBaseLayerPromptRule()}

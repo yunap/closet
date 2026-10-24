@@ -424,6 +424,7 @@ const DIRECTION_RANK_LABELS = {
   strong: 'Strong alternative',
   usable: 'More exploratory',
   experimental: 'Needs review',
+  explore: 'Explore',
 }
 
 const directionRankLabel = (value) => DIRECTION_RANK_LABELS[String(value || '').toLowerCase()] || ''
@@ -733,6 +734,8 @@ export default function StylistChat({
   const [generateSeason, setGenerateSeason] = useState('current season')
   const [generateMission, setGenerateMission] = useState('mix')
   const [generateMood, setGenerateMood] = useState('')
+  // Explore (docs/selected-piece-explore-mode-spec.md): opt-in per request, off by default, not persisted.
+  const [generateExplore, setGenerateExplore] = useState(false)
   const [generateActivity, setGenerateActivity] = useState('none')
   const [wardrobeOutfitOccasion, setWardrobeOutfitOccasion] = useState('casual')
   const [wardrobeOutfitSeason, setWardrobeOutfitSeason] = useState('current season')
@@ -2055,6 +2058,7 @@ export default function StylistChat({
       options.mission && { id: 'mission', label: options.mission === 'mix' ? 'Mix of missions' : sentenceCaseLabel(options.mission) },
       options.activity && options.activity !== 'none' && { id: 'activity', label: ACTIVITY_OPTIONS.find(opt => opt[0] === options.activity)?.[1] || sentenceCaseLabel(options.activity) },
       options.idealOnly && { id: 'ideal', label: 'New-piece ideas' },
+      options.explore && { id: 'explore', label: 'Explore' },
       message.wholeWardrobe && { id: 'wardrobe', label: 'Wardrobe only' },
     ].filter(Boolean)
     const seen = new Set()
@@ -5038,6 +5042,7 @@ export default function StylistChat({
     const effectiveGenerateSeason = overrides.generateSeason ?? generateSeason
     const effectiveGenerateMission = overrides.generateMission ?? generateMission
     const effectiveGenerateMood = overrides.generateMood ?? generateMood
+    const effectiveGenerateExplore = Boolean(overrides.generateExplore ?? generateExplore)
     const effectiveGenerateActivity = overrides.generateActivity ?? generateActivity
     // `not.*wardrobe` used to stand here: any "not" before any later "wardrobe" sent the turn to ideal
     // new pieces, so "these are not bad … what else … in my wardrobe?" got pieces the user does not own
@@ -5477,7 +5482,7 @@ export default function StylistChat({
         }
 
       } else if (pieceToSend && shouldGenerateOutfits) {
-        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot, activity: effectiveGenerateActivity }) })
+        const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot, activity: effectiveGenerateActivity, ...(effectiveGenerateExplore ? { explore: true } : {}) }) })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Something went wrong — try again')
         replyText = data.feedback || 'Something went wrong.'
@@ -5497,6 +5502,7 @@ export default function StylistChat({
               mood: effectiveGenerateMood,
               mission: effectiveGenerateMission || 'mix',
               activity: effectiveGenerateActivity,
+              ...(effectiveGenerateExplore ? { explore: true } : {}),
             },
           }
           setThreadMemory(nextThreadMemory)
@@ -5883,6 +5889,7 @@ export default function StylistChat({
           mission: effectiveGenerateMission,
           mood: effectiveGenerateMood,
           activity: effectiveGenerateActivity,
+          ...(shouldGenerateOutfits && effectiveGenerateExplore ? { explore: true } : {}),
         } : null)
       }
       if (replyWholeWardrobe || Number(replyDebug?.atomicMultiLookCalls) > 0) {
@@ -7248,6 +7255,18 @@ export default function StylistChat({
                   style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
                 />
               </div>
+              <label className="piece-explore-toggle" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={generateExplore}
+                  onChange={e => setGenerateExplore(e.target.checked)}
+                  style={{ marginTop: 3 }}
+                />
+                <span>
+                  <span style={wardrobeBuilderFieldLabelStyle}>Explore</span>
+                  <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted, var(--muted))' }}>Outfits beyond the obvious pairings for this piece.</span>
+                </span>
+              </label>
               </fieldset>
               {loading && (
                 <div className="piece-styling-generating-status" role="status">

@@ -814,7 +814,10 @@ test('selected-piece generator accepts and forwards mission and mood parameters'
     ? latestMessage.content.map(part => part?.text || '').join('\n')
     : String(latestMessage?.content || '')
 
-  assert.match(latestText, /Mission: monochrome_texture/)
+  // 2026-10-24 (docs/selected-piece-explore-mode-spec.md §2.5): the Style direction reaches the stylist as
+  // its label and description, not the bare ID it used to be.
+  assert.match(latestText, /Style direction: Monochrome Texture — Minimize color contrast/)
+  assert.doesNotMatch(latestText, /Mission: monochrome_texture/)
   assert.match(latestText, /Mood: moody winter/)
 })
 

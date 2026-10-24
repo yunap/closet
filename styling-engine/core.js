@@ -998,13 +998,15 @@ export function buildLocalFallbackOutfitDirections(selectedPiece, rankedCandidat
   return fallback.values
 }
 
-export function formatStructuredOutfitFeedback({ selectedPiece, occasion, season, outfits = [], skip = '', saveableLearning = '' }) {
+export function formatStructuredOutfitFeedback({ selectedPiece, occasion, season, outfits = [], skip = '', saveableLearning = '', explore = false }) {
   const lines = [
     `**Generated outfit ideas for:** ${selectedPiece?.name || 'selected garment'}`,
-    `**Occasion / season:** ${occasion || 'casual'} / ${season || 'current season'}`,
+    `**Occasion / season:** ${occasion || 'casual'} / ${season || 'current season'}${explore ? ' · Explore' : ''}`,
     ''
   ]
   const labelFor = (outfit, index) => {
+    // Explore asks for outfits beyond the obvious ones, so none is framed as the strongest.
+    if (explore) return 'Explore direction'
     if (index === 0 || outfit.strength === 'signature') return 'Signature / strongest direction'
     if (outfit.strength === 'usable') return 'Usable variation'
     if (outfit.strength === 'experimental') return 'Optional experimental direction'
