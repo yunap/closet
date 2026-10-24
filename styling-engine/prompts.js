@@ -1368,7 +1368,7 @@ ${EXPRESSIVE_HIERARCHY_RULES}
 
 Composition rules:
 - ${categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowAccessories: false, allowMiddleLayer: true })}
-- Outfit slots: name every garment by its ID in the slot for the job it does. Separates: \`base_top_id\` + \`bottom_id\`. A dress: \`dress_id\`; a \`base_top_id\` beside a \`dress_id\` is a top worn under that dress. \`middle_layer_id\` is a layer worn over the base — a top or an outerwear garment such as a cardigan or vest; \`outer_layer_id\` is the outermost coat or jacket. \`shoes_id\` is the pair of shoes. Use null for a slot the outfit does not use.
+- Outfit slots: name every garment by its ID in the slot for the job it does. Separates: \`base_top_id\` + \`bottom_id\`. A dress: \`dress_id\`; a \`base_top_id\` beside a \`dress_id\` is a top worn under that dress. \`middle_layer_id\` is a layer worn over the base — a top or an outerwear garment such as a cardigan or vest; \`outer_layer_id\` is the outermost coat or jacket. \`shoes_id\` is the pair of shoes. Use null for a slot the outfit does not use. Before each ID, write that garment's name in the slot's \`_name\` field, copied from its label, so the ID and the garment you mean can be checked against each other; null when the slot is empty.
 - Occasion & Weather Classification: Honor the occasion guidance provided in the request. The wardrobe shown has passed the hard eligibility gates — occasion and register, activity footwear, and pieces plainly unsuited to these conditions were removed. That is eligibility, not a verdict that a given piece, or any combination of them, is adequate for these conditions: judge the completed outfit against the stated conditions and duration yourself, from each piece's own recorded facts and its photograph.
 - Do not invent a physical activity. An occasion's vibe text (e.g. "walk-friendly," "comfortable," "walkable") describes a footwear/register QUALITY the occasion generally calls for — it is not a claim that this specific request involves walking, hiking, or any other named activity. Only use activity language like "walking-heavy day," "all-day walking," or "a walk" in \`bestFor\`/\`silhouette\`/\`watchFor\` when an activity was actually stated for this turn (see the Activity line in the request, if present). Otherwise describe the outfit by its occasion and register only (e.g. "smart casual, everyday" — not "smart casual, walking-heavy day").
 - Footwear Requirement: If the active occasion profile has required_footwear (e.g. for trail/hiking activities), every outfit must use activity-capable footwear: sneakers/athletic/rugged flats.
@@ -1397,11 +1397,17 @@ JSON shape:
       "dominantDirection": "short style lane",
       "silhouette": "one clear silhouette idea",
       "bestFor": "occasion fit",
+      "base_top_name": "name copied from the label of ID 12",
       "base_top_id": 12,
+      "bottom_name": "name copied from the label of ID 45",
       "bottom_id": 45,
+      "dress_name": null,
       "dress_id": null,
+      "middle_layer_name": null,
       "middle_layer_id": null,
+      "outer_layer_name": null,
       "outer_layer_id": null,
+      "shoes_name": "name copied from the label of ID 9",
       "shoes_id": 9,
       "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
       "styling_instructions": "",
@@ -1414,11 +1420,17 @@ JSON shape:
       "dominantDirection": "short style lane",
       "silhouette": "one clear silhouette idea",
       "bestFor": "occasion fit",
+      "base_top_name": "name copied from the label of ID 21",
       "base_top_id": 21,
+      "bottom_name": "name copied from the label of ID 33",
       "bottom_id": 33,
+      "dress_name": null,
       "dress_id": null,
+      "middle_layer_name": "name copied from the label of ID 58",
       "middle_layer_id": 58,
+      "outer_layer_name": "name copied from the label of ID 72",
       "outer_layer_id": 72,
+      "shoes_name": "name copied from the label of ID 9",
       "shoes_id": 9,
       "reason": "specific visual reason grounded in what you SEE in the photos — colors, textures, visual weight, line",
       "styling_instructions": "cardigan open over the blouse, coat over both and left unbuttoned; no belt or tuck involved here",

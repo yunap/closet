@@ -28,6 +28,14 @@ export const COMPOSER_SLOTS = Object.freeze([
 ])
 
 const nullableId = { type: ['integer', 'null'] }
+const nullableName = { type: ['string', 'null'] }
+
+// SLOT NAMES (docs/composer-slot-name-check-spec.md, owner 2026-10-24). Each slot's garment name is
+// written immediately before its ID. Identity is still the ID alone; the name is the model's stated
+// intent, so a wrong ID becomes detectable instead of silent (thread_1792867254713: every word of a
+// card described the gradient cashmere sweater 996870 while middle_layer_id held 996890, the striped
+// one next to it in the roster). A name never selects, replaces or rescues a garment.
+export const slotNameKey = slotKey => slotKey.replace(/_id$/, '_name')
 
 // The requested card count is part of the contract: `minItems`/`maxItems` are enforced by the provider
 // where it enforces the schema (OpenAI strict json_schema, Gemini response_format), guidance only for
@@ -56,13 +64,13 @@ export function composerOutfitSlotsSchema({ minOutfits = 1, maxOutfits = minOutf
           dominantDirection: { type: 'string' },
           silhouette: { type: 'string' },
           bestFor: { type: 'string' },
-          ...Object.fromEntries(COMPOSER_SLOTS.map(slot => [slot.key, nullableId])),
+          ...Object.fromEntries(COMPOSER_SLOTS.flatMap(slot => [[slotNameKey(slot.key), nullableName], [slot.key, nullableId]])),
           reason: { type: 'string' },
           styling_instructions: { type: 'string' },
           watchFor: { type: 'string' },
           ...(wearThroughDay ? { wear_through_day: { type: 'string' } } : {}),
         },
-        required: ['layering_check', 'label', 'strength', 'dominantDirection', 'silhouette', 'bestFor', ...COMPOSER_SLOTS.map(slot => slot.key), 'reason', 'styling_instructions', 'watchFor', ...(wearThroughDay ? ['wear_through_day'] : [])],
+        required: ['layering_check', 'label', 'strength', 'dominantDirection', 'silhouette', 'bestFor', ...COMPOSER_SLOTS.flatMap(slot => [slotNameKey(slot.key), slot.key]), 'reason', 'styling_instructions', 'watchFor', ...(wearThroughDay ? ['wear_through_day'] : [])],
       },
     },
     skip: { type: 'string' },
@@ -73,6 +81,17 @@ export function composerOutfitSlotsSchema({ minOutfits = 1, maxOutfits = minOutf
   },
   required: ['outfits', 'skip', 'saveableLearning', ...(stylistNote ? ['stylist_note'] : [])],
 }
+}
+
+// Word-set comparison: every word of the stated name must be in the recorded name, so a shortened
+// name passes ("gradient cashmere sweater") and another garment's name fails. Not garment matching:
+// it only asks whether the model's own words and its own ID name the same garment.
+const nameWords = value => new Set(String(value || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean))
+export function statedNameFitsGarment(statedName, piece) {
+  const stated = nameWords(statedName)
+  if (!stated.size) return true
+  const recorded = nameWords(piece?.name)
+  return [...stated].every(word => recorded.has(word))
 }
 
 function slotFinding(code, message, evidence = {}) {
@@ -126,6 +145,14 @@ export function resolveComposerSlotOutfit(outfit = {}, candidatePieces = [], { r
       continue
     }
     slotById.set(id, key)
+    const statedName = outfit?.[slotNameKey(key)]
+    if (typeof statedName === 'string' && statedName.trim() && !statedNameFitsGarment(statedName, piece)) {
+      const fitting = [...byId.values()].filter(other => Number(other.id) !== id && statedNameFitsGarment(statedName, other))
+      slotFindings.push(slotFinding('slot_name_mismatch', `${key} is named "${statedName.trim()}" but ID ${id} is ${piece.name || `piece ${id}`}`, {
+        slot: key, pieceId: id, statedName: statedName.trim(), recordedName: piece.name || '',
+        statedNameFitsPieceId: fitting.length === 1 ? Number(fitting[0].id) : null,
+      }))
+    }
     const categoryGroup = wardrobeCategoryGroup(piece)
     const fits = groups.includes(categoryGroup)
     if (!fits) {
@@ -167,4 +194,27 @@ export function withSlotFindings(validation = {}, slotFindings = []) {
 export function composerOutfitCountCheck(parsed, { minOutfits = 1, maxOutfits = minOutfits } = {}) {
   const returned = Array.isArray(parsed?.outfits) ? parsed.outfits.length : 0
   return { minOutfits, maxOutfits, returned, withinRequest: returned >= minOutfits && returned <= maxOutfits }
+}
+
+// The correction call's note (docs/composer-slot-name-check-spec.md §2.3): one line per mismatch, in
+// the model's own terms. The answer comes back in the same schema; nothing here picks a garment.
+export function composerNameMismatchCorrection(parsed, mismatchesByIndex) {
+  const lines = []
+  for (const [index, findings] of mismatchesByIndex) {
+    const label = parsed?.outfits?.[index]?.label || `outfit ${index + 1}`
+    for (const finding of findings) {
+      lines.push(`- "${label}": you wrote "${finding.evidence.statedName}" for ${finding.evidence.slot}, but ID ${finding.evidence.pieceId} is "${finding.evidence.recordedName}".`)
+    }
+  }
+  return `YOUR PREVIOUS ANSWER:\n${JSON.stringify(parsed)}\n\nCORRECTION NEEDED — in these slots the garment you named is not the garment whose ID you wrote:\n${lines.join('\n')}\nReturn the same outfits again. In each slot, write the ID of the garment you actually mean, from the labels shown. If the garment you described is not among those shown, rebuild that outfit from shown garments. Keep every outfit you did not need to change exactly as it was.`
+}
+
+// Which cards of a composer answer carry a name mismatch, resolved against the shown roster.
+export function composerNameMismatches(parsed, candidatePieces = []) {
+  const byIndex = new Map()
+  ;(Array.isArray(parsed?.outfits) ? parsed.outfits : []).forEach((outfit, index) => {
+    const findings = resolveComposerSlotOutfit(outfit, candidatePieces).slotFindings.filter(finding => finding.code === 'slot_name_mismatch')
+    if (findings.length) byIndex.set(index, findings)
+  })
+  return byIndex
 }

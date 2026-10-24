@@ -52,15 +52,22 @@ for (const [name, outfit, expectedRoles] of VALID_CONSTRUCTIONS) {
   })
 }
 
-test('SLOT CONTRACT: the schema is IDs only, every slot required and nullable, nothing else admitted', () => {
+// 2026-10-24 (docs/composer-slot-name-check-spec.md): each slot also carries the garment's stated name,
+// written immediately before its ID. Identity stays the ID; the name only makes a wrong ID detectable.
+test('SLOT CONTRACT: six ID slots, each preceded by its stated name, every field required and nullable, nothing else admitted', () => {
   const item = composerOutfitSlotsSchema({ minOutfits: 5 }).properties.outfits.items
   assert.equal(item.additionalProperties, false)
+  const keys = Object.keys(item.properties)
   for (const { key } of COMPOSER_SLOTS) {
+    const nameKey = key.replace(/_id$/, '_name')
     assert.deepEqual(item.properties[key], { type: ['integer', 'null'] })
-    assert.ok(item.required.includes(key), `${key} is required`)
+    assert.deepEqual(item.properties[nameKey], { type: ['string', 'null'] })
+    assert.ok(item.required.includes(key) && item.required.includes(nameKey), `${key} and ${nameKey} are required`)
+    assert.equal(keys.indexOf(nameKey) + 1, keys.indexOf(key), `${nameKey} is written immediately before ${key}`)
   }
   assert.ok(!('pieces' in item.properties) && !('pieceIds' in item.properties), 'no free piece array')
-  assert.ok(!Object.keys(item.properties).some(key => /name|role|gap/i.test(key)), 'no garment name, role or gap field')
+  assert.ok(!keys.some(key => /role|gap/i.test(key)), 'no role or gap field')
+  assert.deepEqual(keys.filter(key => /name/i.test(key)), COMPOSER_SLOTS.map(({ key }) => key.replace(/_id$/, '_name')), 'the only name fields are the slot names')
 })
 
 test('SLOT CONTRACT: a missing shoe is an empty slot and a hard finding — no gap flag, nothing filled in', () => {
