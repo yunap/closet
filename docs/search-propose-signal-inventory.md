@@ -261,6 +261,11 @@ that means, concretely:
   instruction not to mix it in unless the inventory showed a shared owner. It does not: provenance
   labeling lives in `weather.js`'s precedence resolver, unrelated to the judgment-vs-fact question this
   document addresses.
+  **[addressed 2026-10-23]** It did change what a turn received: `thread_1792781414837`'s follow-up
+  searched with `user_weather: {temperature_band: 'hot'}` that nobody had stated, and the hot-weather
+  gates removed 117 pieces. A `user_weather` is now dropped when nothing the user typed in the thread
+  states weather (`withoutEchoedUserWeather` / `userWordsStateWeather` in `tools.js`); see the engine
+  behaviour map's 2026-10-23 amendment.
 - The batch composer's model-facing thermal fact channel and weather-shaped candidate pool. Surface 4
   is now traced, but redesigning that path is deliberately separate from the single-outfit slice.
 - Whether the batch composer should reuse the same `thermalFactsForPieceLine` now shared by the plan,

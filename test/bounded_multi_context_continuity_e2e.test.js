@@ -397,6 +397,75 @@ test('PRODUCTION PATH: a 5-piece card (base, middle layer, outer layer) sends a 
   assert.equal(imageLabels.length, 5, 'pass one exactly fills the five-piece structural budget with one image per garment')
 })
 
+// ── thread_1792563578975 (2026-10-20): a thread opened from one garment (activeContext piece) asked
+// how that cardigan's sleeves work in two of its three cards. Photos were chosen by the active piece
+// alone, so the answer saw only the cardigan and judged the sleeves underneath blind. A card
+// explanation now takes its photos from the cards the question names.
+test('PRODUCTION PATH: a card comparison in a thread opened from one garment sends photos of the named cards\' pieces, not only that garment', async () => {
+  const photoFile = name => `${name}.png`
+  for (const name of ['cardigan', 'turtleneck', 'trousers', 'sneakers', 'sheath', 'heels', 'tee', 'cords', 'slipons']) {
+    await sharp({ create: { width: 60, height: 90, channels: 3, background: '#333333' } })
+      .png()
+      .toFile(path.join(userUploadsDir(), photoFile(name)))
+  }
+  const piece = (name, category, file) => insertPiece({ name, category, photo: photoFile(file) })
+  const cardiganId = piece('plum ruffled open-front knit cardigan', 'outerwear', 'cardigan')
+  const teeId = piece('cream ribbed mock-neck short-sleeve top', 'top', 'tee')
+  const cordsId = piece('emerald green corduroy straight pants', 'bottom', 'cords')
+  const slipOnsId = piece('cream textured slip-on shoes', 'shoes', 'slipons')
+  const turtleneckId = piece('black turtleneck', 'top', 'turtleneck')
+  const trousersId = piece('grey linen wide-leg trousers', 'bottom', 'trousers')
+  const sneakersId = piece('taupe knit lace-up sneakers', 'shoes', 'sneakers')
+  const sheathId = piece('charcoal ribbed knit sheath dress', 'dress', 'sheath')
+  const heelsId = piece('pink tweed pointed heels', 'shoes', 'heels')
+
+  saveStylistConversationState({
+    current_outfit_set: [
+      { index: 1, label: 'Plum & Emerald City Column', piece_ids: [teeId, cordsId, cardiganId, slipOnsId] },
+      { index: 2, label: 'Tonal Plum & Grey Layer', piece_ids: [turtleneckId, trousersId, cardiganId, sneakersId] },
+      { index: 3, label: 'Plum Cardigan Over Black Sheath', piece_ids: [sheathId, cardiganId, heelsId] },
+    ],
+  }, SESSION_ID)
+
+  const compactCalls = []
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    const sys = String(system || '')
+    if (sys.includes(ROUTER_MARKER)) {
+      return {
+        profile: 'existing_card_explanation', occasion: 'city', activity: '', season: '',
+        mood: '', mission: 'mix', limit: 0, location: '', date: '', subject: '', usage: {},
+      }
+    }
+    if (sys.startsWith(COMPACT_MARKER)) {
+      compactCalls.push({ system: sys, messages })
+      return { text: 'The turtleneck sleeve is the one to try on first.', usage: {} }
+    }
+    return 'unexpected call'
+  }
+
+  await postJson('/api/ai/ask', {
+    question: 'plum ruffled open-front knit has a pretty fitted 3/4 sleeves, tell me how it is going to work with Plum Cardigan Over Black Sheath or Tonal Plum & Grey Layer',
+    sessionId: SESSION_ID,
+    conversationMode: 'followup',
+    activeContext: { type: 'piece', id: cardiganId, name: 'plum ruffled open-front knit cardigan' },
+  })
+
+  assert.equal(compactCalls.length, 1, 'exactly one compact existing_card_explanation call was made')
+  const content = compactCalls[0].messages[0].content
+  assert.ok(Array.isArray(content), 'photos are attached, so content is a parts array, not a bare string')
+  const imageLabels = content.filter(part => part.type === 'text' && /^Saved .* photo for/.test(part.text)).map(part => part.text)
+  for (const name of ['plum ruffled open-front knit cardigan', 'black turtleneck', 'grey linen wide-leg trousers', 'taupe knit lace-up sneakers', 'charcoal ribbed knit sheath dress', 'pink tweed pointed heels']) {
+    assert.ok(imageLabels.some(label => label.includes(name)), `${name} has no visual evidence: ${JSON.stringify(imageLabels)}`)
+  }
+  // The card the question did not name is left out, so the photos stay on what was asked.
+  for (const name of ['cream ribbed mock-neck short-sleeve top', 'emerald green corduroy straight pants', 'cream textured slip-on shoes']) {
+    assert.ok(!imageLabels.some(label => label.includes(name)), `${name} is on an unnamed card: ${JSON.stringify(imageLabels)}`)
+  }
+  assert.equal(imageLabels.length, 6, 'one photo per garment across the two named cards')
+  assert.match(compactCalls[0].system, /how its garments will sit, layer or look together/)
+  assert.match(compactCalls[0].system, /Do not decide whether two garments layer from sleeve labels or lengths alone/)
+})
+
 // ── thread_1789543565383 / owner review (2026-09-16, continuation-preservation correction) ────────
 // Three-turn production-path proof: (1) an outfit exists for a stated 50°F->40°F, 1-6pm, walking
 // outing; (2) an existing_card_explanation follow-up must not erase established state — it may only

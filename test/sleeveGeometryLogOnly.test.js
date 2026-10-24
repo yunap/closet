@@ -70,6 +70,25 @@ test('LOG-ONLY SLEEVE GEOMETRY: every model-facing layering rule is the neutral 
   assert.ok(repair && repair.includes(NEUTRAL_SLEEVE_LAYERING_STATEMENT), 'the missing-layer repair model states the neutral sentence')
 })
 
+// thread_1792569468413 (2026-10-21): the composer judges each layered pair's physical fit first, from
+// the two garments themselves. The rule must stay relational: it may not smuggle in a sleeve-shape,
+// sleeve-length or fabric verdict, which is what the 2026-09-14 truth table showed to be false.
+test('WEARABILITY FIRST: the composer checks each layered pair before the card idea, with no sleeve or fabric verdict', async () => {
+  const { layerWearabilityFirstPromptRule } = await import('../styling-engine/outfitValidation.js')
+  const { composerOutfitSlotsSchema } = await import('../styling-engine/composerSlots.js')
+  const rule = layerWearabilityFirstPromptRule()
+  const composer = buildPrompts({}).WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM
+  assert.equal(composer.split(rule).length - 1, 1, 'the composer states the rule once')
+  assert.ok(composer.indexOf(rule) > composer.indexOf(layerConstructionPromptRule()), 'it follows the neutral sentence it builds on')
+  for (const text of [rule, NEUTRAL_SLEEVE_LAYERING_STATEMENT]) {
+    assert.doesNotMatch(text, /3\/4|elbow|extra.long|short.sleeve|sleeveless|voluminous|gathered|ruched|puff|flared|deep.armhole|fitted|drop.shoulder|chunky|heavy|cashmere|wool|rib/i,
+      'no sleeve shape, length or fabric decides the answer')
+  }
+  const items = composerOutfitSlotsSchema({ minOutfits: 3, maxOutfits: 4 }).properties.outfits.items
+  assert.equal(Object.keys(items.properties)[0], 'layering_check', 'the check is written before the label and the idea')
+  assert.ok(items.required.includes('layering_check'))
+})
+
 // Gate and backfill: both pass candidate cards through locallyGateWholeWardrobeOutfits (backfill validates its local
 // fill candidates with it), so a sleeve-geometry verdict must not reject or exclude any of the three pins.
 const { locallyGateWholeWardrobeOutfits } = await import('../styling-engine/rules.js')

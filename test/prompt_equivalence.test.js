@@ -9,12 +9,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS, PHYSICAL_WEARABILITY_REALISM_RULES, STYLIST_COMPETENCE_CONTRACT } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
-import { layerConstructionPromptRule, layerDirectionPromptRule, requiredBaseLayerPromptRule, LAYERED_LOOK_STAGES_FACT } from '../styling-engine/outfitValidation.js'
+import { layerConstructionPromptRule, layerDirectionPromptRule, layerWearabilityFirstPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, requiredBaseLayerPromptRule, LAYERED_LOOK_STAGES_FACT } from '../styling-engine/outfitValidation.js'
 
 const SLOT_JSON_SHAPE = `JSON shape:
 {
   "outfits": [
     {
+      "layering_check": "no layered pair on this card",
       "label": "short evocative outfit name",
       "strength": "signature | strong | usable | experimental",
       "dominantDirection": "short style lane",
@@ -31,6 +32,7 @@ const SLOT_JSON_SHAPE = `JSON shape:
       "watchFor": "one real risk or none"
     },
     {
+      "layering_check": "for each layered pair: which garment is inside and which outside, and what both photographs show about whether the inner one fits inside the outer at the sleeves, armholes and body",
       "label": "example of a layered outfit",
       "strength": "usable",
       "dominantDirection": "short style lane",
@@ -390,6 +392,14 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         `${requiredBaseLayerPromptRule()}\n${layerConstructionPromptRule()}\n${layerDirectionPromptRule({ vocabulary: 'slots' })}\n- Respect the rotation warnings and any rejected-pairing memory provided.`
       )
     }
+    // 2026-10-21 (thread_1792569468413): the composer judges each layered pair's physical fit before
+    // the card's idea, and writes that check first (`layering_check`, first in the JSON shape above).
+    if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') {
+      expected = expected.replace(
+        `${layerConstructionPromptRule()}\n${layerDirectionPromptRule({ vocabulary: 'slots' })}`,
+        `${layerConstructionPromptRule()}\n${layerWearabilityFirstPromptRule()}\n${layerDirectionPromptRule({ vocabulary: 'slots' })}`
+      )
+    }
     // 2026-08-26 verification pass: traced OUTFIT_EVALUATOR_GATE_SYSTEM's actual call chain
     // (composeStructuredOutfitsForPiece) and confirmed its register/footwear prose could diverge
     // from registerCeilingVerdict/footwearComfortVerdict on the selected anchor — the one piece
@@ -651,6 +661,17 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         '      "missingPieces": ["specific archetype 1", "specific archetype 2"],\n      "pieceNotes": [\n        { "piece": "specific archetype 1", "description": "Fabric and weight, cut and fit, defining detail, and what it does for the anchor" }\n      ],\n'
       )
     }
+    // 2026-10-23 (thread_1792793923755): "what other directions can we explore?" was an invitation to
+    // think, answered with a card. Cards are for asking to see outfits; thinking together gets words.
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected.replace(
+        '  * Proposing Outfits (default): For styling advice, suggestions, "what should I wear/pack", "ideas for...", or any request to be styled, propose each concrete outfit',
+        '  * Proposing Outfits (default): When the user asks to see, build or be dressed in outfits — "what should I wear/pack", or any request to be styled — propose each concrete outfit'
+      ).replace(
+        'around those calls, not as a hand-written piece list. Use \'generate_outfits\'',
+        'around those calls, not as a hand-written piece list. When the user is instead thinking with you — exploring directions, asking how you see a piece or what could go with it — answer in words (declare want:\'text\'): name the directions, what each would do for the piece and which of their garments it would draw on, and offer to build any of them as cards. Build cards once they ask to see one. When they ask for examples, more options or something else, propose outfits not already shown in this thread unless they ask to see one again, and let examples of directions you have just discussed build those directions. Use \'generate_outfits\''
+      )
+    }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
 })
@@ -767,7 +788,7 @@ test('the missing-layer repair prompt does not claim physical feasibility is set
   // 2026-09-14: sleeve geometry is log-only, so the screen no longer decides sleeve compatibility at all; the prompt
   // says so and asks for inspection with the neutral sentence instead of implying anything was settled.
   assert.match(repair, /no known deterministic structural conflict on this card; sleeve compatibility is not decided mechanically/)
-  assert.match(repair, /Sleeve shape and relative sleeve length alone do not establish whether two garments layer\. Inspect the photographs for sleeve structure, compressibility and the intended treatment, and state uncertainty when the evidence is insufficient\./)
+  assert.ok(repair.includes(NEUTRAL_SLEEVE_LAYERING_STATEMENT), 'the repair prompt states the shared neutral sentence')
   assert.doesNotMatch(repair, /already been checked for physical feasibility/)
   assert.doesNotMatch(repair, /your judgment is the visual and register one/)
 })
