@@ -224,6 +224,14 @@ export function installMockAiHandler(db) {
       }
     }
 
+    // Selected-piece roster selection (docs/selected-piece-model-roster-spec.md): the first few
+    // garments of each catalog section, so every role is represented.
+    if (systemPrompt.includes('choosing which garments from a client')) {
+      const sections = latestText.split(/^=== [A-Z]+ \(\d+\) ===$/m).slice(1)
+      const ids = sections.flatMap(section => [...section.matchAll(/^#(\d+) /gm)].slice(0, 10).map(match => Number(match[1])))
+      return { selection_note: 'Mock sandbox roster — no billed call was made.', roster_piece_ids: ids.slice(0, 40) }
+    }
+
     // The visual composers answer in ID slots (docs/flows/use-my-wardrobe.md, atomic structured output).
     if (systemPrompt.includes('personal stylist. You are looking at photos')) {
       const [top, bottom, shoes] = ['top', 'bottom', 'shoes'].map(category => sampleOnePerCategory(db, [category])[0] || null)

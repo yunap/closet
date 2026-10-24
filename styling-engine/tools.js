@@ -4867,6 +4867,8 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         
         if (result && result.structuredOutfits) {
           recordNestedFreeformUsage(toolContext, result?.debug?.composerUsage)
+          // The selected-piece roster selection is its own provider call ahead of the composer.
+          recordNestedFreeformUsage(toolContext, result?.debug?.rosterSelectionUsage)
           // THE NESTED BOUNDARY USED TO DROP THE COMPOSER'S OWN DIAGNOSTICS. Only `composerUsage`
           // crossed it, so for any composer run reached through /ask — which is how live
           // thread_1789274358263 ran — `finalSelection` (roster counts, relevance adjustments,

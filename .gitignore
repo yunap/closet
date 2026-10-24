@@ -131,3 +131,10 @@ scratch/*
 !scratch/ab_stage3_preregistration.json
 !scratch/ab_stage3_review_sheets.mjs
 !scratch/ab_stage3_score.mjs
+!scratch/trace_selected_piece_roster.mjs
+!scratch/verify_selected_piece_model_roster.mjs
+!scratch/garment_read_replay.mjs
+!scratch/garment_read_review_sheets.mjs
+!scratch/selected_piece_roster_live.mjs
+!scratch/selected_piece_roster_live_sheets.mjs
+!scratch/selected_piece_roster_prompt_replay.mjs

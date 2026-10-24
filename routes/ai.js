@@ -134,6 +134,7 @@ import {
   wholeWardrobeMoodProfile,
   scoreWholeWardrobeCandidate,
   buildPieceText,
+  rankedComplementaryWardrobeFor,
   strongestBohoPiece,
   wholeWardrobeBohoSignalScore,
   wholeWardrobeOutfitsFromCandidates,
@@ -159,6 +160,7 @@ import { sharedGarmentEvidenceLine, garmentNotesBlock, garmentNotesEntry, tagger
 import { stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { storedGarmentRules } from '../styling-engine/ruleProvenance.js'
 import { projectCandidateSetShortfall } from '../styling-engine/candidateSet.js'
+import { buildSelectedPieceRosterCatalog, countByGroup, selectedPieceModelRosterEnabled, selectedPieceRosterSchema, selectedPieceRosterSystemPrompt, selectedPieceRosterUserText, SELECTED_PIECE_ROSTER_MAX, SELECTED_PIECE_ROSTER_SUBFLOW, validateSelectedPieceRosterPick } from '../styling-engine/selectedPieceRoster.js'
 import { discloseRecoveryShortfall, validatedComplete, validatedFallback, validatedSubstitute } from '../styling-engine/recovery.js'
 import { normalizeDeliveredOutfit, normalizeOutfitResult } from '../styling-engine/outfitResult.js'
 import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION, fiberContentNormalization, normalizeInsulatingLayerMaterials, normalizeInteriorConstruction, insulatingLayerMaterials, interiorConstruction } from '../styling-engine/fiberTaxonomy.js'
@@ -1622,6 +1624,118 @@ export function orderLayersByThermalFit(pieces = [], demand = null) {
   return result
 }
 
+// The stylist chooses the garments the selected-piece composer will see
+// (docs/selected-piece-model-roster-spec.md). Returns rows in the composer's rankedCandidates shape,
+// or the code-ranked rows unchanged with the reason, so a failed roster never blocks the turn.
+export async function chooseSelectedPieceRoster({
+  selectedPiece,
+  allPieces = [],
+  codeRankedCandidates = [],
+  eligibilityDecisionsById = null,
+  rankingContext = {},
+  occasion = 'casual',
+  season = 'current season',
+  mission = 'mix',
+  mood = '',
+  activity = '',
+  question = '',
+  weatherProfile = null,
+  occasionProfile = null,
+  activityProfile = null,
+  providerOverride = stylistProviderOverride,
+} = {}) {
+  const debug = { source: 'code_ranked_fallback', fallbackReason: null, catalogCount: 0, catalogCounts: {}, pickedCount: 0, pickedCounts: {}, unknownIds: [], trimmedIds: [], addedForCoverageIds: [], removedForCoverageIds: [], selectionNote: '', usage: null, error: null }
+  const fallback = reason => ({ rankedCandidates: codeRankedCandidates, debug: { ...debug, fallbackReason: reason } })
+
+  // The photo roster's own gates, uncapped: capacity is the whole pool, so the image cap never runs.
+  const pool = evaluateVisualComposerPiecePool({
+    pieces: allPieces,
+    context: { occasion, weatherProfile, mood, activity, requestText: question, question, occasionProfile, activityProfile },
+    policy: { selectedPieceId: Number(selectedPiece.id), maxImages: allPieces.length + 1 },
+  })
+  const catalog = buildSelectedPieceRosterCatalog({
+    anchorPiece: selectedPiece,
+    eligiblePieces: pool.eligiblePieces,
+    isAutoUseAllowed: piece => eligibilityDecisionsById?.get?.(Number(piece.id))?.allowed !== false,
+  })
+  debug.catalogCount = catalog.pieces.length
+  debug.catalogCounts = catalog.counts
+  if (!catalog.pieces.length) return fallback('empty_catalog')
+
+  const content = [{ type: 'text', text: selectedPieceRosterUserText({
+    anchorPiece: selectedPiece,
+    anchorTruth: buildPieceText(selectedPiece),
+    requestLines: [
+      `Occasion: ${occasion}`,
+      `Season: ${season}`,
+      mission && mission !== 'mix' ? `Mission: ${mission}` : '',
+      mood ? `Mood: ${mood}` : '',
+      activity && activity !== 'none' ? `Activity: ${activity}` : '',
+      question ? `Request: ${question}` : '',
+    ],
+    catalog,
+  }) }]
+  const photoFile = selectedPiece.worn_photo || selectedPiece.photo || ''
+  const photoPath = photoFile ? path.join(userUploadsDir(), photoFile) : ''
+  if (photoPath && fs.existsSync(photoPath)) {
+    try {
+      const thumb = await prepareWardrobeThumb(photoPath, `${selectedPiece.id}:${photoFile}`, { maxPx: 768 })
+      content.push({ type: 'text', text: `ANCHOR PHOTO — ID ${selectedPiece.id}` })
+      content.push({ type: 'image', detail: 'high', source: { type: 'base64', media_type: thumb.media_type, data: thumb.data } })
+    } catch (err) {
+      console.warn(`Selected-piece roster: anchor photo unavailable (${err.message})`)
+    }
+  }
+
+  let value = null
+  try {
+    const result = await withTimeout(signal => askStylistStructuredWithUsage({
+      system: selectedPieceRosterSystemPrompt(),
+      maxTokens: 1500,
+      messages: [{ role: 'user', content }],
+      providerOverride,
+      schema: selectedPieceRosterSchema(),
+      name: 'selected_piece_roster',
+      description: 'Choose the garments to look at before styling the anchor.',
+      subflow: SELECTED_PIECE_ROSTER_SUBFLOW,
+      signal,
+    }), 60000, 'Selected-piece roster selection')
+    value = result.value || null
+    debug.usage = result.usage ? { ...result.usage, estimatedCost: estimateAiUsageCost(result.usage) } : null
+  } catch (err) {
+    debug.error = err.message
+    if (err.usage) debug.usage = { ...err.usage, estimatedCost: estimateAiUsageCost(err.usage) }
+    return fallback('call_failed')
+  }
+  debug.selectionNote = String(value?.selection_note || '')
+
+  const coverageRanking = rankedComplementaryWardrobeFor(selectedPiece, allPieces, allPieces.length, { ...rankingContext, eligibilityDecisionsById })
+    .map(row => row.piece)
+  const checked = validateSelectedPieceRosterPick({
+    anchorPiece: selectedPiece,
+    catalog,
+    pickedIds: value?.roster_piece_ids,
+    coverageRanking,
+    max: SELECTED_PIECE_ROSTER_MAX,
+  })
+  Object.assign(debug, {
+    unknownIds: checked.unknownIds,
+    trimmedIds: checked.trimmedIds,
+    addedForCoverageIds: checked.addedForCoverageIds,
+    removedForCoverageIds: checked.removedForCoverageIds || [],
+  })
+  if (!checked.pieces.length) return fallback('no_usable_ids')
+  if (!checked.usable) return fallback('incomplete_outfit_supply')
+
+  debug.source = 'stylist'
+  debug.pickedCount = checked.pieces.length
+  debug.pickedCounts = countByGroup(checked.pieces)
+  return {
+    rankedCandidates: checked.pieces.map(piece => ({ piece, score: null, reasons: ['chosen by the stylist'], autoUseBlocked: false })),
+    debug,
+  }
+}
+
 async function composeSelectedPieceVisualWardrobeOutfits({
   selectedPiece,
   rankedCandidates = [],
@@ -2379,13 +2493,38 @@ export async function generateOutfitsForPieceInternal({
     occasionProfile,
     activityProfile,
   } = stylingContext
-  let { rankedCandidates } = selectAutomaticUseCandidatesForOutfitGeneration({
+  const rankingContext = { occasion, mission, mood, season, currentDate: stylingContext.date, weatherProfile, comfortConstraint, activity, request: question, question }
+  let { rankedCandidates, eligibility: supportEligibility } = selectAutomaticUseCandidatesForOutfitGeneration({
     anchorPiece: parsedPiece,
     pieces: allPieces,
     limit: 32,
-    context: { occasion, mission, mood, season, currentDate: stylingContext.date, weatherProfile, comfortConstraint, activity, request: question, question },
+    context: rankingContext,
   })
   console.log(`    - Found ${rankedCandidates.length} supporting wardrobe candidates.`)
+  // Wardrobe mode: the stylist chooses the roster from the complete eligible catalog; the code
+  // ranking above remains only as the fallback (docs/selected-piece-model-roster-spec.md).
+  let rosterSelection = null
+  if (!idealMode && !idealOnlyMode && selectedPieceModelRosterEnabled()) {
+    rosterSelection = await chooseSelectedPieceRoster({
+      selectedPiece: parsedPiece,
+      allPieces,
+      codeRankedCandidates: rankedCandidates,
+      eligibilityDecisionsById: supportEligibility?.decisionsById || null,
+      rankingContext,
+      occasion,
+      season,
+      mission,
+      mood,
+      activity,
+      question,
+      weatherProfile,
+      occasionProfile: stylingContext.occasionProfile,
+      activityProfile: stylingContext.activityProfile,
+      providerOverride,
+    })
+    rankedCandidates = rosterSelection.rankedCandidates
+    console.log(`    - Roster: ${rosterSelection.debug.source} (${rankedCandidates.length} garments from a catalog of ${rosterSelection.debug.catalogCount})${rosterSelection.debug.fallbackReason ? `, ${rosterSelection.debug.fallbackReason}` : ''}.`)
+  }
   const selectedPieceOutfitsText = getOutfitsForPieceMemory(parsedPiece.id, 8)
   const selectedPieceRosterIds = [parsedPiece.id, ...rankedCandidates.map(candidate => candidate?.piece?.id)].filter(Boolean)
   const feedbackApplicabilityContext = projectStylingApplicabilityContext(stylingContext, {
@@ -2447,7 +2586,7 @@ export async function generateOutfitsForPieceInternal({
       activityProfile,
       providerOverride
     })
-    visualCriticDebug = composed.debug || null
+    visualCriticDebug = composed.debug ? { ...composed.debug, rosterSelection: rosterSelection?.debug || null } : null
   } else {
     try {
       const visualReview = await withTimeout(signal => rankSelectedPieceCandidatesWithVision({
@@ -2569,6 +2708,7 @@ export async function generateOutfitsForPieceInternal({
     debug: {
       visualCritic: visualCriticDebug,
       composerUsage: visualCriticDebug?.composerUsage || null,
+      rosterSelectionUsage: rosterSelection?.debug?.usage || null,
       recoveryShortfall: composed.recoveryShortfall || null,
       compositionSkipped: composed.compositionSkipped || null,
       weatherProfile,
