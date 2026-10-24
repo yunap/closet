@@ -5039,7 +5039,10 @@ export default function StylistChat({
     const effectiveGenerateMission = overrides.generateMission ?? generateMission
     const effectiveGenerateMood = overrides.generateMood ?? generateMood
     const effectiveGenerateActivity = overrides.generateActivity ?? generateActivity
-    const editorialRequestPattern = /suggest ideal|ideal addition|ideal new|new pieces|completion|completions|missing-piece|missing piece|not.*wardrobe|beyond my wardrobe|ignore my wardrobe|do not use my wardrobe|don't use my wardrobe|dont use my wardrobe|selected garment only|new item/i
+    // `not.*wardrobe` used to stand here: any "not" before any later "wardrobe" sent the turn to ideal
+    // new pieces, so "these are not bad … what else … in my wardrobe?" got pieces the user does not own
+    // (thread_1792781414837). Only an explicit ask to go outside the wardrobe counts now.
+    const editorialRequestPattern = /suggest ideal|ideal addition|ideal new|new pieces|completion|completions|missing-piece|missing piece|not (?:from|in|using|limited to) my wardrobe|outside (?:of )?my wardrobe|beyond my wardrobe|ignore my wardrobe|do not use my wardrobe|don't use my wardrobe|dont use my wardrobe|selected garment only|new item/i
     const typedEditorialRequest = editorialRequestPattern.test(q)
     const shouldGenerateEditorialVisuals = Boolean(pieceToSend && (effectiveEditorialVisualMode || typedEditorialRequest))
     const shouldGenerateOutfits = Boolean(pieceToSend && effectiveGenerateOutfitMode && !shouldGenerateEditorialVisuals)
