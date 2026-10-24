@@ -164,7 +164,7 @@ test('all AI outfit-rendering surfaces include saved-board renderer corrections'
   assert.match(coreSource, /withSavedBoardRendererMemory\(savedOutfitImagePrompt/)
   assert.match(coreSource, /withSavedBoardRendererMemory\(wholeWardrobeImagePrompt/)
   assert.match(coreSource, /withSavedBoardRendererMemory\(wholeWardrobeComparisonSheetPrompt/)
-  assert.match(coreSource, /withSavedBoardRendererMemory\(promptText, \[selectedPiece\]\)/)
+  assert.match(coreSource, /withSavedBoardRendererMemory\(promptTextFor\([^)]*\)\), \[selectedPiece\]\)/)
   assert.match(coreSource, /withSavedBoardRendererMemory\([\s\S]*editorialImagePrompt/)
 })
 

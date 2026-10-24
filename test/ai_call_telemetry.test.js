@@ -37,6 +37,13 @@ const syntheticFetch = async (input, init = {}) => {
     }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
 
+  if (url.includes('/v1/images/edits')) {
+    return new Response(JSON.stringify({
+      created: 0, data: [{ b64_json: 'QUJD' }],
+      usage: { input_tokens: 9000, input_tokens_details: { text_tokens: 3000, image_tokens: 6000 }, output_tokens: 2000, total_tokens: 11000 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+
   if (url.includes('/v1/responses')) {
     return new Response(JSON.stringify({
       id: 'resp_test', object: 'response', model: 'gpt-4o', output: [],
@@ -152,6 +159,31 @@ test('image-generation responses are classified as image calls with the flat cos
   assert.equal(row.estimated_cost_usd, 0.07)
 })
 
+// An Images API edit is multipart, so the hook cannot read its model from the body; the caller
+// names it on the context, and the row is priced from OpenAI's own usage at the published rates.
+test('image edits are logged under the model the caller named, priced from their usage', async () => {
+  const { toFile } = await import('openai')
+  const openai = new OpenAI({ apiKey: 'test-key', maxRetries: 0, fetch: syntheticFetch })
+  await telemetry.runWithAiTelemetryContext({ originalUrl: '/api/ai/generate-wardrobe-outfit-image', imageRequestModel: 'gpt-image-2.5-flare' }, async () =>
+    openai.images.edit({ model: 'gpt-image-2.5-flare', prompt: 'p', image: [await toFile(Buffer.from('x'), 'a.jpg', { type: 'image/jpeg' })] })
+  )
+  await waitForRows(4)
+  const row = db.prepare("SELECT * FROM ai_call_log WHERE model = 'gpt-image-2.5-flare' ORDER BY id DESC LIMIT 1").get()
+  assert.ok(row)
+  assert.equal(row.is_image, 1)
+  assert.equal(row.input_tokens, 9000)
+  assert.equal(row.output_tokens, 2000)
+  // 3000 text × $5 + 6000 image × $8 + 2000 output × $30, per million.
+  assert.ok(Math.abs(row.estimated_cost_usd - 0.123) < 1e-9)
+})
+
+test('the image price estimate splits text from image input and never guesses an unknown model', () => {
+  assert.equal(telemetry.estimateOpenAIImageCostUsd('gpt-image-1', { input_tokens: 10, output_tokens: 10 }), null)
+  assert.equal(telemetry.estimateOpenAIImageCostUsd('gpt-image-2.5-flare', null), null)
+  // No text/image split: all input at the image rate, the higher of the two.
+  assert.ok(Math.abs(telemetry.estimateOpenAIImageCostUsd('gpt-image-2.5-sunburst', { input_tokens: 1000, output_tokens: 1000 }) - 0.038) < 1e-9)
+})
+
 test('provider HTTP failures are logged and the SDK still raises its provider error', async () => {
   const openai = new OpenAI({ apiKey: 'test-key', maxRetries: 0, fetch: syntheticFetch })
   await assert.rejects(
@@ -164,7 +196,7 @@ test('provider HTTP failures are logged and the SDK still raises its provider er
     err => Number(err?.status) === 500
   )
 
-  await waitForRows(4)
+  await waitForRows(5)
   const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'editorial_directions' ORDER BY id DESC LIMIT 1").get()
   assert.ok(row)
   assert.equal(row.success, 0)
@@ -179,7 +211,7 @@ test('mock rows are flagged and excluded from real spend semantics', async () =>
       success: true, context: { source: 'test' },
     })
   )
-  await waitForRows(5)
+  await waitForRows(6)
   const row = db.prepare("SELECT * FROM ai_call_log WHERE provider = 'mock' ORDER BY id DESC LIMIT 1").get()
   assert.equal(row.flow, 'tag_piece')
   assert.equal(row.is_mock, 1)
@@ -204,7 +236,7 @@ test('a known X-Tagger-Source value is recorded on the ai_call_log row', async (
       messages: [{ role: 'user', content: 'test' }],
     })
   })
-  await waitForRows(6)
+  await waitForRows(7)
   const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'tag_piece' AND provider = 'anthropic' ORDER BY id DESC LIMIT 1").get()
   assert.ok(row)
   assert.equal(row.tagger_source, 'piece_form_add')
@@ -217,7 +249,7 @@ test('a known X-Tagger-Source value is recorded on the ai_call_log row', async (
       messages: [{ role: 'user', content: 'test' }],
     })
   })
-  await waitForRows(7)
+  await waitForRows(8)
   const batchRow = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'tag_piece' AND provider = 'anthropic' ORDER BY id DESC LIMIT 1").get()
   assert.ok(batchRow)
   assert.equal(batchRow.tagger_source, 'batch_add')
@@ -233,7 +265,7 @@ test('a missing X-Tagger-Source stays backward-compatible (empty, not a guess)',
       messages: [{ role: 'user', content: 'test' }],
     })
   })
-  await waitForRows(8)
+  await waitForRows(9)
   const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'tag_piece' AND provider = 'anthropic' ORDER BY id DESC LIMIT 1").get()
   assert.ok(row)
   assert.equal(row.tagger_source, '')
@@ -249,11 +281,11 @@ test('an arbitrary client-supplied source string cannot pollute telemetry', asyn
       messages: [{ role: 'user', content: 'test' }],
     })
   })
-  await waitForRows(9)
+  await waitForRows(10)
   const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'tag_piece' AND provider = 'anthropic' ORDER BY id DESC LIMIT 1").get()
   assert.ok(row)
   assert.equal(row.tagger_source, 'unknown')
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ai_call_log').get().n, 9)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ai_call_log').get().n, 10)
 })
 
 // Diagnostic breadcrumbs (2026-08-24): a live Batch Add run showed 3 of 5 sequential /tag-piece
@@ -285,7 +317,7 @@ test('logAiCall warns and still records an honest unattributed row when context 
   }
   assert.equal(warnings.length, 1)
   assert.match(String(warnings[0][0]), /logAiCall found no usable telemetry context/)
-  await waitForRows(10)
+  await waitForRows(11)
   const row = db.prepare("SELECT * FROM ai_call_log WHERE flow = 'unattributed' ORDER BY id DESC LIMIT 1").get()
   assert.ok(row)
   assert.equal(row.tagger_source, '')

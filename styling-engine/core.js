@@ -12,7 +12,7 @@ import OpenAI, { toFile } from 'openai'
 import { db, userUploadsDir, safeJsonParse } from '../db.js'
 import { buildWardrobeManifest, STRUCTURAL_FIELD_UNSET, stylingRulesForPrompt } from '../src/utils/wardrobeAiContext.js'
 import { resolveOpenAiKey, hasOpenAiKey, noKeyErrorMessage } from '../lib/apiKeys.js'
-import { logAiCall } from '../lib/aiCallTelemetry.js'
+import { logAiCall, estimateOpenAIImageCostUsd, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { getImageRenderProvider, renderWithGeminiImageModel } from './geminiImage.js'
 import { getStylistConversationState, saveStylistConversationState } from './conversationState.js'
 import { restoreWeatherProfile, serializeWeatherProfile } from './weather.js'
@@ -1568,6 +1568,60 @@ export function openAIImageGenerationTool(size = getOpenAIImageSize('generate'))
   return { type: 'image_generation', model: getOpenAIImageToolModel(), size, quality: 'medium' }
 }
 
+// The single-outfit render ("Generate outfit image") goes to the Images API edit endpoint, not the
+// gpt-4o tool, so our prompt reaches the image model word for word. Under the tool, gpt-4o rewrote
+// it first and sometimes dropped "the woman is the person in the calibration photos" (2026-10-19,
+// revised_prompt). The endpoint takes images and one prompt, not interleaved parts, so each image
+// becomes a numbered marker in the prompt at the place it sat, and the captions around it keep
+// their meaning ("Next image is…", or a caption that follows its photo).
+export function openAIContentPartsToImageEdit(contentParts = []) {
+  const images = []
+  const lines = []
+  for (const part of contentParts) {
+    if (part?.type === 'input_text') {
+      lines.push(part.text)
+    } else if (part?.type === 'input_image') {
+      const match = /^data:([^;]+);base64,(.*)$/s.exec(part.image_url || '')
+      if (!match) throw new Error('Image edit input must be an inline data URL')
+      images.push({ mime: match[1], buffer: Buffer.from(match[2], 'base64') })
+      lines.push(`[Image ${images.length}]`)
+    } else {
+      throw new Error(`Unsupported content part for image edit: ${part?.type}`)
+    }
+  }
+  return {
+    images,
+    prompt: [`The ${images.length} attached images are numbered in the order given; each [Image N] below marks where that image belongs.`, ...lines].join('\n'),
+  }
+}
+
+// What the Images API reports, never the image bytes: the counterpart of openAIImageResponseEvidence
+// for the direct path. The prompt is ours verbatim, so only its size is kept, not a copy.
+export function openAIImageEditEvidence(response, { model, imageCount, promptChars }) {
+  const { data, ...rest } = response || {}
+  return { path: 'images.edit', requestModel: model, imageCount, promptChars, ...rest }
+}
+
+export async function runOpenAIImageEditFromContentParts({ client, contentParts, size = getOpenAIImageSize('generate') }) {
+  const { images, prompt } = openAIContentPartsToImageEdit(contentParts)
+  const model = getOpenAIImageToolModel()
+  const files = await Promise.all(images.map((img, i) => {
+    const ext = img.mime === 'image/png' ? 'png' : img.mime === 'image/webp' ? 'webp' : 'jpg'
+    return toFile(img.buffer, `reference-${i + 1}.${ext}`, { type: img.mime })
+  }))
+  // A nested context, so the telemetry hook can name the model of this multipart request without
+  // touching the context of any other call in the same request.
+  const response = await runWithAiTelemetryContext({ ...getAiTelemetryContext(), imageRequestModel: model },
+    () => client.images.edit({ model, image: files, prompt, size, quality: 'medium', n: 1 }))
+  const base64 = response?.data?.[0]?.b64_json
+  if (!base64) throw new Error('Image edit returned no image data')
+  return {
+    base64,
+    evidence: openAIImageEditEvidence(response, { model, imageCount: images.length, promptChars: prompt.length }),
+    estimatedCostUsd: estimateOpenAIImageCostUsd(model, response?.usage),
+  }
+}
+
 export async function runOpenAIImageGeneration({ client, prompt, size, kind = 'generate', imagePath = null }) {
   let lastError = null
   for (const model of getOpenAIImageFallbackModels()) {
@@ -2192,6 +2246,12 @@ function pieceConstructionChecklist(pieces) {
   }).join('\n')
 }
 
+// The identity link every OpenAI render states in its prompt body whenever a real calibration photo
+// is attached. Captions on the photos alone do not survive gpt-4o's rewrite (2026-10-17). The ideal-
+// piece renders went without it until 2026-10-24, and their rewrites described her from the style
+// profile's subject sentence instead ("a woman with medium curly hair…").
+export const CALIBRATED_PERSON_LINE = 'The woman is the person in the identity/proportion calibration photos: same face, hair, build, height and body proportions, and the same natural posture. Do not substitute a different, younger, slimmer, or more generic model.'
+
 export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', hasIdentityReference = false }) {
   const pieceLines = pieces.map((piece, index) => {
     const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 900)
@@ -2224,7 +2284,7 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     // rewrite kept "a woman" and dropped the captions: figure, build and setting came out generic.
     // Stated here, in the body the rewrite carries, it reaches the image model.
     hasIdentityReference
-      ? '- The woman is the person in the identity/proportion calibration photos: same face, hair, build, height and body proportions, and the same natural posture. Do not substitute a different, younger, slimmer, or more generic model. Full figure visible from head to shoes, no beauty retouching.'
+      ? `- ${CALIBRATED_PERSON_LINE} Full figure visible from head to shoes, no beauty retouching.`
       : '- Full figure visible from head to shoes, single adult woman, natural relaxed posture, ordinary realistic proportions, no beauty retouching.',
     // A "setting like her calibration photos" variant was tried and removed the same night: the
     // render copied her living room from one of them.
@@ -2293,7 +2353,7 @@ export function wholeWardrobeComparisonSheetPrompt({ outfits = [], piecesById = 
   ].filter(Boolean).join('\n')
 }
 
-export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', variantMode = 'similar', currentDate = new Date() }) {
+export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', variantMode = 'similar', currentDate = new Date(), hasIdentityReference = false }) {
   const mode = variantMode === 'creative' ? 'creative' : 'similar'
   const weatherProfile = weatherProfileFromContext({ season, currentDate })
   const requestedAnchorId = Number(outfit.mainPieceId || outfit.main_piece_id || outfit.anchorPieceId || outfit.anchor_piece_id) || null
@@ -2314,6 +2374,7 @@ export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'c
       : 'Create one image showing three similar outfit variants inspired by the saved outfit photo.',
     'Show the three alternatives side by side as a clean triptych/contact sheet. Each alternative should be a full-body outfit on the same person.',
     'Use the source photo only for identity, proportions, and fit context.',
+    hasIdentityReference ? CALIBRATED_PERSON_LINE : '',
     'Use the linked garment references when useful. You may change supporting styling pieces freely, but keep the anchor garment.',
     anchorPiece ? `Keep this ${userSelectedAnchor ? 'user-selected main linked garment' : 'linked garment'} as a visible anchor in all three alternatives unless the saved outfit itself has no clear anchor: ${anchorPiece.name} (${wardrobeCategoryGroup(anchorPiece)}). Do not replace or redesign that anchor garment.` : '',
     '',
@@ -2354,7 +2415,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
   const sourcePath = outfit.photo ? imageUrlToUploadPath(outfit.photo) : null
 
-  if (photoPreservingVisualsEnabled() || !hasOpenAiKey()) {
+  if (mockAiEnabled() || photoPreservingVisualsEnabled() || !hasOpenAiKey()) {
     const collageStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: 'Outfit alternatives',
@@ -2413,28 +2474,24 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
       contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
     }
 
-    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(savedOutfitImagePrompt({ outfit, pieces, occasion, season, variantMode, currentDate }), pieces) })
-    const gptStartedAt = Date.now()
-    const response = await client.responses.create({
-      model: 'gpt-4o',
-      input: [{ role: 'user', content: contentParts }],
-      tools: [openAIImageGenerationTool()]
-    })
-    timings.gpt4oImageMs = Date.now() - gptStartedAt
-    timings.usage = response.usage
+    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(savedOutfitImagePrompt({ outfit, pieces, occasion, season, variantMode, currentDate, hasIdentityReference: calibrationRefs.some(img => img.kind === 'real_photo') }), pieces) })
+    // Straight to the image model, as createWholeWardrobeOutfitImage does (2026-10-24).
+    const editStartedAt = Date.now()
+    const edited = await runOpenAIImageEditFromContentParts({ client, contentParts, size: getOpenAIImageSize('generate') })
+    timings.imageEditMs = Date.now() - editStartedAt
     timings.imageSize = getOpenAIImageSize('generate')
     timings.imageModel = getOpenAIImageToolModel()
-    const imageItem = response.output?.find(item => item.type === 'image_generation_call')
-    if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
-    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
+    timings.imageEvidence = edited.evidence
+    // The chat's cost line reads this; null when the model has no published rates here.
+    timings.estimatedCostUsd = edited.estimatedCostUsd
     const writeStartedAt = Date.now()
-    await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
+    await fs.promises.writeFile(outPath, Buffer.from(edited.base64, 'base64'))
     timings.writeMs = Date.now() - writeStartedAt
     timings.totalMs = Date.now() - startedAt
-    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'openai-image-edit' }
   } catch (err) {
-    console.error('Saved outfit GPT-4o image generation failed, falling back to collage:', err.message)
-    timings.gpt4oError = err.message
+    console.error('Saved outfit image edit failed, falling back to collage:', err.message)
+    timings.imageEditError = err.message
     const imageUrl = await createPhotoPreservingCollageImage({
       title: 'Outfit alternatives',
       subtitle: variantMode === 'creative' ? 'creative alternatives fallback · source and garment photos' : 'similar variants fallback · source and garment photos',
@@ -2544,28 +2601,26 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
       return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gemini' }
     }
 
+    // Straight to the image model, no gpt-4o rewrite (see runOpenAIImageEditFromContentParts).
+    // timings.usage stays unset: the image model's tokens are not priced by StylistChat's gpt-4o
+    // rate card, and they are kept in imageEvidence instead.
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
-    const gptStartedAt = Date.now()
-    const response = await client.responses.create({
-      model: 'gpt-4o',
-      input: [{ role: 'user', content: contentParts }],
-      tools: [openAIImageGenerationTool()]
-    })
-    timings.gpt4oImageMs = Date.now() - gptStartedAt
-    timings.usage = response.usage
+    const editStartedAt = Date.now()
+    const edited = await runOpenAIImageEditFromContentParts({ client, contentParts, size: getOpenAIImageSize('generate') })
+    timings.imageEditMs = Date.now() - editStartedAt
     timings.imageSize = getOpenAIImageSize('generate')
     timings.imageModel = getOpenAIImageToolModel()
-    const imageItem = response.output?.find(item => item.type === 'image_generation_call')
-    if (!imageItem?.result) throw new Error('GPT-4o did not return an image result')
-    timings.imageEvidence = openAIImageResponseEvidence(response, imageItem)
+    timings.imageEvidence = edited.evidence
+    // The chat's cost line reads this; null when the model has no published rates here.
+    timings.estimatedCostUsd = edited.estimatedCostUsd
     const writeStartedAt = Date.now()
-    await fs.promises.writeFile(outPath, Buffer.from(imageItem.result, 'base64'))
+    await fs.promises.writeFile(outPath, Buffer.from(edited.base64, 'base64'))
     timings.writeMs = Date.now() - writeStartedAt
     timings.totalMs = Date.now() - startedAt
-    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'gpt-4o' }
+    return { imageUrl: `/uploads/${filename}`, timings, renderer: 'openai-image-edit' }
   } catch (err) {
-    console.error(`Whole-wardrobe ${imageProvider === 'gemini' ? 'Gemini' : 'GPT-4o'} image generation failed, falling back to collage:`, err.message)
-    timings[imageProvider === 'gemini' ? 'geminiError' : 'gpt4oError'] = err.message
+    console.error(`Whole-wardrobe ${imageProvider === 'gemini' ? 'Gemini' : 'OpenAI image edit'} generation failed, falling back to collage:`, err.message)
+    timings[imageProvider === 'gemini' ? 'geminiError' : 'imageEditError'] = err.message
     const fallbackStartedAt = Date.now()
     const imageUrl = await createPhotoPreservingCollageImage({
       title: board.label,
@@ -2787,7 +2842,7 @@ export async function createIdealAdditionsComparisonSheetImage({
     d.reason ? `Styling intent: ${d.reason}` : ''
   ].filter(Boolean).join('\n')).join('\n\n')
 
-  const promptText = [
+  const promptTextFor = (hasIdentityReference) => [
     `Generate ONE comparison image containing ${directions.length} full-body figures of the same woman standing side by side, each labeled ${directions.map((_, i) => `"${directions[i].label}"`).join(', ')}.`,
     '',
     'Selected garment fidelity rules:',
@@ -2798,7 +2853,9 @@ export async function createIdealAdditionsComparisonSheetImage({
     '- The other pieces per figure are described in text below. Render them as plausible, realistic garments matching the descriptions.',
     '',
     'Scene:',
-    '- Single adult woman, identical across all figures, natural relaxed posture, full figure head to shoes.',
+    hasIdentityReference
+      ? `- ${CALIBRATED_PERSON_LINE} The same woman in every figure, full figure head to shoes.`
+      : '- Single adult woman, identical across all figures, natural relaxed posture, full figure head to shoes.',
     '- Neutral background, soft daylight. Small clean text label above or below each figure with its direction name. No other text, no watermark.',
     '- This is a rough comparison sheet — clarity of the outfit differences matters more than polish.',
     '',
@@ -2850,7 +2907,7 @@ export async function createIdealAdditionsComparisonSheetImage({
         image_url: `data:${garmentRef.mime};base64,${garmentRef.base64}`
       })
     }
-    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(promptText, [selectedPiece]) })
+    contentParts.push({ type: 'input_text', text: withSavedBoardRendererMemory(promptTextFor(calibrationRefs.some(img => img.kind === 'real_photo')), [selectedPiece]) })
 
     const gptStartedAt = Date.now()
     const response = await client.responses.create({
@@ -3783,7 +3840,7 @@ export function anchorFidelityInstructions(selectedPiece = {}) {
   return parts.join(' ')
 }
 
-export function editorialImagePrompt({ selectedPiece, direction, occasion, season, supportingPieces = [] }) {
+export function editorialImagePrompt({ selectedPiece, direction, occasion, season, supportingPieces = [], hasIdentityReference = false }) {
   const missing = Array.isArray(direction.missingPieces)
     ? direction.missingPieces.join(', ')
     : ''
@@ -3825,6 +3882,7 @@ export function editorialImagePrompt({ selectedPiece, direction, occasion, seaso
     EDITORIAL_IMAGE_BASE_PROMPT,
  
     prompts.EDITORIAL_IMAGE_SUBJECT_PROMPT,
+    hasIdentityReference ? CALIBRATED_PERSON_LINE : '',
  
     `Style Constitution:
 ${prompts.BODY_CONTRACT}
@@ -4017,8 +4075,8 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   const supportingPieces = supportingPieceIds.length
     ? db.prepare(`SELECT * FROM pieces WHERE id IN (${supportingPieceIds.map(() => '?').join(',')})`).all(...supportingPieceIds).map(parsePiece)
     : []
-  const prompt = withSavedBoardRendererMemory(
-    editorialImagePrompt({ selectedPiece, direction, occasion, season, supportingPieces }),
+  const promptFor = (hasIdentityReference) => withSavedBoardRendererMemory(
+    editorialImagePrompt({ selectedPiece, direction, occasion, season, supportingPieces, hasIdentityReference }),
     [selectedPiece, ...supportingPieces]
   )
   const filename = `generated-boards/editorial-${Date.now()}-${index}-${Math.round(Math.random() * 1e6)}.png`
@@ -4112,12 +4170,13 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
 
   try {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
-    const referenceImages = await getCalibrationReferenceImagesForGeneration(3)
+    const calibrationRefs = await getCalibrationReferenceImagesForGeneration(3)
+    timings.calibrationReferenceIds = calibrationRefs.map(img => img.id)
     const { result: base64Result, usage, imageEvidence } = await runGPT4oImageGeneration({
       client,
-      prompt,
+      prompt: promptFor(calibrationRefs.some(img => img.kind === 'real_photo')),
       size: getOpenAIImageSize('generate'),
-      referenceImages,
+      referenceImages: calibrationRefs,
       anchorGarmentImage,
       supportingGarmentImages,
     })
@@ -4135,7 +4194,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
   try {
     const client = new OpenAI({ apiKey: resolveOpenAiKey() })
     const result = await runOpenAIImageGeneration({
-      client, prompt, size: getOpenAIImageSize('generate'), kind: 'generate'
+      client, prompt: promptFor(false), size: getOpenAIImageSize('generate'), kind: 'generate'
     })
     const first = result.data?.[0]
     if (first?.b64_json) {
