@@ -1402,6 +1402,31 @@ pair terms are explicit garment metadata only:
 Saved-board and garment favourites remain organization/display metadata and prompt evidence where
 explicitly described; they do not mechanically promote literal pieces or pairs.
 
+**[amended 2026-10-24 — the stylist chooses the selected-piece roster]** In wardrobe mode,
+`compatibilityScoreForSelectedItem` and its per-category quotas no longer decide what the first-turn
+composer sees ([selected-piece-model-roster-spec.md](selected-piece-model-roster-spec.md)).
+
+The live case was `thread_1792822990468`, on the black wide-leg knit trousers:
+- the quota kept 12 of 103 usable tops;
+- the word-matched score (+12 "compact/structured top" for any sleeveless/tank/shell, −8 "wide/soft
+  top risk") ranked the two sweaters behind the owner's better cards 60th and 61st.
+
+`chooseSelectedPieceRoster` (`routes/ai.js`) now builds the complete catalog:
+- the photo roster's own gates, uncapped;
+- automatic-use allowed only;
+- no accessories;
+- no garment that cannot share an outfit with the anchor.
+
+The stylist then picks up to 40 garments (`selected_piece_roster_selection`). Code only checks IDs
+and the complete-outfit supply contract, and any coverage addition is recorded. The code ranking
+remains as the coverage source and the fallback; `debug.visualCritic.rosterSelection` says which ran
+and why. Kill switch: `WARDROBE_SELECTED_PIECE_MODEL_ROSTER=off`. Ideal mode is unchanged.
+
+Offline (`scratch/verify_selected_piece_model_roster.mjs`):
+- the knit-trousers catalog holds 182 garments, and all six turn-8 garments missing from today's
+  roster are in it;
+- garments under owner exclusions stay out (167, "user-excluded for city").
+
 ### Recency, again — as a score
 
 `getRecentWholeWardrobeSessionInfluence` (`rules.js`) converts the 10-row session memory into

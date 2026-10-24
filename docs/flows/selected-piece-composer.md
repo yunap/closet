@@ -32,7 +32,7 @@ hexagons labelled `LLM ·` are calls to the AI model, diamonds are decisions.**
 flowchart TD
     A["You open a piece<br/>+ occasion, mood, mode"] --> X["Resolve shared styling context<br/>values + source provenance"]
     X --> B["Load anchor + active wardrobe"]
-    B --> C["Rank supporting candidates<br/>score to ~32 best supports"]
+    B --> C["Stylist chooses ≤40 garments<br/>from the complete eligible catalog<br/>(code ranking = fallback only)"]
     C --> Q{"Anchor has a complete<br/>outfit path?"}
     Q -->|no| S["Return explicit wardrobe shortfall<br/>dependent anchor stays Needs review"]
     Q -->|yes| D["Assemble anchor memory<br/>this piece's outfits, feedback, boards"]
@@ -95,7 +95,7 @@ Same finite-pool authority (`evaluateVisualComposerPiecePool`), different framin
 
 | Aspect            | Use my wardrobe                    | Selected-piece composer                          |
 | ----------------- | ---------------------------------- | ------------------------------------------------ |
-| Input pool        | whole active wardrobe              | anchor + ~32 pre-ranked supports (`ai.js:2119`)  |
+| Input pool        | whole active wardrobe              | anchor + ≤40 the stylist chose from the complete eligible catalog; ~32 code-ranked supports only on fallback ([spec](../selected-piece-model-roster-spec.md)) |
 | Roster image cap  | 90                                 | 54 (`ai.js:1614`)                                |
 | Anchor            | none                               | selected piece required in every outfit; a card without it is Needs review |
 | Memory            | lean (feedback + favorites)        | rich, garment-specific (outfits, gold feedback, saved boards, calibration) (`ai.js:2130`) |
