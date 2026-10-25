@@ -262,3 +262,109 @@ not fully blind:** Explore sets have 5 cards and default sets 3, as the sheet st
   expected pairing the instruction asks her to leave out: "Monochrome Fitted Column", "Monochrome
   Knit Flow", "Urban Monochrome Column". This is noted for a later look. No change was made, because
   the pass bars were met.
+
+## 8 · A layer anchor and a correction for missing parts (2026-10-25, owner ruling)
+
+**The failure.** `thread_1792909006877`, the first Explore turn on a garment worn over something
+else: the patchwork knit buttoned top (piece 184, filed `outerwear`, `indoor_layer`). All five cards
+put it in `outer_layer_id` with nothing under it, so every card was a `missing_top_or_dress` Needs
+review card. The roster had shown six tops. Her own words half-knew it ("Keep the under layer simple"
+on a card with no under layer). The 13 Explore turns before it were all on tops and bottoms, and the
+default mode had handled outerwear anchors (pieces 996887, 996897). The likely reading, not proven
+from a capture: told to leave out the obvious pairings, she left out the top under the layer.
+
+**Owner ruling.** A layer garment always needs a top or a dress under it.
+
+**Change:**
+- **Explore with an outerwear anchor.** The composer request carries `EXPLORE_LAYER_ANCHOR_LINE`
+  (`styling-engine/prompts.js`) after the anchor's category line: the garment is worn over a top or
+  a dress, and leaving out the obvious pairings changes which garments she chooses, never the base.
+  Default requests, and Explore on any other anchor, are unchanged.
+- **A correction for missing parts, in every visual composer.** The one correction call that
+  `docs/composer-slot-name-check-spec.md` added for name mismatches (`correctComposerSlots`, was
+  `correctComposerNameMismatches`) now also fires for cards missing a required part:
+  `missing_top_or_dress`, `missing_bottom`, `missing_shoes`, and on the selected-piece path
+  `missing_selected_anchor`. Still at most one call per turn, the same request plus her previous
+  answer and one line per finding. The answer replaces the original only when it returns the same
+  number of outfits. Code never fills a slot. Debug: `nameCheck.missingSlots`, `nameCheck.remainingMissing`;
+  the call's subflow is now `*_slot_correction`.
+
+**Verified offline:**
+- `test/selected_piece_explore.test.js` adds 3 tests: the layer line (Explore on a layer anchor only);
+  the incident's five cards get one correction call naming each missing base, and the completed cards
+  ship; a correction that is still incomplete, short or failing leaves Needs review cards with the
+  base still empty. `node --test test/`: 2,589 of 2,589 pass.
+- Replay on piece 184 against an isolated copy of the real DB, the thread's own five answers, every
+  model call stubbed: the Explore request carries the layer line; one correction call lists all five
+  missing bases; a compliant correction ships five cards that pass the slot check and the shared
+  wearability evaluator with the real garments.
+
+**Not verified:** whether the layer line alone stops her leaving out the base, and how well she
+chooses the base in a correction. Both need one paid Explore turn on piece 184 (≈ $0.02–0.03).
+
+## 9 · The shortlist judges the base fit first; validation reads full garments (2026-10-25)
+
+**The run.** `thread_1792915678690`, Explore on piece 184 with §8 in place: five complete cards, no
+correction call. The owner: none of the tops except card 1's (the cream wool shell) can fit or make
+sense under 184. The cream crochet top is sheer and tagged `needs_base`; the boxy lace top and the
+flared-sleeve crew-neck sweater do not sit right under a knit worn buttoned with a very low scoop
+(the owner's worn photo shows it closed over a dark camisole).
+
+**Why.**
+- **Order across the pipeline.** #337 made the composer judge each layered pair's fit before the
+  card's idea, with `layering_check` first; that holds (Gemini writes the field first). But the
+  shortlist step picks garments by idea and had no fit rule. It chose 4 of 103 tops, all cream, as
+  visible partners ("monochromatic neutral textural depth"), so the composer had one workable base
+  and five cards to fill. About 15 close-fitting opaque sleeveless tops were never shown.
+- **Validation read trimmed garments.** The selected-piece composer validated cards against pieces
+  trimmed to identity and photos by `normalizeWholeWardrobeOutfitObject`, so the shared evaluator
+  saw no `needs_base`, opacity, fit or sleeve facts. Given the full record it rejects the crochet
+  card (`required_base_layer_missing_or_incompatible`). Same bug class as `cleanup-inventory.md`'s
+  P0. Whole Wardrobe already caught this card in a later pass that restores full records.
+
+**Change.**
+- `ROSTER_LAYER_ANCHOR_BLOCK` (`styling-engine/selectedPieceRoster.js`): for an outerwear anchor, in
+  both modes, the shortlist is told the anchor is worn over a top or a dress, to bring alternatives
+  for it, and to judge that pair for wearability first (sleeves, armholes, body, and how it looks
+  where the anchor leaves it showing) before colour, texture and idea. Other anchors are unchanged.
+- `withFullGarmentRecords` (`styling-engine/rules.js`): both visual composers validate cards against
+  the full garment record, matched by ID, keeping the card's role.
+
+**Verified offline.** `test/composer_full_garment_validation.test.js` (2 tests; the selected-piece
+one fails on the old code) and a roster test in `test/selected_piece_explore.test.js`;
+`node --test test/` 2,592 of 2,592. Replay of this thread's five answers on piece 184 against an
+isolated DB copy: the shortlist request carries the rule; the crochet card is now Needs review; the
+lace and sweater cards still pass, because no recorded fact rules them out.
+
+**Not verified.** Whether the shortlist now brings bases that work under 184, and whether the
+composer then drops the lace and sweater tops. That needs one paid Explore turn on piece 184.
+
+## 10 · In Explore, the base under a layer anchor is out of scope (2026-10-25, owner ruling)
+
+**The runs.** With §9 in place, Explore on piece 184 (`thread_1792916742017`) chose a black boat-neck
+knit, a striped sweater, a collared long shirt, a tiger print blouse and a stripe turtleneck:
+sleeved, collared or high-necked, all wrong under a knit worn buttoned with a very low scoop. The
+default mode on the same code (`thread_1792917380852`) chose fitted tops, card 1 a black sleeveless
+top, and its shortlist note named the fit rule. The August default thread had put tanks under it.
+
+**Why the modes differ.** Each Explore change pushes the novelty into the base: "leave out the
+obvious pairings" (for 184 the obvious base is the correct one); the variety rule it replaces was
+the sentence allowing a strong garment to repeat, and Explore's "no two should be variations of the
+same idea" pushes a different base onto every card; 5 cards instead of 3–4; and in the shortlist
+prompt the Explore block, ending "not for the expected ones", came after the layer rule.
+
+**Owner ruling.** In Explore, the top or dress under a layer anchor is chosen for how the anchor is
+worn and may repeat across cards; the less obvious direction goes into the rest of the outfit.
+
+**Change.** `EXPLORE_LAYER_BASE_SCOPE` (`styling-engine/prompts.js`) says exactly that and is given to
+both steps for an outerwear anchor in Explore: the composer's `EXPLORE_LAYER_ANCHOR_LINE` now carries
+it, and the shortlist's layer rule carries it and moves after the Explore block. The default mode is
+unchanged from §9.
+
+**Verified offline.** The roster test pins the order and the scope in both steps;
+`node --test test/` 2,592 of 2,592. The real Explore requests for piece 184, built from an isolated DB
+copy, carry the layer rule last in the shortlist prompt and the scope in both steps.
+
+**Not verified.** Whether Explore now chooses bases that work under 184. One paid Explore turn on
+piece 184 (≈ $0.024).
+

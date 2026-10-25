@@ -14,7 +14,7 @@
 import { wardrobeCategoryGroup } from './attributes.js'
 import { sparseGarmentCatalogRow, SPARSE_CATALOG_CONVENTIONS } from './garmentEvidenceLine.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement } from './candidateSet.js'
-import { EXPLORE_INSTRUCTION } from './prompts.js'
+import { EXPLORE_INSTRUCTION, EXPLORE_LAYER_BASE_SCOPE } from './prompts.js'
 
 export const SELECTED_PIECE_ROSTER_MAX = 40
 export const SELECTED_PIECE_ROSTER_SUBFLOW = 'selected_piece_roster_selection'
@@ -80,7 +80,16 @@ const CATALOG_CONVENTIONS = SPARSE_CATALOG_CONVENTIONS.split(' view_pieces truth
 // Explore (docs/selected-piece-explore-mode-spec.md §2.2): the roster step is told how many outfits will
 // be built and what they are for, so the shortlist is not drawn for the expected outfits only. With
 // `explore` off the prompt is exactly the default one.
-export function selectedPieceRosterSystemPrompt(max = SELECTED_PIECE_ROSTER_MAX, { explore = false, outfitCount = null } = {}) {
+// A layer anchor (owner ruling 2026-10-25: a layer garment always needs a top or a dress under it).
+// thread_1792915678690: the shortlist chose four cream tops as visible partners for a knit layer,
+// by idea, with no fit rule; the composer's wearability-first check (#337) then had only one base
+// that worked under it and five cards to fill. The shortlist now judges that pair fit first too.
+// In Explore it comes after the Explore block, so "not for the expected ones" does not override it,
+// and it carries the Explore base scope.
+export const ROSTER_LAYER_ANCHOR_BLOCK = 'The anchor is worn over a top or a dress, so every outfit needs one under it, and your shortlist must bring real alternatives for it. Wearability comes first for that pair: from the anchor\'s photograph and recorded construction and each candidate\'s recorded construction, ask whether the candidate can sit inside the anchor at the sleeves, the armholes and the body, and how it will look where the anchor leaves it showing. Shortlist only candidates that pass; colour, texture and the outfit\'s idea are judged after that.'
+
+export function selectedPieceRosterSystemPrompt(max = SELECTED_PIECE_ROSTER_MAX, { explore = false, outfitCount = null, layerAnchor = false } = {}) {
+  const layerBlock = layerAnchor ? `\n\n${ROSTER_LAYER_ANCHOR_BLOCK}${explore ? ` ${EXPLORE_LAYER_BASE_SCOPE}` : ''}` : ''
   const exploreBlock = explore
     ? `\n\nYou are choosing for ${outfitCount || 'several'} outfits, each taking its own direction. ${EXPLORE_INSTRUCTION} Shortlist for those outfits, not for the expected ones.`
     : ''
@@ -90,7 +99,7 @@ This is a shortlist to compare, not your final choice: you will decide between g
 
 ${CATALOG_CONVENTIONS}
 
-Answer with \`selection_note\` first: one or two sentences on the directions you are choosing for. Then \`roster_piece_ids\`: the IDs you chose, written as numbers, only from the catalog.${exploreBlock}`
+Answer with \`selection_note\` first: one or two sentences on the directions you are choosing for. Then \`roster_piece_ids\`: the IDs you chose, written as numbers, only from the catalog.${exploreBlock}${layerBlock}`
 }
 
 export function selectedPieceRosterUserText({ anchorPiece, anchorTruth = '', requestLines = [], catalog }) {

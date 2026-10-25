@@ -34,7 +34,7 @@ import {
   describeAiError,
   extractPieceIdsFromProse
 } from '../styling-engine/provider.js'
-import { composerNameMismatchCorrection, composerNameMismatches, composerOutfitSlotsSchema, composerOutfitCountCheck, resolveComposerSlotOutfit, withSlotFindings } from '../styling-engine/composerSlots.js'
+import { composerMissingSlots, composerNameMismatchCorrection, composerNameMismatches, composerOutfitSlotsSchema, composerOutfitCountCheck, resolveComposerSlotOutfit, withSlotFindings } from '../styling-engine/composerSlots.js'
 
 import {
   applyComfortFootwearRepair,
@@ -53,7 +53,7 @@ import {
 import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT, GEMINI_TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, occasionVibe, stripSoftRankingRules } from '../styling-engine/occasions.js'
-import { EXPLORE_INSTRUCTION, OUTFIT_VARIETY_RULE } from '../styling-engine/prompts.js'
+import { EXPLORE_INSTRUCTION, EXPLORE_LAYER_ANCHOR_LINE, OUTFIT_VARIETY_RULE } from '../styling-engine/prompts.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   garmentKind,
@@ -129,6 +129,7 @@ import {
   wholeWardrobePieceByGroup,
   wholeWardrobeMissesMood,
   normalizeWholeWardrobeOutfitObject,
+  withFullGarmentRecords,
   sanitizeWholeWardrobeOutfitProse,
   dedupeMissingAgainstOwned,
   photoPreservingVisualsEnabled,
@@ -1693,7 +1694,7 @@ export async function chooseSelectedPieceRoster({
   let value = null
   try {
     const result = await withTimeout(signal => askStylistStructuredWithUsage({
-      system: selectedPieceRosterSystemPrompt(SELECTED_PIECE_ROSTER_MAX, { explore, outfitCount }),
+      system: selectedPieceRosterSystemPrompt(SELECTED_PIECE_ROSTER_MAX, { explore, outfitCount, layerAnchor: wardrobeCategoryGroup(selectedPiece) === 'outerwear' }),
       maxTokens: 1500,
       messages: [{ role: 'user', content }],
       providerOverride,
@@ -1740,35 +1741,40 @@ export async function chooseSelectedPieceRoster({
 }
 
 // ONE CORRECTION CALL for a composer answer whose slot names and IDs disagree
-// (docs/composer-slot-name-check-spec.md). The same request plus the model's own previous answer and
-// a note naming each mismatch; the answer replaces the original only if it parses and returns the
-// same number of outfits. A card that still
-// disagrees is a Needs review card through the ordinary slot-finding path. Code never swaps the ID.
-export async function correctComposerNameMismatches({ parsed, candidatePieces, system, content, schema, maxTokens, providerOverride, subflow, thinkingLevel = null }) {
+// (docs/composer-slot-name-check-spec.md), or whose cards leave a required part empty (owner ruling
+// 2026-10-25). The same request plus the model's own previous answer and a note naming each finding;
+// the answer replaces the original only if it parses and returns the same number of outfits. A card
+// that still fails is a Needs review card through the ordinary slot-finding path. Code never swaps
+// an ID or fills a slot.
+export async function correctComposerSlots({ parsed, candidatePieces, requiredPieceId = null, system, content, schema, maxTokens, providerOverride, subflow, thinkingLevel = null }) {
   const first = composerNameMismatches(parsed, candidatePieces)
+  const firstMissing = composerMissingSlots(parsed, candidatePieces, { requiredPieceId })
+  const countMissing = answer => [...composerMissingSlots(answer, candidatePieces, { requiredPieceId }).values()].reduce((n, findings) => n + findings.length, 0)
   const nameCheck = {
     mismatches: [...first].flatMap(([outfitIndex, findings]) => findings.map(finding => ({ outfitIndex, ...finding.evidence }))),
+    missingSlots: [...firstMissing].flatMap(([outfitIndex, findings]) => findings.map(finding => ({ outfitIndex, code: finding.code }))),
     correctionRan: false,
     correctionUsage: null,
     correctionError: null,
     remaining: 0,
+    remainingMissing: 0,
   }
-  if (!first.size) return { parsed, nameCheck }
+  if (!first.size && !firstMissing.size) return { parsed, nameCheck }
   nameCheck.correctionRan = true
   let corrected = null
   try {
     const result = await withTimeout(signal => askStylistStructuredWithUsage({
       system,
       maxTokens,
-      messages: [{ role: 'user', content: [...content, { type: 'text', text: composerNameMismatchCorrection(parsed, first) }] }],
+      messages: [{ role: 'user', content: [...content, { type: 'text', text: composerNameMismatchCorrection(parsed, first, firstMissing) }] }],
       providerOverride,
       schema,
       name: 'wardrobe_outfits',
-      description: 'Return the composed outfits again, each slot ID matching the garment named in it.',
-      subflow: `${subflow}_name_correction`,
+      description: 'Return the composed outfits again, complete, each slot ID matching the garment named in it.',
+      subflow: `${subflow}_slot_correction`,
       ...(thinkingLevel ? { thinkingLevel } : {}),
       signal,
-    }), 120000, 'Composer name correction')
+    }), 120000, 'Composer slot correction')
     nameCheck.correctionUsage = result.usage ? { ...result.usage, estimatedCost: estimateAiUsageCost(result.usage) } : null
     // Only a full answer replaces the original: a shorter one would silently drop the cards that had
     // nothing wrong with them.
@@ -1780,6 +1786,7 @@ export async function correctComposerNameMismatches({ parsed, candidatePieces, s
   }
   const final = corrected ? { ...parsed, ...corrected } : parsed
   nameCheck.remaining = [...composerNameMismatches(final, candidatePieces).values()].reduce((n, findings) => n + findings.length, 0)
+  nameCheck.remainingMissing = countMissing(final)
   return { parsed: final, nameCheck }
 }
 
@@ -1937,6 +1944,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   content.push({ type: 'text', text: [
     `Selected anchor id: ${selectedPiece.id}`,
     categoryConstraintForSelectedPiece(selectedPiece),
+    explore && wardrobeCategoryGroup(selectedPiece) === 'outerwear' ? EXPLORE_LAYER_ANCHOR_LINE : '',
     `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
     '',
     `Occasion: ${occasion}`,
@@ -2020,8 +2028,8 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   }
   let nameCheck = null
   if (!composerError) {
-    const checked = await correctComposerNameMismatches({
-      parsed, candidatePieces, system: composerSystemPrompt, content,
+    const checked = await correctComposerSlots({
+      parsed, candidatePieces, requiredPieceId: selectedId, system: composerSystemPrompt, content,
       schema: composerOutfitSlotsSchema(outfitCount), maxTokens: composerMaxTokens,
       providerOverride, subflow: 'selected_piece_visual_composer',
     })
@@ -2053,7 +2061,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   })
   const selectedValidation = new Map(selectedModelOutfits.map(outfit => [
     outfit,
-    withSlotFindings(evaluateWearableOutfit(outfit.pieces, {
+    withSlotFindings(evaluateWearableOutfit(withFullGarmentRecords(outfit.pieces, candidatePieces), {
       requireShoes: true,
       seenPieceIds: new Set(shownPieces.map(piece => Number(piece.id))),
     }), slotFindingsByOutfit.get(outfit)),
@@ -3602,7 +3610,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
 
     let nameCheck = null
     if (!composerError) {
-      const checked = await correctComposerNameMismatches({
+      const checked = await correctComposerSlots({
         parsed, candidatePieces: allowedPieces, system: systemPrompt, content, schema: composerSchema,
         maxTokens: composerMaxTokens, providerOverride, subflow: 'whole_wardrobe_visual_composer',
         thinkingLevel: wantsStylistNote ? 'medium' : null,
@@ -3631,7 +3639,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     const resolved = normalizedModelOutfits.filter(outfit => !slotFindingsByOutfit.get(outfit).some(finding => finding.code === 'unknown_piece_id'))
     const validationByOutfit = new Map(normalizedModelOutfits.map(outfit => [
       outfit,
-      withSlotFindings(evaluateWearableOutfit(outfit.pieces, { requireShoes: true }), slotFindingsByOutfit.get(outfit)),
+      withSlotFindings(evaluateWearableOutfit(withFullGarmentRecords(outfit.pieces, allowedPieces), { requireShoes: true }), slotFindingsByOutfit.get(outfit)),
     ]))
     const structuralRejectionReason = (validation) => ({
       multiple_shoes: 'structural: more than one shoe',

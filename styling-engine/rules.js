@@ -5056,6 +5056,19 @@ export function normalizeWholeWardrobeOutfitObject(outfit, candidatePieces = [],
   }
 }
 
+// The card pieces above are trimmed to identity and photos. A check that reads garment facts
+// (needs_base, opacity, fit, sleeves) must be given the full record, or it reads nothing and passes.
+// thread_1792915678690: a sheer crochet top tagged needs_base shipped as the only top under a knit
+// layer because both visual composers validated the trimmed pieces. Matched by ID; the card's own
+// role is kept.
+export function withFullGarmentRecords(pieces = [], candidatePieces = []) {
+  const byId = new Map((Array.isArray(candidatePieces) ? candidatePieces : []).map(piece => [Number(piece.id), piece]))
+  return (Array.isArray(pieces) ? pieces : []).map(piece => {
+    const full = byId.get(Number(piece?.id))
+    return full ? { ...full, role: piece?.role ?? null } : piece
+  })
+}
+
 // One vocabulary for "this text is showing its working", shared by the card fields below and by the
 // closing answer in provider.js. Retrieval and self-correction are how the turn was produced, not
 // what it produced: the user asked for an outfit, not a transcript of the search that found it.

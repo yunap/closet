@@ -196,17 +196,43 @@ export function composerOutfitCountCheck(parsed, { minOutfits = 1, maxOutfits = 
   return { minOutfits, maxOutfits, returned, withinRequest: returned >= minOutfits && returned <= maxOutfits }
 }
 
-// The correction call's note (docs/composer-slot-name-check-spec.md §2.3): one line per mismatch, in
+// The correction call's note (docs/composer-slot-name-check-spec.md §2.3): one line per finding, in
 // the model's own terms. The answer comes back in the same schema; nothing here picks a garment.
-export function composerNameMismatchCorrection(parsed, mismatchesByIndex) {
-  const lines = []
-  for (const [index, findings] of mismatchesByIndex) {
-    const label = parsed?.outfits?.[index]?.label || `outfit ${index + 1}`
-    for (const finding of findings) {
-      lines.push(`- "${label}": you wrote "${finding.evidence.statedName}" for ${finding.evidence.slot}, but ID ${finding.evidence.pieceId} is "${finding.evidence.recordedName}".`)
+// A card can be listed for a name mismatch, for a required part it left empty, or both.
+export function composerNameMismatchCorrection(parsed, mismatchesByIndex = new Map(), missingByIndex = new Map()) {
+  const label = index => parsed?.outfits?.[index]?.label || `outfit ${index + 1}`
+  const sections = []
+  if (mismatchesByIndex.size) {
+    const lines = []
+    for (const [index, findings] of mismatchesByIndex) {
+      for (const finding of findings) {
+        lines.push(`- "${label(index)}": you wrote "${finding.evidence.statedName}" for ${finding.evidence.slot}, but ID ${finding.evidence.pieceId} is "${finding.evidence.recordedName}".`)
+      }
     }
+    sections.push(`In these slots the garment you named is not the garment whose ID you wrote:\n${lines.join('\n')}\nIn each slot, write the ID of the garment you actually mean, from the labels shown. If the garment you described is not among those shown, rebuild that outfit from shown garments.`)
   }
-  return `YOUR PREVIOUS ANSWER:\n${JSON.stringify(parsed)}\n\nCORRECTION NEEDED — in these slots the garment you named is not the garment whose ID you wrote:\n${lines.join('\n')}\nReturn the same outfits again. In each slot, write the ID of the garment you actually mean, from the labels shown. If the garment you described is not among those shown, rebuild that outfit from shown garments. Keep every outfit you did not need to change exactly as it was.`
+  if (missingByIndex.size) {
+    const lines = []
+    for (const [index, findings] of missingByIndex) {
+      for (const finding of findings) lines.push(`- "${label(index)}": ${finding.message}.`)
+    }
+    sections.push(`These outfits are missing a part every outfit needs:\n${lines.join('\n')}\nComplete each from shown garments: a top or a dress at the base, worn under any layer; a bottom unless the outfit is a dress; shoes; and the selected anchor where there is one.`)
+  }
+  return `YOUR PREVIOUS ANSWER:\n${JSON.stringify(parsed)}\n\nCORRECTION NEEDED — ${sections.join('\n\n')}\nReturn the same outfits again. Keep every outfit you did not need to change exactly as it was.`
+}
+
+// Required parts a card left empty (owner ruling 2026-10-25: a layer garment always needs a top or a
+// dress under it). thread_1792909006877: all five Explore cards wore the knit layer anchor over
+// nothing, and with no correction for it every card was Needs review. These join the same single
+// correction call as name mismatches.
+const MISSING_SLOT_CODES = new Set(['missing_selected_anchor', 'missing_top_or_dress', 'missing_bottom', 'missing_shoes'])
+export function composerMissingSlots(parsed, candidatePieces = [], { requiredPieceId = null } = {}) {
+  const byIndex = new Map()
+  ;(Array.isArray(parsed?.outfits) ? parsed.outfits : []).forEach((outfit, index) => {
+    const findings = resolveComposerSlotOutfit(outfit, candidatePieces, { requiredPieceId }).slotFindings.filter(finding => MISSING_SLOT_CODES.has(finding.code))
+    if (findings.length) byIndex.set(index, findings)
+  })
+  return byIndex
 }
 
 // Which cards of a composer answer carry a name mismatch, resolved against the shown roster.

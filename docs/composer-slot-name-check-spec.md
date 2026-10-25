@@ -78,3 +78,12 @@ which share the schema and the resolver.
   - a clean answer makes no extra call.
 - `thread_1792867254713` replay: the captured composer output resolves to `slot_name_mismatch` on
   card 2 under the new resolver, with the name added as the model wrote it.
+
+## 4 · Amendment 2026-10-25: the same call corrects missing parts
+
+`thread_1792909006877` (an Explore turn on a knit layer anchor) returned five cards with no top under
+the layer, and nothing could correct them. The single correction call now also lists cards missing a
+required part (`missing_top_or_dress`, `missing_bottom`, `missing_shoes`, and on the selected-piece
+path `missing_selected_anchor`), in the same note and under the same rules. See
+`docs/selected-piece-explore-mode-spec.md` §8.
+
