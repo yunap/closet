@@ -365,6 +365,23 @@ unchanged from §9.
 `node --test test/` 2,592 of 2,592. The real Explore requests for piece 184, built from an isolated DB
 copy, carry the layer rule last in the shortlist prompt and the scope in both steps.
 
-**Not verified.** Whether Explore now chooses bases that work under 184. One paid Explore turn on
-piece 184 (≈ $0.024).
+**Live check (owner-rated, 2026-10-25).** One Explore turn on piece 184 with this change,
+`thread_1792917963262` (Gemini 3.5 Flash-Lite, ≈ $0.028). The owner rated **all five cards
+workable**:
+
+| # | Top under 184 | Rest of the outfit |
+|---|---|---|
+| 1 | pale mint V-neck, fitted elbow sleeves | grey herringbone trousers, black suede wedge ankle boots |
+| 2 | black sleeveless top | black wide-leg knit trousers, black cutout flats |
+| 3 | whale stripe tee, long sleeves | emerald corduroy, brown leather zip ankle boots |
+| 4 | cream wool shell | light beige linen wide-leg pants, black loafers |
+| 5 | grey ribbed mock-neck, short sleeves | charcoal tailored trousers, black leather ankle boots |
+
+The shortlist's note named the rule ("compatible base layers … that fit under its 3/4 voluminous
+sleeves"), and the variety moved into the bottoms and shoes. No correction call ran. Against the
+earlier Explore turns on this garment: 0 of 5 (no base), 1 of 5, 0 of 5.
+
+**Noted, not changed:** the shortlist still spent 8 of its picks on outerwear no card can use
+beside a layer anchor (about 8 unused photos in the composer call). One turn, so this shows the
+change can work, not how often it does.
 
