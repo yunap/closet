@@ -20,13 +20,15 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { generateOutfitsForPieceInternal, selectedItemVisualComposerSystemPrompt, styleDirectionLine, selectedPieceOutfitCount } = await import('../routes/ai.js')
 const { OCCASION_PROFILES, occasionVibe, stripSoftRankingRules } = await import('../styling-engine/occasions.js')
-const { EXPLORE_INSTRUCTION, OUTFIT_VARIETY_RULE } = await import('../styling-engine/prompts.js')
-const { selectedPieceRosterSystemPrompt } = await import('../styling-engine/selectedPieceRoster.js')
+const { EXPLORE_INSTRUCTION, EXPLORE_LAYER_ANCHOR_LINE, EXPLORE_LAYER_BASE_SCOPE, OUTFIT_VARIETY_RULE } = await import('../styling-engine/prompts.js')
+const { selectedPieceRosterSystemPrompt, ROSTER_LAYER_ANCHOR_BLOCK } = await import('../styling-engine/selectedPieceRoster.js')
 const { ensureFixturePieces } = await import('./helpers/dbFixtures.js')
 
 const common = { status: 'active', occasions: '["city","casual"]', formality: 'everyday' }
 const ANCHOR = 830106
+const LAYER_ANCHOR = 830401
 const rows = [
+  { id: LAYER_ANCHOR, name: 'patchwork knit buttoned top', category: 'outerwear', outerwear_role: 'indoor_layer', fabric_weight: 'medium', ...common },
   { id: ANCHOR, name: 'black flare leg denim pants', category: 'bottom', fabric_weight: 'medium', ...common },
   ...Array.from({ length: 6 }, (_, i) => ({ id: 830201 + i, name: `fixture top ${i + 1}`, category: 'top', fabric_weight: 'medium', ...common })),
   { id: 830301, name: 'black slip-on loafers', category: 'shoes', heel_height: 'flat', walk_support: 'high', ...common },
@@ -160,4 +162,106 @@ test('interface: the piece form sends explore only when the toggle is on, and ca
   assert.match(source, /\.\.\.\(effectiveGenerateExplore \? \{ explore: true \} : \{\}\) \}\) \}\)/)
   assert.match(source, /Outfits beyond the obvious pairings for this piece\./)
   assert.match(source, /options\.explore && \{ id: 'explore', label: 'Explore' \}/, 'an Explore set is labelled in its request chips')
+})
+
+// thread_1792909006877 (owner ruling 2026-10-25: a layer garment always needs a top or a dress under
+// it). Explore on the knit layer anchor returned five cards with the layer and nothing under it.
+const layerCard = (bottomId, label, baseTopId = null) => ({
+  layering_check: 'no layered pair on this card', label, strength: 'strong', dominantDirection: 'x', silhouette: 'x', bestFor: 'city',
+  base_top_name: baseTopId ? `fixture top ${baseTopId - 830200}` : null, base_top_id: baseTopId,
+  bottom_name: 'black flare leg denim pants', bottom_id: bottomId,
+  dress_name: null, dress_id: null, middle_layer_name: null, middle_layer_id: null,
+  outer_layer_name: 'patchwork knit buttoned top', outer_layer_id: LAYER_ANCHOR,
+  shoes_name: 'black slip-on loafers', shoes_id: 830301,
+  reason: 'fixture', styling_instructions: '', watchFor: 'Keep the under layer simple.',
+})
+function installLayerHandler(correctionAnswer) {
+  const calls = { roster: null, composer: null, correction: [] }
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    const text = messages[0].content.map(part => part?.text || '').join('\n')
+    if (String(system).includes('choosing which garments from a client')) {
+      calls.roster = { system, text }
+      return { selection_note: 'all', roster_piece_ids: rows.filter(row => row.id !== LAYER_ANCHOR).map(row => row.id) }
+    }
+    if (text.includes('CORRECTION NEEDED')) {
+      calls.correction.push(text)
+      return correctionAnswer
+    }
+    calls.composer = { system, text }
+    return { outfits: Array.from({ length: 5 }, (_, i) => layerCard(ANCHOR, `Direction ${i + 1}`)), skip: '', saveableLearning: '' }
+  }
+  return calls
+}
+
+test('Explore with a layer anchor tells the composer the layer is worn over a top or a dress; the default and other anchors are unchanged', async () => {
+  let calls = installLayerHandler({ outfits: Array.from({ length: 5 }, (_, i) => layerCard(ANCHOR, `Direction ${i + 1}`, 830201 + i)) })
+  await generateOutfitsForPieceInternal({ pieceId: LAYER_ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  assert.ok(calls.composer.text.includes(EXPLORE_LAYER_ANCHOR_LINE))
+
+  calls = installHandler(3)
+  await generateOutfitsForPieceInternal({ pieceId: ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  assert.ok(!calls.composer.text.includes(EXPLORE_LAYER_ANCHOR_LINE), 'a bottom anchor gets no layer line')
+
+  calls = installLayerHandler({ outfits: [] })
+  await generateOutfitsForPieceInternal({ pieceId: LAYER_ANCHOR, occasion: 'city', season: 'current season' })
+  assert.ok(!calls.composer.text.includes(EXPLORE_LAYER_ANCHOR_LINE), 'the default request is unchanged')
+})
+
+test('the incident: five cards with nothing under the layer get one correction call, and the completed cards ship', async () => {
+  const calls = installLayerHandler({ outfits: Array.from({ length: 5 }, (_, i) => layerCard(ANCHOR, `Direction ${i + 1}`, 830201 + i)), skip: '', saveableLearning: '' })
+  const result = await generateOutfitsForPieceInternal({ pieceId: LAYER_ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  assert.equal(calls.correction.length, 1, 'exactly one correction call')
+  assert.match(calls.correction[0], /missing a part every outfit needs/)
+  assert.match(calls.correction[0], /- "Direction 1": neither base_top_id nor dress_id is filled\./)
+  assert.match(calls.correction[0], /- "Direction 5": neither base_top_id nor dress_id is filled\./)
+  assert.doesNotMatch(calls.correction[0], /garment you named is not the garment/, 'no name section when no name disagrees')
+  const nameCheck = result.debug.visualCritic.nameCheck
+  assert.equal(nameCheck.missingSlots.length, 5)
+  assert.equal(nameCheck.remainingMissing, 0)
+  assert.equal(result.structuredOutfits.length, 5)
+  assert.ok(result.structuredOutfits.every(outfit => !outfit.broken && outfit.strength === 'explore'), JSON.stringify(result.structuredOutfits.map(o => [o.strength, o.rejectionReason])))
+})
+
+test('the incident: a correction that is still incomplete, short or failing leaves Needs review cards, never a filled-in slot', async () => {
+  for (const answer of [
+    { outfits: Array.from({ length: 5 }, (_, i) => layerCard(ANCHOR, `Direction ${i + 1}`)) },
+    { outfits: [layerCard(ANCHOR, 'Direction 1', 830201)] },
+    new Error('provider down'),
+  ]) {
+    const calls = installLayerHandler(answer)
+    if (answer instanceof Error) {
+      const handler = globalThis.__WARDROBE_AI_TEST_HANDLER__
+      globalThis.__WARDROBE_AI_TEST_HANDLER__ = args => {
+        const text = args.messages[0].content.map(part => part?.text || '').join('\n')
+        if (text.includes('CORRECTION NEEDED')) { calls.correction.push(text); throw answer }
+        return handler(args)
+      }
+    }
+    const result = await generateOutfitsForPieceInternal({ pieceId: LAYER_ANCHOR, occasion: 'city', season: 'current season', explore: true })
+    assert.equal(calls.correction.length, 1)
+    assert.ok(result.structuredOutfits.every(outfit => outfit.broken && outfit.modelSlots.base_top_id === null), 'code never fills the base')
+  }
+})
+
+// thread_1792915678690: the shortlist chose four cream tops for the knit layer by idea, with no fit
+// rule. For a layer anchor, in either mode, it now judges the base fit first.
+test('roster: a layer anchor gets the fit-first base rule in both modes; other anchors and the default prompt are unchanged', async () => {
+  assert.equal(selectedPieceRosterSystemPrompt(40, { layerAnchor: false }), selectedPieceRosterSystemPrompt())
+  assert.ok(selectedPieceRosterSystemPrompt(40, { layerAnchor: true }).includes(ROSTER_LAYER_ANCHOR_BLOCK))
+  assert.match(ROSTER_LAYER_ANCHOR_BLOCK, /Wearability comes first/)
+
+  let calls = installLayerHandler({ outfits: [] })
+  await generateOutfitsForPieceInternal({ pieceId: LAYER_ANCHOR, occasion: 'city', season: 'current season' })
+  assert.ok(calls.roster.system.includes(ROSTER_LAYER_ANCHOR_BLOCK), 'default mode, layer anchor')
+  assert.ok(!calls.roster.system.includes(EXPLORE_LAYER_BASE_SCOPE), 'the Explore base scope is Explore only')
+  calls = installLayerHandler({ outfits: [] })
+  await generateOutfitsForPieceInternal({ pieceId: LAYER_ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  assert.ok(calls.roster.system.includes(ROSTER_LAYER_ANCHOR_BLOCK) && calls.roster.system.includes(EXPLORE_INSTRUCTION), 'Explore, layer anchor')
+  // thread_1792916742017: the Explore block's "not for the expected ones" came last and won.
+  assert.ok(calls.roster.system.indexOf(ROSTER_LAYER_ANCHOR_BLOCK) > calls.roster.system.indexOf(EXPLORE_INSTRUCTION), 'the layer rule comes after the Explore block')
+  assert.ok(calls.roster.system.endsWith(`${ROSTER_LAYER_ANCHOR_BLOCK} ${EXPLORE_LAYER_BASE_SCOPE}`), 'and carries the base scope')
+  assert.ok(calls.composer.text.includes(EXPLORE_LAYER_BASE_SCOPE), 'the composer gets the same scope')
+  calls = installHandler(3)
+  await generateOutfitsForPieceInternal({ pieceId: ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  assert.ok(!calls.roster.system.includes(ROSTER_LAYER_ANCHOR_BLOCK), 'a bottom anchor gets no layer rule')
 })

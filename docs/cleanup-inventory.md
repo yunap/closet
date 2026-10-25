@@ -157,6 +157,8 @@ This inventory covers the areas spec 20 explicitly seeded (the plan/precompose/s
 
 ### P0 — live data-quality bug: the `rehydrateOutfitPieces` bug class reproduces in the LIVE `/evaluate-piece` Visual Composer flow
 
+> **2026-10-25:** the same trim reached the selected-piece composer's card validation (`thread_1792915678690`: a `needs_base` crochet top shipped as the only top under a layer). Both visual composers now validate through `withFullGarmentRecords`; see `selected-piece-explore-mode-spec.md` §9.
+
 **This is not the same instance the handoff doc already fixed (that one was in the now-deleted `outfitSetPlanner.js` `composeOutfitSet` path). This is a second, independent, still-live occurrence of the identical bug class, rooted in `styling-engine/rules.js` itself, and it is currently running in production on every `/evaluate-piece` turn.**
 
 **Root cause — `styling-engine/rules.js:3782-3815`, `normalizeWholeWardrobeOutfitObject`.** This function receives an outfit whose `pieces` may already be full DB objects (with `formality`, `heel_height`, `walk_support`, `fabric_category`, `pattern_type`, `colors`, `occasions`, etc.), resolves each piece id against the full `candidatePieces` pool it's given (`ownedPieces = ids.map(id => candidateById.get(id))` — genuinely full objects), and then **deliberately re-trims them on the way out**:

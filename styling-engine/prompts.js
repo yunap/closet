@@ -35,6 +35,14 @@ export const OUTFIT_VARIETY_RULE = 'Select each outfit on its own merits. Repeat
 // reason comes from. Shared by the roster call and the composer. Wearability is not loosened.
 export const EXPLORE_INSTRUCTION = 'EXPLORE. The outfits anyone would assemble first around this garment, its obvious and expected pairings, are already known, so leave them out. Show outfits that still work, and work for a reason that is not the obvious one. Where that reason comes from is your judgment for this garment and this wardrobe. Each outfit takes its own direction: no two should be variations of the same idea. Every outfit must still be wearable for the request and physically sound, and you should be able to say in its reason what makes it work.'
 
+// Explore with a layer anchor (owner rulings 2026-10-25: a layer garment always needs a top or a dress
+// under it; in Explore that base is out of scope). thread_1792909006877 left the base out;
+// thread_1792915678690 and thread_1792916742017 put the less obvious direction into it (textured
+// cream tops, then stripes, a print, collars, a turtleneck) while the default mode, allowed to repeat
+// a strong garment, chose fitted sleeveless tops (thread_1792917380852). Shared by roster and composer.
+export const EXPLORE_LAYER_BASE_SCOPE = 'In this mode that base is chosen for how the anchor is worn, not for the less obvious direction, and the same base may repeat across outfits; take the less obvious direction in the rest of the outfit.'
+export const EXPLORE_LAYER_ANCHOR_LINE = `The anchor is worn over a top or a dress, so every outfit also has one under it. ${EXPLORE_LAYER_BASE_SCOPE}`
+
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.
 - Additional expressive pieces are welcome when they share the hero's register (mood, formality, material family) and do a DIFFERENT job — e.g. an expressive skirt + a small accent bag + a structural pendant can coexist. Layered artisan texture in one register is richness, not noise.
