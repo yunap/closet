@@ -71,6 +71,12 @@ Engineer notes:
   `gemini-nano-banana-2.1`, 2:3 at 2K). It receives the same photos, captions
   and prompt in the same order, with no gpt-4o rewrite step in between. Off by
   default; the sheet and the other image flows stay on GPT-4o.
+  **Amended 2026-10-24:** the OpenAI single render no longer goes through GPT-4o.
+  It calls the Images API edit endpoint (`runOpenAIImageEditFromContentParts`)
+  with the same photos and the prompt verbatim, each photo marked `[Image N]`
+  where it sat. Cost is estimated from OpenAI's reported usage at the published
+  flare rates (`estimateOpenAIImageCostUsd`). See engine-behaviour-map.md,
+  "The producers". The sheet stays on GPT-4o.
 - **Sheet render** (`createWholeWardrobeComparisonSheetImage`, `core.js:2289`):
   takes 2–5 normalized outfits (each ≥ 2 saved pieces, deduped, capped at 6
   pieces; ≤ 30 distinct pieces total), and lays them out as one preview sheet —
