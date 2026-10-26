@@ -7812,18 +7812,68 @@ img { display: block; max-width: 100%; }
   font-size: 20px;
 }
 
+.piece-styling-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
 .piece-styling-context-heading {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 16px;
-  margin-bottom: -10px;
+  margin-bottom: -12px;
 }
 
 .piece-styling-context-heading > :first-child {
+  color: color-mix(in srgb, var(--text) 55%, var(--text-muted) 45%);
+  font-size: var(--type-caption);
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.piece-styling-section-label .style-direction-tooltip .info-tooltip-popover::before {
+  right: auto;
+  left: 9px;
+}
+
+.piece-explore-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-width: 520px;
+}
+
+.piece-explore-segmented button {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 32%, var(--surface));
   color: var(--text);
-  font-family: var(--font-serif);
-  font-size: 19px;
+  font: 400 13px/1.2 var(--font-sans);
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+}
+
+.piece-explore-segmented button:hover:not(.is-selected) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+/* Same treatment as the selected direction card, so "Create my outfits" stays the only solid button. */
+.piece-explore-segmented button.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent-light) 62%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.piece-explore-segmented button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .piece-styling-context-heading > :last-child {
@@ -8044,6 +8094,11 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   .piece-styling-workflow .stylist-option-grid { grid-template-columns: 1fr; }
   .piece-styling-workflow .stylist-option-card.is-radio { min-height: 126px; }
   .piece-styling-context-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+  /* At phone width, hang the Classic/Explore legend from the label row so it cannot run off-screen. */
+  .piece-explore-choice .piece-styling-section-label { position: relative; }
+  .piece-explore-choice .info-tooltip { position: static; }
+  .piece-explore-choice .info-tooltip-popover { left: 0; right: 0; width: auto !important; }
+  .piece-explore-choice .style-direction-tooltip .info-tooltip-popover::before { display: none; }
   .piece-styling-workflow .stylist-landing-footer { align-items: stretch; flex-direction: column; }
   .piece-styling-primary-action { justify-content: space-between; }
   .wardrobe-builder-entry .stylist-landing-header,
