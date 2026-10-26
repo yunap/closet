@@ -310,6 +310,12 @@ const STYLE_DIRECTION_LEGEND = [
   ['Soft Architecture', 'Precise shapes made in soft, fluid fabrics.'],
 ]
 
+// Explore (docs/selected-piece-explore-mode-spec.md §2.4): label, hint, and the generateExplore value it sets.
+const EXPLORE_CHOICE_LEGEND = [
+  ['Classic', 'Straightforward, reliable ways to style this piece.', false],
+  ['Explore', 'Outfits beyond the obvious pairings for this piece.', true],
+]
+
 const formatMs = (ms) => {
   const n = Number(ms)
   if (!Number.isFinite(n)) return null
@@ -7196,7 +7202,7 @@ export default function StylistChat({
                 </>
               }
             >
-              <fieldset disabled={loading} style={{ border: 'none', margin: 0, padding: 0 }}>
+              <fieldset disabled={loading} className="piece-styling-fields" style={{ border: 'none', margin: 0, padding: 0 }}>
               <div className="stylist-option-grid">
                 <OptionCard
                   variant="radio"
@@ -7215,6 +7221,33 @@ export default function StylistChat({
                   onClick={() => setPendingPieceMode('ideal')}
                 />
               </div>
+
+              {pendingPieceMode === 'wardrobe' && (
+                <div className="piece-explore-choice">
+                  <div className="piece-styling-section-label" style={{ ...wardrobeBuilderFieldLabelStyle, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span id="piece-explore-choice-label">Pairing approach</span>
+                    <InfoTooltip className="style-direction-tooltip" label="What the pairing approaches mean" align="left" side="bottom" size="sm" width={300}>
+                      {EXPLORE_CHOICE_LEGEND.map(([label, desc, isExplore]) => (
+                        <div key={label} className={isExplore === generateExplore ? 'is-selected' : ''}><strong>{label}</strong><span>{desc}</span></div>
+                      ))}
+                    </InfoTooltip>
+                  </div>
+                  <div className="piece-explore-segmented" role="radiogroup" aria-labelledby="piece-explore-choice-label">
+                    {EXPLORE_CHOICE_LEGEND.map(([label, , isExplore]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        role="radio"
+                        aria-checked={generateExplore === isExplore}
+                        className={generateExplore === isExplore ? 'is-selected' : ''}
+                        onClick={() => setGenerateExplore(isExplore)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="piece-styling-context-heading">
                 <span>Shape the brief</span>
@@ -7256,18 +7289,6 @@ export default function StylistChat({
                   style={{ ...wardrobeBuilderControlStyle, width: '100%' }}
                 />
               </div>
-              <label className="piece-explore-toggle" style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={generateExplore}
-                  onChange={e => setGenerateExplore(e.target.checked)}
-                  style={{ marginTop: 3 }}
-                />
-                <span>
-                  <span style={wardrobeBuilderFieldLabelStyle}>Explore</span>
-                  <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted, var(--muted))' }}>Outfits beyond the obvious pairings for this piece.</span>
-                </span>
-              </label>
               </fieldset>
               {loading && (
                 <div className="piece-styling-generating-status" role="status">

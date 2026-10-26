@@ -3134,7 +3134,7 @@ test('StylistChat new-chat empty state prioritizes the freeform composer', () =>
   assert.match(src, /\{pieces\.length\} pieces available in your wardrobe/)
   assert.match(src, /sectionLabel="Shape the brief"/)
   assert.match(src, /className=\{label === selectedStyleDirectionLabel \? 'is-selected' : ''\}/)
-  assert.equal((src.match(/className="style-direction-tooltip"/g) || []).length, 2)
+  assert.equal((src.match(/className="style-direction-tooltip"/g) || []).length, 3, 'two style-direction legends plus the Classic/Explore legend')
   assert.match(css, /\.style-direction-tooltip \.info-tooltip-popover/)
   assert.doesNotMatch(css, /\.wardrobe-builder-entry \.info-tooltip-popover/)
   assert.doesNotMatch(css, /\.piece-styling-workflow \.info-tooltip-popover/)
