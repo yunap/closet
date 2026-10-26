@@ -64,6 +64,7 @@ import {
   isOuterwear,
   isTop,
   wardrobeCategoryGroup,
+  pieceRequiresBaseLayer,
   isDarkPiece,
   pieceMatchesMaterial,
   pieceMatchesFootwear,
@@ -601,8 +602,17 @@ export function categoryConstraintForSelectedPiece(piece) {
   if (wardrobeCategoryGroup(piece) === 'bottom') {
     return `Selected item category is BOTTOM. Every outfit idea must include "${piece.name}" as the bottom. Do not recommend skirts, dresses, jeans, pants, or any other bottom as an outfit idea.`
   }
+  // A top or dress that cannot be worn alone is worn over a top that can be. thread_1793051171608: "as
+  // the top … do not replace it with another top" read as "no other top", and all five cards wore the
+  // open-knit tunic alone.
+  if (wardrobeCategoryGroup(piece) === 'top' && pieceRequiresBaseLayer(piece)) {
+    return `Selected item category is TOP, and it cannot be worn alone against skin. Every outfit idea must include "${piece.name}" worn over a top that can be worn alone, as the layer over that base. Do not replace it with another top.`
+  }
   if (wardrobeCategoryGroup(piece) === 'top') {
     return `Selected item category is TOP. Every outfit idea must include "${piece.name}" as the top. Do not replace it with another top.`
+  }
+  if (wardrobeCategoryGroup(piece) === 'dress' && pieceRequiresBaseLayer(piece)) {
+    return `Selected item category is DRESS, and it cannot be worn alone against skin. Every outfit idea must include "${piece.name}" as the dress, worn over a top that can be worn alone under it. Do not replace it with separates.`
   }
   if (wardrobeCategoryGroup(piece) === 'dress') {
     return `Selected item category is DRESS. Every outfit idea must include "${piece.name}" as the dress. Do not replace it with separates.`

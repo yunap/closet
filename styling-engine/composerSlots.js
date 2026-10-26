@@ -14,7 +14,7 @@
 // Nothing is filled in. A slot left null is a finding; a card with findings is preserved as a
 // diagnostic card exactly as the model answered it.
 import { wardrobeCategoryGroup } from './attributes.js'
-import { ROLE_CATEGORY_EXPECTATIONS } from './outfitValidation.js'
+import { ROLE_CATEGORY_EXPECTATIONS, evaluateRequiredBaseLayers } from './outfitValidation.js'
 
 // Category truth per slot comes from the role table, not a second copy of it: `middle_layer_id`
 // admits whatever `layer_top` admits (a top or an outerwear garment).
@@ -199,7 +199,7 @@ export function composerOutfitCountCheck(parsed, { minOutfits = 1, maxOutfits = 
 // The correction call's note (docs/composer-slot-name-check-spec.md §2.3): one line per finding, in
 // the model's own terms. The answer comes back in the same schema; nothing here picks a garment.
 // A card can be listed for a name mismatch, for a required part it left empty, or both.
-export function composerNameMismatchCorrection(parsed, mismatchesByIndex = new Map(), missingByIndex = new Map()) {
+export function composerNameMismatchCorrection(parsed, mismatchesByIndex = new Map(), missingByIndex = new Map(), requiredBaseByIndex = new Map()) {
   const label = index => parsed?.outfits?.[index]?.label || `outfit ${index + 1}`
   const sections = []
   if (mismatchesByIndex.size) {
@@ -218,6 +218,13 @@ export function composerNameMismatchCorrection(parsed, mismatchesByIndex = new M
     }
     sections.push(`These outfits are missing a part every outfit needs:\n${lines.join('\n')}\nComplete each from shown garments: a top or a dress at the base, worn under any layer; a bottom unless the outfit is a dress; shoes; and the selected anchor where there is one.`)
   }
+  if (requiredBaseByIndex.size) {
+    const lines = []
+    for (const [index, findings] of requiredBaseByIndex) {
+      for (const finding of findings) lines.push(`- "${label(index)}": ${finding.message}.`)
+    }
+    sections.push(`In these outfits a garment that cannot be worn alone against skin has no top under it that can be:\n${lines.join('\n')}\nFor each, put a shown top that can be worn alone under it in \`base_top_id\`, and move that garment to the slot it is worn in over the base (\`middle_layer_id\` for a top).`)
+  }
   return `YOUR PREVIOUS ANSWER:\n${JSON.stringify(parsed)}\n\nCORRECTION NEEDED — ${sections.join('\n\n')}\nReturn the same outfits again. Keep every outfit you did not need to change exactly as it was.`
 }
 
@@ -230,6 +237,21 @@ export function composerMissingSlots(parsed, candidatePieces = [], { requiredPie
   const byIndex = new Map()
   ;(Array.isArray(parsed?.outfits) ? parsed.outfits : []).forEach((outfit, index) => {
     const findings = resolveComposerSlotOutfit(outfit, candidatePieces, { requiredPieceId }).slotFindings.filter(finding => MISSING_SLOT_CODES.has(finding.code))
+    if (findings.length) byIndex.set(index, findings)
+  })
+  return byIndex
+}
+
+// Cards whose garment that cannot be worn alone has no workable base under it, by the same shared
+// check the card's validation runs (role-blind, as evaluateWearableOutfit calls it). Errors only: an
+// unknown base is a warning there and does not reject the card. thread_1793051171608: all five cards
+// wore the olive open-knit tunic (needs_base) as the only top; every slot was filled, so the missing-
+// part check saw nothing and all five shipped as Needs review with no correction.
+export function composerRequiredBaseFindings(parsed, candidatePieces = [], { requiredPieceId = null } = {}) {
+  const byIndex = new Map()
+  ;(Array.isArray(parsed?.outfits) ? parsed.outfits : []).forEach((outfit, index) => {
+    const { pieces } = resolveComposerSlotOutfit(outfit, candidatePieces, { requiredPieceId })
+    const findings = evaluateRequiredBaseLayers(pieces).findings.filter(finding => finding.severity === 'error')
     if (findings.length) byIndex.set(index, findings)
   })
   return byIndex

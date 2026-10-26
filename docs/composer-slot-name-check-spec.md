@@ -87,3 +87,8 @@ required part (`missing_top_or_dress`, `missing_bottom`, `missing_shoes`, and on
 path `missing_selected_anchor`), in the same note and under the same rules. See
 `docs/selected-piece-explore-mode-spec.md` §8.
 
+**2026-10-26:** it also lists cards where a garment that cannot be worn alone has no workable top
+under it (`required_base_layer_missing_or_incompatible` from the shared `evaluateRequiredBaseLayers`,
+errors only). `thread_1793051171608` filled every slot, with the needs_base anchor as the only top, so
+the missing-part check saw nothing. See `docs/selected-piece-explore-mode-spec.md` §11.
+
