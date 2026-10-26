@@ -385,3 +385,50 @@ earlier Explore turns on this garment: 0 of 5 (no base), 1 of 5, 0 of 5.
 beside a layer anchor (about 8 unused photos in the composer call). One turn, so this shows the
 change can work, not how often it does.
 
+## 11 · "Worn over something", not "filed outerwear" (2026-10-26)
+
+**The run.** `thread_1793051171608`, Explore on the olive open-knit tunic sweater top (996779, filed
+`top`, `needs_base: yes`, `opacity: open_weave`; Gemini 3.5 Flash-Lite). All five cards put the tunic
+in `base_top_id` with nothing under it. Her own "Watch for" said a base layer is needed. The shared
+evaluator rejected all five (`required_base_layer_missing_or_incompatible`), so every card was Needs
+review. No correction call ran. The shortlist did bring a usable base: the coverage report covered
+the anchor path with 990357, the taupe scoop neck top.
+
+**Why §8–§10 missed it.** Every change there was keyed on `wardrobeCategoryGroup(anchor) ===
+'outerwear'`, which fit piece 184 but not the owner's ruling. A top or dress tagged `needs_base` is
+worn over something too. On top of that:
+- The composer's category line for a top anchor said *"must include … as the top. Do not replace it
+  with another top."* For a garment that cannot be worn alone, that reads as "no other top". It
+  contradicted the garment truth line in the same request ("cannot be worn alone: needs a base
+  layer underneath").
+- The correction call fired only for an empty slot. Here every slot was filled.
+
+**Change.**
+- `pieceWornOverABase` (`styling-engine/attributes.js`): outerwear, or a top/dress for which
+  `pieceRequiresBaseLayer` is true. This one test replaces the category test in the shortlist rule
+  and the Explore composer line.
+- The wording follows the anchor. Outerwear keeps §8–§10's wording unchanged. A `needs_base` anchor gets
+  `ROSTER_DEPENDENT_ANCHOR_BLOCK` / `EXPLORE_DEPENDENT_ANCHOR_LINE`: *"cannot be worn alone against
+  skin, so every outfit needs a top under it that can be"*, with the same fit-first rule and, in
+  Explore, the same base scope.
+- `categoryConstraintForSelectedPiece` (`styling-engine/rules.js`, shared by every selected-piece
+  path): a `needs_base` top must be worn over a top that can be worn alone, as the layer over it. A
+  `needs_base` dress must be worn over a top. Other tops and dresses keep the old line.
+- `correctComposerSlots` also lists cards with a required-base error (`composerRequiredBaseFindings`,
+  `styling-engine/composerSlots.js`, the same role-blind `evaluateRequiredBaseLayers` the card's
+  validation runs; warnings are not listed). The note asks her to put a top that can be worn alone in
+  `base_top_id` and move the garment to `middle_layer_id`. It is still one call per turn, and code
+  still never fills a slot. Debug: `nameCheck.requiredBase`, `nameCheck.remainingRequiredBase`.
+
+**Verified offline.** `test/selected_piece_explore.test.js` adds 3 tests (a needs_base top anchor gets
+the dependent wording in both steps and both modes, and a plain top anchor keeps the old line; the
+incident's five cards get one correction call and the corrected cards ship; a correction that still
+wears the tunic alone leaves Needs review cards with no base added). All 3 fail on the previous code.
+`node --test test/`: 2,595 of 2,595 pass. Replay of this thread's five answers on 996779 against
+an isolated DB copy, every model call stubbed: the shortlist and composer carry the new lines; one
+correction call names all five cards; a correction that puts 990357 under the tunic ships five cards
+(990357 `primary_top`, 996779 `layer_top`) that pass the shared evaluator with the real garments.
+
+**Not verified.** Whether the new lines alone stop her wearing the tunic alone, and how well she
+chooses the base in a correction. That needs one paid turn on 996779.
+

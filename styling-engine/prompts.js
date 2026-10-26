@@ -4,7 +4,7 @@
 // Behaviour these prompts drive is documented in docs/freeform-rearchitecture-handoff.md.
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
 import { categoryOutfitStructurePromptRule, layerConstructionPromptRule, layerDirectionPromptRule, layerWearabilityFirstPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, requiredBaseLayerPromptRule } from './outfitValidation.js'
-import { SLEEVE_SHAPE_VALUES, FIT_ON_BODY_SCHEMA_DESCRIPTION } from './attributes.js'
+import { SLEEVE_SHAPE_VALUES, FIT_ON_BODY_SCHEMA_DESCRIPTION, wardrobeCategoryGroup } from './attributes.js'
 import { OUTERWEAR_SUBTYPE_VALUES } from './outerwearSubtype.js'
 import { TOP_SUBTYPE_VALUES } from './topSubtype.js'
 import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION } from './fiberTaxonomy.js'
@@ -42,6 +42,13 @@ export const EXPLORE_INSTRUCTION = 'EXPLORE. The outfits anyone would assemble f
 // a strong garment, chose fitted sleeveless tops (thread_1792917380852). Shared by roster and composer.
 export const EXPLORE_LAYER_BASE_SCOPE = 'In this mode that base is chosen for how the anchor is worn, not for the less obvious direction, and the same base may repeat across outfits; take the less obvious direction in the rest of the outfit.'
 export const EXPLORE_LAYER_ANCHOR_LINE = `The anchor is worn over a top or a dress, so every outfit also has one under it. ${EXPLORE_LAYER_BASE_SCOPE}`
+
+// A top or dress that cannot be worn alone (needs_base) is a layer anchor too, worn over a top that can
+// be (evaluateRequiredBaseLayers). thread_1793051171608: the olive open-knit tunic got neither line.
+export const EXPLORE_DEPENDENT_ANCHOR_LINE = `The anchor cannot be worn alone against skin, so every outfit also has a top under it that can be. ${EXPLORE_LAYER_BASE_SCOPE}`
+export function exploreLayerAnchorLine(piece) {
+  return wardrobeCategoryGroup(piece) === 'outerwear' ? EXPLORE_LAYER_ANCHOR_LINE : EXPLORE_DEPENDENT_ANCHOR_LINE
+}
 
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
 - One element leads each outfit. Build a clear hierarchy: hero, support, grounding.

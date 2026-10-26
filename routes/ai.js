@@ -34,7 +34,7 @@ import {
   describeAiError,
   extractPieceIdsFromProse
 } from '../styling-engine/provider.js'
-import { composerMissingSlots, composerNameMismatchCorrection, composerNameMismatches, composerOutfitSlotsSchema, composerOutfitCountCheck, resolveComposerSlotOutfit, withSlotFindings } from '../styling-engine/composerSlots.js'
+import { composerMissingSlots, composerNameMismatchCorrection, composerRequiredBaseFindings, composerNameMismatches, composerOutfitSlotsSchema, composerOutfitCountCheck, resolveComposerSlotOutfit, withSlotFindings } from '../styling-engine/composerSlots.js'
 
 import {
   applyComfortFootwearRepair,
@@ -53,13 +53,14 @@ import {
 import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT, GEMINI_TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, occasionVibe, stripSoftRankingRules } from '../styling-engine/occasions.js'
-import { EXPLORE_INSTRUCTION, EXPLORE_LAYER_ANCHOR_LINE, OUTFIT_VARIETY_RULE } from '../styling-engine/prompts.js'
+import { EXPLORE_INSTRUCTION, exploreLayerAnchorLine, OUTFIT_VARIETY_RULE } from '../styling-engine/prompts.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   garmentKind,
   pieceMatchesMaterial,
   pieceMatchesFootwear,
   pieceRequiresBaseLayer,
+  pieceWornOverABase,
   pieceVisualDetailPolicy,
   SLEEVE_SHAPE_VALUES,
   FIT_ON_BODY_SCHEMA_DESCRIPTION,
@@ -1694,7 +1695,7 @@ export async function chooseSelectedPieceRoster({
   let value = null
   try {
     const result = await withTimeout(signal => askStylistStructuredWithUsage({
-      system: selectedPieceRosterSystemPrompt(SELECTED_PIECE_ROSTER_MAX, { explore, outfitCount, layerAnchor: wardrobeCategoryGroup(selectedPiece) === 'outerwear' }),
+      system: selectedPieceRosterSystemPrompt(SELECTED_PIECE_ROSTER_MAX, { explore, outfitCount, layerAnchor: selectedPiece }),
       maxTokens: 1500,
       messages: [{ role: 'user', content }],
       providerOverride,
@@ -1741,32 +1742,36 @@ export async function chooseSelectedPieceRoster({
 }
 
 // ONE CORRECTION CALL for a composer answer whose slot names and IDs disagree
-// (docs/composer-slot-name-check-spec.md), or whose cards leave a required part empty (owner ruling
-// 2026-10-25). The same request plus the model's own previous answer and a note naming each finding;
+// (docs/composer-slot-name-check-spec.md), whose cards leave a required part empty (owner ruling
+// 2026-10-25), or whose garment that cannot be worn alone has no base under it (thread_1793051171608,
+// every slot filled). The same request plus the model's own previous answer and a note naming each finding;
 // the answer replaces the original only if it parses and returns the same number of outfits. A card
 // that still fails is a Needs review card through the ordinary slot-finding path. Code never swaps
 // an ID or fills a slot.
 export async function correctComposerSlots({ parsed, candidatePieces, requiredPieceId = null, system, content, schema, maxTokens, providerOverride, subflow, thinkingLevel = null }) {
   const first = composerNameMismatches(parsed, candidatePieces)
   const firstMissing = composerMissingSlots(parsed, candidatePieces, { requiredPieceId })
-  const countMissing = answer => [...composerMissingSlots(answer, candidatePieces, { requiredPieceId }).values()].reduce((n, findings) => n + findings.length, 0)
+  const firstRequiredBase = composerRequiredBaseFindings(parsed, candidatePieces, { requiredPieceId })
+  const countFindings = byIndex => [...byIndex.values()].reduce((n, findings) => n + findings.length, 0)
   const nameCheck = {
     mismatches: [...first].flatMap(([outfitIndex, findings]) => findings.map(finding => ({ outfitIndex, ...finding.evidence }))),
     missingSlots: [...firstMissing].flatMap(([outfitIndex, findings]) => findings.map(finding => ({ outfitIndex, code: finding.code }))),
+    requiredBase: [...firstRequiredBase].flatMap(([outfitIndex, findings]) => findings.map(finding => ({ outfitIndex, code: finding.code, dependentId: finding.evidence?.dependentId ?? null }))),
     correctionRan: false,
     correctionUsage: null,
     correctionError: null,
     remaining: 0,
     remainingMissing: 0,
+    remainingRequiredBase: 0,
   }
-  if (!first.size && !firstMissing.size) return { parsed, nameCheck }
+  if (!first.size && !firstMissing.size && !firstRequiredBase.size) return { parsed, nameCheck }
   nameCheck.correctionRan = true
   let corrected = null
   try {
     const result = await withTimeout(signal => askStylistStructuredWithUsage({
       system,
       maxTokens,
-      messages: [{ role: 'user', content: [...content, { type: 'text', text: composerNameMismatchCorrection(parsed, first, firstMissing) }] }],
+      messages: [{ role: 'user', content: [...content, { type: 'text', text: composerNameMismatchCorrection(parsed, first, firstMissing, firstRequiredBase) }] }],
       providerOverride,
       schema,
       name: 'wardrobe_outfits',
@@ -1786,7 +1791,8 @@ export async function correctComposerSlots({ parsed, candidatePieces, requiredPi
   }
   const final = corrected ? { ...parsed, ...corrected } : parsed
   nameCheck.remaining = [...composerNameMismatches(final, candidatePieces).values()].reduce((n, findings) => n + findings.length, 0)
-  nameCheck.remainingMissing = countMissing(final)
+  nameCheck.remainingMissing = countFindings(composerMissingSlots(final, candidatePieces, { requiredPieceId }))
+  nameCheck.remainingRequiredBase = countFindings(composerRequiredBaseFindings(final, candidatePieces, { requiredPieceId }))
   return { parsed: final, nameCheck }
 }
 
@@ -1944,7 +1950,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   content.push({ type: 'text', text: [
     `Selected anchor id: ${selectedPiece.id}`,
     categoryConstraintForSelectedPiece(selectedPiece),
-    explore && wardrobeCategoryGroup(selectedPiece) === 'outerwear' ? EXPLORE_LAYER_ANCHOR_LINE : '',
+    explore && pieceWornOverABase(selectedPiece) ? exploreLayerAnchorLine(selectedPiece) : '',
     `Selected garment truth:\n${buildPieceText(selectedPiece)}`,
     '',
     `Occasion: ${occasion}`,

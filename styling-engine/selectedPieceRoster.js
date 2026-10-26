@@ -11,7 +11,7 @@
 // here is mechanical only: which garments are eligible and structurally able to share an outfit
 // with the anchor, and whether a pick names real catalog IDs and still makes a complete outfit.
 // No styling judgment lives in this file.
-import { wardrobeCategoryGroup } from './attributes.js'
+import { pieceWornOverABase, wardrobeCategoryGroup } from './attributes.js'
 import { sparseGarmentCatalogRow, SPARSE_CATALOG_CONVENTIONS } from './garmentEvidenceLine.js'
 import { buildCoveredCandidateSet, completeOutfitSupplyRequirement } from './candidateSet.js'
 import { EXPLORE_INSTRUCTION, EXPLORE_LAYER_BASE_SCOPE } from './prompts.js'
@@ -86,10 +86,17 @@ const CATALOG_CONVENTIONS = SPARSE_CATALOG_CONVENTIONS.split(' view_pieces truth
 // that worked under it and five cards to fill. The shortlist now judges that pair fit first too.
 // In Explore it comes after the Explore block, so "not for the expected ones" does not override it,
 // and it carries the Explore base scope.
-export const ROSTER_LAYER_ANCHOR_BLOCK = 'The anchor is worn over a top or a dress, so every outfit needs one under it, and your shortlist must bring real alternatives for it. Wearability comes first for that pair: from the anchor\'s photograph and recorded construction and each candidate\'s recorded construction, ask whether the candidate can sit inside the anchor at the sleeves, the armholes and the body, and how it will look where the anchor leaves it showing. Shortlist only candidates that pass; colour, texture and the outfit\'s idea are judged after that.'
+const LAYER_PAIR_FIT_FIRST = 'Wearability comes first for that pair: from the anchor\'s photograph and recorded construction and each candidate\'s recorded construction, ask whether the candidate can sit inside the anchor at the sleeves, the armholes and the body, and how it will look where the anchor leaves it showing. Shortlist only candidates that pass; colour, texture and the outfit\'s idea are judged after that.'
+export const ROSTER_LAYER_ANCHOR_BLOCK = `The anchor is worn over a top or a dress, so every outfit needs one under it, and your shortlist must bring real alternatives for it. ${LAYER_PAIR_FIT_FIRST}`
+// A top or dress that cannot be worn alone (pieceWornOverABase). thread_1793051171608: the olive
+// open-knit tunic, filed top, got no layer rule and every card wore it alone.
+export const ROSTER_DEPENDENT_ANCHOR_BLOCK = `The anchor cannot be worn alone against skin, so every outfit needs a top under it that can be, and your shortlist must bring real alternatives for it. ${LAYER_PAIR_FIT_FIRST}`
 
-export function selectedPieceRosterSystemPrompt(max = SELECTED_PIECE_ROSTER_MAX, { explore = false, outfitCount = null, layerAnchor = false } = {}) {
-  const layerBlock = layerAnchor ? `\n\n${ROSTER_LAYER_ANCHOR_BLOCK}${explore ? ` ${EXPLORE_LAYER_BASE_SCOPE}` : ''}` : ''
+// `layerAnchor` is the selected garment; the block is added only when it is worn over something.
+export function selectedPieceRosterSystemPrompt(max = SELECTED_PIECE_ROSTER_MAX, { explore = false, outfitCount = null, layerAnchor = null } = {}) {
+  const anchorBlock = !layerAnchor || !pieceWornOverABase(layerAnchor) ? ''
+    : (wardrobeCategoryGroup(layerAnchor) === 'outerwear' ? ROSTER_LAYER_ANCHOR_BLOCK : ROSTER_DEPENDENT_ANCHOR_BLOCK)
+  const layerBlock = anchorBlock ? `\n\n${anchorBlock}${explore ? ` ${EXPLORE_LAYER_BASE_SCOPE}` : ''}` : ''
   const exploreBlock = explore
     ? `\n\nYou are choosing for ${outfitCount || 'several'} outfits, each taking its own direction. ${EXPLORE_INSTRUCTION} Shortlist for those outfits, not for the expected ones.`
     : ''

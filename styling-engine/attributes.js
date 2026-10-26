@@ -1029,6 +1029,15 @@ export function pieceRequiresBaseLayer(piece = {}) {
   return String(piece?.needs_base || '').toLowerCase().trim() === 'yes'
 }
 
+// A garment worn over something else (owner ruling 2026-10-25: a layer garment always needs a top or a
+// dress under it): outerwear, or a top or dress that cannot be worn alone. thread_1793051171608: the
+// olive open-knit tunic is filed top with needs_base yes, and a test on the outerwear category alone
+// left all five cards with nothing under it.
+export function pieceWornOverABase(piece = {}) {
+  const group = wardrobeCategoryGroup(piece)
+  return group === 'outerwear' || (['top', 'dress'].includes(group) && pieceRequiresBaseLayer(piece))
+}
+
 const CUFFED_SLEEVE_LENGTHS = new Set(['elbow', '3/4', 'long', 'extra_long'])
 const BULKY_FABRIC_WEIGHTS = new Set(['medium', 'heavy'])
 

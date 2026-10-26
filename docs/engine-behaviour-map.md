@@ -4746,8 +4746,9 @@ Each slot now carries a `*_name` field, written immediately before its `*_id`.
 all in the recorded name. The evidence carries both names and the garment the name fits, when
 exactly one does.
 
-Both visual composers make one correction call (`correctComposerNameMismatches`, `routes/ai.js`) with
-their own previous answer and the mismatches named. The correction replaces the answer only if it
+Both visual composers make one correction call (`correctComposerSlots`, `routes/ai.js`) with
+their own previous answer and the findings named: name mismatches, a required part left empty, and
+(2026-10-26) a garment that cannot be worn alone with no workable top under it. Code never fills a slot. The correction replaces the answer only if it
 parses and returns every card. A card that still disagrees is Needs review, so a name never rescues
 or swaps an ID. Spec: [composer-slot-name-check-spec.md](composer-slot-name-check-spec.md).
 
