@@ -17,10 +17,11 @@
 //    delivered on /ask view_pieces for inspected pieces. Tagger pairing cautions are NOT part of change 1: /ask never carried them, so
 //    adding them would be a separate model-guidance change, not factual parity.
 //
-// The free `notes` field is not carried: the record cannot attribute it.
+// The free `notes` field is not carried: the record cannot attribute it. Outfit image renders are the one exception
+// (renderGarmentNotesText below).
 import { wardrobeCategoryGroup, getFieldConfidence } from './attributes.js'
 import { insulatingLayerMaterials, interiorConstruction, normalizeFiberContent } from './fiberTaxonomy.js'
-import { storedGarmentRules } from './ruleProvenance.js'
+import { storedGarmentRules, savedChatReplyTexts } from './ruleProvenance.js'
 
 // Stated once per request on every path that uses the fact line.
 export const GARMENT_FACT_CONVENTIONS = 'Garment facts are recorded values only. `?` marks a value the tagger recorded with low confidence; `unknown` means not recorded; values after `whole garment:` describe the entire garment, not its sleeves, lining or any single part. An absent fact is not recorded and must not be inferred. Source-labelled garment notes, where given, are not recorded facts.'
@@ -253,6 +254,44 @@ export function taggerNotesText(piece = {}) {
   const read = oneLine(piece.reads_as)
   if (read && !list(piece.manual_overrides).includes('reads_as')) parts.push(`tagger impression (not owner-verified): ${read}`)
   return parts.join('; ')
+}
+
+// RENDERS ONLY (owner ruling 2026-10-26, thread_1793058184605). Outfit image prompts carry the saved-record notes above plus
+// the free `notes` field when it was saved through the app (`manual_overrides` includes `notes`), labelled as unattributed —
+// the same treatment an edited reads_as gets. The chat paths keep the 2026-09-15 rule and do not carry `notes`. Renders used
+// to send a long tagger-prose description cut at 500–900 characters, which dropped an owner note on where a tunic's hem lands
+// while sending "AI auto-use trust" and the tagger's wrong hem guess. Text identical to a chat reply the retired Save button
+// appended is removed, as storedGarmentRules removes it from rules.
+export function renderGarmentNotesText(piece = {}) {
+  const parts = []
+  const saved = garmentNotesText(piece)
+  if (saved) parts.push(saved)
+  if (list(piece.manual_overrides).includes('notes')) {
+    let note = String(piece.notes || '')
+    for (const reply of savedChatReplyTexts()) if (reply && note.includes(reply)) note = note.split(reply).join(' ')
+    note = oneLine(note)
+    if (note) parts.push(`notes saved in the app (author not recorded): ${note}`)
+  }
+  return parts.join('; ')
+}
+
+// Stated once in each render prompt. The image model does not weigh "not recorded facts" on its own: a stale note
+// ("ends at mid-thigh" on a tunic tagged above_knee; "V-neckline" on a scoop-neck tunic) read as a second instruction.
+export const RENDER_NOTES_RULE = 'Where a garment note disagrees with a recorded garment fact (length, neckline, sleeves, fit, opacity), the recorded fact wins.'
+
+// One render line per garment: name, the shared fact line, then its notes. Never truncated.
+export function renderGarmentEvidenceLine(piece = {}) {
+  const notes = renderGarmentNotesText(piece)
+  return `${piece.name || 'unnamed'}: ${sharedGarmentEvidenceFacts(piece)}${notes ? ` | GARMENT NOTES (source-labelled; not recorded facts): ${notes}` : ''}`
+}
+
+// The selected anchor on the selected-piece roster and composer calls: the shared fact line, then its
+// saved-record notes and tagger impression, each source-labelled. It replaces buildPieceText there
+// (2026-10-27, thread_1793086091146), whose unlabelled tagger prose ("best use: … introduce depth to
+// monochromatic outfits", "best outfit role: texture_accent") the 2026-09-15 ruling omits from model lines.
+export function anchorGarmentEvidence(piece = {}) {
+  const notes = [garmentNotesText(piece), taggerNotesText(piece)].filter(Boolean).join('; ')
+  return `${sharedGarmentEvidenceLine(piece)}${notes ? `\nGARMENT NOTES (source-labelled; not recorded facts): ${notes}` : ''}`
 }
 
 // One entry per garment that has notes; '' when it has none. Deliberately not prefixed `ID n:`, so it can never be read as a fact line.

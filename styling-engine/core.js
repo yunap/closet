@@ -3,7 +3,8 @@
 // docs/feedback-and-memory-map.md for buildStylistConversationPayload's memory blocks.
 // Amend the matching doc in the same commit. See AGENTS.md.
 import { HOW_A_DAY_AWAY_WORKS } from './tripKnowledge.js'
-import { sparseGarmentCatalogRow, taggerNotesText, SPARSE_CATALOG_CONVENTIONS } from './garmentEvidenceLine.js'
+import { sparseGarmentCatalogRow, taggerNotesText, SPARSE_CATALOG_CONVENTIONS, GARMENT_FACT_CONVENTIONS, RENDER_NOTES_RULE, renderGarmentEvidenceLine } from './garmentEvidenceLine.js'
+import { upperLengthCue } from './lengthCues.js'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
@@ -89,7 +90,7 @@ import {
   stylistProviderOverride,
 } from './provider.js'
 import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
-import { formalityRank, pieceRequiresBaseLayer, visuallyPrioritizedPieces } from './attributes.js'
+import { formalityRank, pieceRequiresBaseLayer, pieceIsSeeThrough, visuallyPrioritizedPieces } from './attributes.js'
 import { evaluateWearableOutfit } from './outfitValidation.js'
 import { validatedFallback } from './recovery.js'
 import { resolveCalendarSeason } from '../lib/seasonContext.js'
@@ -2107,6 +2108,13 @@ export const WORN_REFERENCE_MAX_PX = 400
 export function garmentReferencePlan(piece = {}, { maxPhotos = 2 } = {}) {
   const group = wardrobeCategoryGroup(piece)
   const name = piece.name || 'garment'
+  // Owner ruling 2026-10-26 (thread_1793066674849): a length tag alone must decide where a hem lands.
+  // The photos used to be named the authority for that, and every render copied their proportions
+  // over the tag — a tunic tagged above_knee came out at the fingertips. A top or outerwear piece's
+  // recorded length now owns hem position; the photos keep it only when no length is recorded.
+  const recordedLength = ['top', 'outerwear'].includes(group) && upperLengthCue(piece.length_hits_at)
+    ? `${String(piece.length_hits_at).replaceAll('_', ' ')}: ${upperLengthCue(piece.length_hits_at)}`
+    : ''
   const candidates = [
     // A worn photo necessarily shows her face and body — that's what makes it useful for fit and
     // drape — but it is not the identity reference. Said so explicitly: before this, nothing told
@@ -2114,17 +2122,23 @@ export function garmentReferencePlan(piece = {}, { maxPhotos = 2 } = {}) {
     // carry a worn shot, and a wardrobe can have several, taken on different days under different
     // light. Garment fields stay first in the label; the identity disclaimer is appended, not
     // leading, so this reads as a garment reference with a caveat, not an identity reference.
+    // Owner ruling 2026-10-26 (thread_1793058184605): the caveat covers face, hair and expression
+    // only. It used to name body proportions too, which told the model to set aside the very thing
+    // that shows where a hem lands — a mid-thigh tunic rendered cropped at the waist. The worn photo
+    // is her; renders are meant to read as her try-on photos, proportions included.
     piece.worn_photo ? {
       kind: 'worn',
       filename: piece.worn_photo,
       maxPx: WORN_REFERENCE_MAX_PX,
-      label: `${name} (${group}) — worn photo, intentionally low resolution: read it only for how this garment hangs, where its hem falls, and how it sits on a body. Do not use this photo's face, hair, expression, or body proportions as an identity or likeness reference — use only the dedicated identity/proportion calibration photos for that.`,
+      label: recordedLength
+        ? `${name} (${group}) — worn photo of her wearing it, intentionally low resolution: the evidence for how this garment hangs and sits on her body and how its sleeves fall. Where its hem lands is decided by its recorded length (${recordedLength}), not by this photo. Do not copy this photo's face, hair, or expression; the identity calibration photos are the reference for those.`
+        : `${name} (${group}) — worn photo of her wearing it, intentionally low resolution: the evidence for how this garment sits on her body — where its hem lands, how it hangs, how its sleeves fall — so render it at those same proportions on her. Do not copy this photo's face, hair, or expression; the identity calibration photos are the reference for those.`,
     } : null,
     piece.photo ? {
       kind: 'hanger',
       filename: piece.photo,
       maxPx: HANGER_REFERENCE_MAX_PX,
-      label: `${name} (${group}) — hanger photo: authoritative for construction, color, print scale, texture, and garment shape${piece.worn_photo ? '' : '; no worn photo is available, so body fit and drape are unconfirmed and must be inferred conservatively from structured garment data'}`,
+      label: `${name} (${group}) — hanger photo: authoritative for construction, color, print scale, texture, and garment shape${recordedLength ? `; where it lands on her body is decided by its recorded length (${recordedLength}), not by this photo` : ''}${piece.worn_photo ? (recordedLength ? '' : '; the worn photo, not this one, shows where it lands on her body') : '; no worn photo is available, so body fit and drape are unconfirmed and must be inferred conservatively from structured garment data'}`,
     } : null,
   ].filter(Boolean)
   return candidates.slice(0, Math.max(0, Number(maxPhotos) || 0))
@@ -2163,15 +2177,29 @@ function pieceFidelityChecklist(pieces) {
     const blob = pieceTextBlob(piece)
     const constraints = []
     if (group === 'top') {
-      if (/\b(long sleeve|long-sleeve)\b/.test(blob)) constraints.push('must remain a long-sleeve top')
-      if (/\b(short sleeve|short-sleeve)\b/.test(blob)) constraints.push('must remain a short-sleeve top')
-      if (/\b(sleeveless|tank)\b/.test(blob)) constraints.push('must remain sleeveless/tank shaped')
+      // A recorded sleeve length decides; words in the name or notes only when none is recorded. thread_1793066674849:
+      // the elbow-sleeve tunic got "must remain a short-sleeve top" from its note and "sleeveless/tank shaped" from
+      // "layers over a fitted tank", and renders drew its sleeves short.
+      const sleeve = String(piece.sleeve_length || '').trim()
+      if (sleeve && sleeve !== 'unknown') {
+        const SLEEVE_WORDS = { sleeveless: 'must remain sleeveless', cap: 'must keep its cap sleeves', short: 'must remain a short-sleeve top', elbow: 'must keep its elbow-length sleeves', '3/4': 'must keep its 3/4-length sleeves', long: 'must remain a long-sleeve top', extra_long: 'must keep its extra-long sleeves' }
+        constraints.push(SLEEVE_WORDS[sleeve] || `must keep its ${sleeve.replaceAll('_', ' ')} sleeves`)
+      } else {
+        if (/\b(long sleeve|long-sleeve)\b/.test(blob)) constraints.push('must remain a long-sleeve top')
+        if (/\b(short sleeve|short-sleeve)\b/.test(blob)) constraints.push('must remain a short-sleeve top')
+        if (/\b(sleeveless|tank)\b/.test(blob)) constraints.push('must remain sleeveless/tank shaped')
+      }
       if (/\b(v-neck|scoop|boat|mock neck|turtleneck|crew)\b/.test(blob)) constraints.push('preserve the neckline read')
       if (/\b(floral|botanical|paisley|abstract|stripe|striped|pattern|abstract|tapestry)\b/.test(blob)) constraints.push('preserve the visible top print/pattern, not a generic similar print')
     }
     if (group === 'bottom') {
-      if (/\b(skirt|midi|knee|maxi)\b/.test(blob)) constraints.push('must remain the listed skirt shape/length')
-      if (/\b(jean|trouser|pant|wide|straight|bootcut|crop)\b/.test(blob)) constraints.push('must remain the listed pant/jean silhouette')
+      // A recorded bottom_subtype decides; words only when none is recorded. thread_1793066674849: slim pants got "must
+      // remain the listed skirt shape" because their note said they "hang straight from the knee down".
+      const subtype = String(piece.bottom_subtype || '').trim()
+      const isSkirt = subtype && subtype !== 'unknown' ? subtype === 'skirt' : /\b(skirt|midi|knee|maxi)\b/.test(blob)
+      const isPants = subtype && subtype !== 'unknown' ? subtype !== 'skirt' : /\b(jean|trouser|pant|wide|straight|bootcut|crop)\b/.test(blob)
+      if (isSkirt) constraints.push('must remain the listed skirt shape/length')
+      if (isPants) constraints.push('must remain the listed pant/jean silhouette')
       if (/\b(floral|botanical|paisley|abstract|stripe|striped|pattern|abstract|tapestry)\b/.test(blob)) constraints.push('preserve the bottom print/pattern scale and colors')
     }
     // thread_1788495287089: a hooded, asymmetric-drape, double-breasted cardigan with zip pockets
@@ -2220,13 +2248,31 @@ function pieceConstructionChecklist(pieces) {
   return pieces.map((piece, index) => {
     const fields = [
       piece.silhouette ? `preserve its ${String(piece.silhouette).replaceAll('_', ' ')} silhouette` : '',
-      piece.length_hits_at ? `keep its ${String(piece.length_hits_at).replaceAll('_', ' ')} length` : '',
-      piece.hem_finish ? `show its complete ${String(piece.hem_finish).replaceAll('_', ' ')}` : '',
+      // Tops and outerwear also get where the hem lands as a visible cue (lengthCues.js): the landmark word alone
+      // rendered a mid_thigh tunic at the fingertips or higher (thread_1793053056487).
+      piece.length_hits_at
+        ? (() => {
+            const group = wardrobeCategoryGroup(piece)
+            const cue = ['top', 'outerwear'].includes(group) ? upperLengthCue(piece.length_hits_at) : ''
+            const base = `keep its ${String(piece.length_hits_at).replaceAll('_', ' ')} length`
+            return cue ? `${base} (${group === 'top' ? 'worn untucked, ' : ''}${cue})` : base
+          })()
+        : '',
+      // The value alone read "show its complete ribbed" (thread_1793058184605); "hem" is added
+      // unless the value already carries it (design_hem).
+      piece.hem_finish && !['none', 'other', 'unknown'].includes(String(piece.hem_finish))
+        ? `show its complete ${String(piece.hem_finish).replaceAll('_', ' ')}${/hem$/.test(String(piece.hem_finish)) ? '' : ' hem'}`
+        : '',
       // The collar was the one construction fact never stated. Live 2026-10-18 (thread_1791357375231):
       // the charcoal cropped jacket, neckline set to shawl by the owner, went out as only "structured
       // … tweed", the gpt-4o handoff kept just that, and every flare render drew a notch-lapel blazer.
+      // A see-through garment's back can show through its front in a photo, so for those the recorded neckline is stated
+      // as the front neckline and the photo is not named as its authority (thread_1793066674849: a scoop-neck tunic with
+      // a V back rendered as a V-neck every time).
       piece.neckline && !['none', 'other', 'unknown'].includes(String(piece.neckline))
-        ? `keep its ${String(piece.neckline).replaceAll('_', ' ')} neckline/collar exactly as in the reference photo`
+        ? (pieceIsSeeThrough(piece)
+            ? `its front neckline is ${String(piece.neckline).replaceAll('_', ' ')}; the garment is see-through, so a back neckline can show through the front in the photos — draw the ${String(piece.neckline).replaceAll('_', ' ')} front neckline, not a shape seen through the fabric`
+            : `keep its ${String(piece.neckline).replaceAll('_', ' ')} neckline/collar exactly as in the reference photo`)
         : '',
       (() => {
         const length = piece.sleeve_length && piece.sleeve_length !== 'sleeveless' ? String(piece.sleeve_length).replaceAll('_', ' ') : ''
@@ -2253,10 +2299,9 @@ function pieceConstructionChecklist(pieces) {
 export const CALIBRATED_PERSON_LINE = 'The woman is the person in the identity/proportion calibration photos: same face, hair, build, height and body proportions, and the same natural posture. Do not substitute a different, younger, slimmer, or more generic model.'
 
 export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 'casual', season = 'current season', hasIdentityReference = false }) {
-  const pieceLines = pieces.map((piece, index) => {
-    const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 900)
-    return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
-  }).join('\n')
+  // The shared fact line plus source-labelled notes, never truncated (renderGarmentEvidenceLine). This used to be
+  // buildPieceText cut at 900 characters, which dropped owner notes while sending tagger prose (thread_1793058184605).
+  const pieceLines = pieces.map((piece, index) => `${index + 1}. ${renderGarmentEvidenceLine(piece)}`).join('\n')
   const fidelityChecklist = pieceFidelityChecklist(pieces)
   const constructionChecklist = pieceConstructionChecklist(pieces)
   return [
@@ -2298,7 +2343,7 @@ export function wholeWardrobeImagePrompt({ outfit = {}, pieces = [], occasion = 
     outfit.watchFor ? `Avoid drift: ${outfit.watchFor}` : '',
     `Occasion: ${occasion}. Season: ${season}.`,
     '',
-    `Saved wardrobe pieces to use:\n${pieceLines}`,
+    `Saved wardrobe pieces to use (${GARMENT_FACT_CONVENTIONS} ${RENDER_NOTES_RULE}):\n${pieceLines}`,
     '',
     'Final render check: the visible outfit must satisfy every authoritative garment-construction direction and the authoritative styling instructions (if present) above, even when a more conventional styling choice would look plausible.'
   ].filter(Boolean).join('\n')
@@ -2364,10 +2409,7 @@ export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'c
     || (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'top')
     || (pieces || []).find(piece => wardrobeCategoryGroup(piece) === 'dress')
     || (pieces || [])[0]
-  const pieceLines = pieces.map((piece, index) => {
-    const truth = buildPieceText(piece).replace(/\s+/g, ' ').slice(0, 500)
-    return `${index + 1}. ${piece.name} (${wardrobeCategoryGroup(piece)}): ${truth}`
-  }).join('\n')
+  const pieceLines = pieces.map((piece, index) => `${index + 1}. ${renderGarmentEvidenceLine(piece)}`).join('\n')
   return [
     mode === 'creative'
       ? 'Create one image showing three creative outfit alternatives inspired by the saved outfit photo.'
@@ -2402,7 +2444,7 @@ export function savedOutfitImagePrompt({ outfit = {}, pieces = [], occasion = 'c
     'Full body, realistic clothing, no text, no labels, no watermark, no mirror selfie.',
     '',
     `Saved outfit: ${outfit.label || outfit.title || outfit.name || 'saved outfit'}`,
-    pieceLines ? `Linked garment truth:\n${pieceLines}` : '',
+    pieceLines ? `Linked garment truth (${GARMENT_FACT_CONVENTIONS} ${RENDER_NOTES_RULE}):\n${pieceLines}` : '',
     `Occasion: ${occasion}. Season: ${season}.`
   ].filter(Boolean).join('\n')
 }
@@ -2461,7 +2503,7 @@ export async function createSavedOutfitImage({ outfit = {}, pieces = [], occasio
       contentParts.push({
         type: 'input_text',
         text: img.kind === 'real_photo'
-          ? 'Identity/proportion calibration reference — the only authoritative source for her face, body proportions, and likeness. A garment reference photo elsewhere in this prompt may also show a person wearing that garment; that photo is fit/drape evidence only, never an identity reference.'
+          ? 'Identity/proportion calibration reference — the only authoritative source for her face, body proportions, and likeness. A garment reference photo elsewhere in this prompt may also show her wearing that garment. It is the same woman, so that photo is the evidence for how the garment fits her body; where a hem lands is decided by the recorded length of that garment when one is given. It is not the reference for her face, hair, or expression.'
           : 'Taste calibration reference.',
       })
     }
@@ -2554,7 +2596,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
       contentParts.push({
         type: 'input_text',
         text: img.kind === 'real_photo'
-          ? 'Identity/proportion reference only — the only authoritative source for her face, body proportions, and likeness. Do not copy outfit unless it matches listed wardrobe pieces. Wardrobe garment references below may also show a person wearing that garment; that is fit/drape evidence only, never an identity reference.'
+          ? 'Identity/proportion reference only — the only authoritative source for her face, body proportions, and likeness. Do not copy outfit unless it matches listed wardrobe pieces. Wardrobe garment references below may also show her wearing that garment. It is the same woman, so that photo is the evidence for how the garment fits her body; where a hem lands is decided by the recorded length of that garment when one is given. It is not the reference for her face, hair, or expression.'
           : 'Taste calibration reference only.',
       })
     }
@@ -2569,8 +2611,7 @@ export async function createWholeWardrobeOutfitImage({ outfit, pieces, occasion,
         text: `WARDROBE GARMENT REFERENCES — use these saved pieces together in one outfit. Preserve each garment as much as possible; do not invent substitutes.`
       })
       for (const ref of garmentRefs) {
-        const pieceTruth = buildPieceText(ref.piece).replace(/\s+/g, ' ').slice(0, 700)
-        contentParts.push({ type: 'input_text', text: `Next image is REQUIRED wardrobe reference: ${ref.label}. Preserve this exact garment in the final outfit. ${pieceTruth}` })
+        contentParts.push({ type: 'input_text', text: `Next image is REQUIRED wardrobe reference: ${String(ref.label).replace(/\.$/, '')}. Preserve this exact garment in the final outfit. ${renderGarmentEvidenceLine(ref.piece)}` })
         contentParts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${ref.base64}` })
       }
     }
@@ -2698,7 +2739,7 @@ export async function createWholeWardrobeComparisonSheetImage({ outfits = [], pi
       contentParts.push({
         type: 'input_text',
         text: img.kind === 'real_photo'
-          ? 'Identity/proportion reference only — the only authoritative source for her face, body proportions, and likeness. Do not copy outfit unless it matches a listed panel. Garment references below may show a person wearing that garment; that is fit/drape evidence only, never an identity reference.'
+          ? 'Identity/proportion reference only — the only authoritative source for her face, body proportions, and likeness. Do not copy outfit unless it matches a listed panel. Garment references below may show her wearing that garment. It is the same woman, so that photo is the evidence for how the garment fits her body; where a hem lands is decided by the recorded length of that garment when one is given. It is not the reference for her face, hair, or expression.'
           : 'Taste calibration reference only.',
       })
     }
@@ -2896,7 +2937,7 @@ export async function createIdealAdditionsComparisonSheetImage({
       contentParts.push({
         type: 'input_text',
         text: img.kind === 'real_photo'
-          ? 'Identity/proportion reference only — the only authoritative source for her face, body proportions, and likeness across every figure. The garment reference photo below may also show a person wearing it; that is fit/drape evidence only, never an identity reference.'
+          ? 'Identity/proportion reference only — the only authoritative source for her face, body proportions, and likeness across every figure. The garment reference photo below may also show her wearing that garment. It is the same woman, so that photo is the evidence for how the garment fits her body; where a hem lands is decided by the recorded length of that garment when one is given. It is not the reference for her face, hair, or expression.'
           : 'Taste calibration reference only.',
       })
     }
@@ -4003,8 +4044,8 @@ export async function runGPT4oImageGeneration({ client, prompt, size = '1024x153
     const captionParts = [
       img.kind === 'real_photo'
         ? (img.favorite
-          ? 'Real photo — the only authoritative source for her visual identity, proportion, and presence. Use it strongly. An anchor garment photo below may also show a person wearing that garment; that is garment fit reference only, never an identity reference.'
-          : 'Real outfit photo — the only authoritative identity reference. An anchor garment photo below may also show a person wearing that garment; that is garment fit reference only, never an identity reference.')
+          ? 'Real photo — the only authoritative source for her visual identity, proportion, and presence. Use it strongly. An anchor garment photo below may also show her wearing that garment. It is the same woman, so that photo is the evidence for how the garment fits her body; where a hem lands is decided by the recorded length of that garment when one is given. It is not the reference for her face, hair, or expression.'
+          : 'Real outfit photo — the only authoritative identity reference. An anchor garment photo below may also show her wearing that garment. It is the same woman, so that photo is the evidence for how the garment fits her body; where a hem lands is decided by the recorded length of that garment when one is given. It is not the reference for her face, hair, or expression.')
         : (img.favorite ? 'Good style reference — use strongly for aesthetic direction' : 'Good style reference'),
       img.labels?.length ? `[${img.labels.join(', ')}]` : '',
       img.notes ? img.notes : '',
@@ -4131,7 +4172,7 @@ export async function createEditorialConceptImage({ selectedPiece, direction, in
         anchorParts.push({
           base64: buffer.toString('base64'),
           mime: 'image/jpeg',
-          label: `${selectedPiece.name} — worn photo, intentionally low resolution: read it only for drape, fit, and neckline on a body. Do not use this photo's face, hair, expression, or body proportions as an identity or likeness reference — use only the dedicated identity/proportion calibration photos for that.`,
+          label: `${selectedPiece.name} — worn photo of her wearing it, intentionally low resolution: the evidence for how this garment sits on her body — drape, fit, neckline, where its hem lands — so render it at those same proportions on her. Do not copy this photo's face, hair, or expression; the identity calibration photos are the reference for those.`,
         })
       }
     }

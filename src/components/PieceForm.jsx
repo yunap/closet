@@ -111,7 +111,7 @@ const CONSTRUCTION_BY_CATEGORY = {
     silhouetteLabel: 'Silhouette',
     silhouetteOptions: ['fitted','slim','straight','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
     lengthLabel: 'Length hits at',
-    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','tunic','unknown'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','above_knee','unknown'],
     hemLabel: 'Hem finish',
     hemOptions: [
       { value: 'straight_loose', label: 'straight' },
@@ -162,7 +162,7 @@ const CONSTRUCTION_BY_CATEGORY = {
     silhouetteLabel: 'Outerwear shape',
     silhouetteOptions: ['fitted','straight','boxy','relaxed','oversized','structured'],
     lengthLabel: 'Length hits at',
-    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','full_length','floor_length','unknown'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','above_knee','knee','mid_calf','ankle','full_length','floor_length','unknown'],
   },
   shoes: {
     sectionLabel: 'Shoe Details',

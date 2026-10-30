@@ -1830,7 +1830,7 @@ test('REGRESSION: trip composition does not present retired outfit-reaction copi
 
 test('atomic trip composition receives roster thumbnails and full authoritative garment truth, per its own dedicated function', () => {
   const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
-  assert.match(routeSrc, /export function tripPlanCompositionSystemPrompt\(\)/)
+  assert.match(routeSrc, /export function tripPlanCompositionSystemPrompt\(\{ planKind = 'trip' \} = \{\}\)/)
   assert.match(routeSrc, /async function composeTripPlanOnce\(workbench, toolContext\)/)
   assert.match(routeSrc, /prepareWardrobeThumb\(filePath, `trip-plan:/)
   assert.match(routeSrc, /atomicTripVisualPieces = visuallySeenIds\.length/)
@@ -3399,15 +3399,22 @@ test('model plan slot workbench force-includes a shared anchor that would fall p
 // Part 3 (spec 23): the vibe-based wording still trended the wrong way (a
 // follow-up re-run produced five different pairs of footwear across five
 // outfits) — replaced with a checkable number.
-test('model plan slot workbench instructions push reuse when reuseMode is maximize, and never otherwise', async () => {
+test('model plan slot workbench instructions push reuse when a packing plan sets maximize, and never otherwise', async () => {
   const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
   const slots = normalizePlanSlots([
     { label: 'City Day', occasion: 'city', activity: 'none', count: 1 },
   ])
 
-  const maximizeWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day', constraints: { reuse: 'maximize' } })
+  const maximizeWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day', planKind: 'trip', constraints: { reuse: 'maximize' } })
   assert.match(maximizeWorkbench.instructions, /Reuse is set to maximize.*at most 3 pairs of shoes/)
   assert.match(maximizeWorkbench.instructions, /repeat bottoms across slots/)
+
+  // Packing light is a trip's (and a capsule's): a plan that packs nothing never takes it (owner, 2026-10-28).
+  for (const planKind of ['coordinated_plan', '']) {
+    const atHome = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day', planKind, constraints: { reuse: 'maximize' } })
+    assert.doesNotMatch(atHome.instructions, /Reuse is set to maximize|pack/i)
+    assert.equal(atHome.pendingPlan.constraints.reuse, '')
+  }
 
   const defaultWorkbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
   assert.doesNotMatch(defaultWorkbench.instructions, /Reuse is set to maximize/)
@@ -4703,7 +4710,7 @@ test('a 4th distinct pair of shoes under reuse:maximize is rejected, coaching re
     { label: 'Day C', occasion: 'city', activity: 'none', count: 1 },
     { label: 'Day D', occasion: 'city', activity: 'none', count: 1 },
   ])
-  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'four days', constraints: { reuse: 'maximize' } })
+  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'four days', planKind: 'trip', constraints: { reuse: 'maximize' } })
   const [slotA, slotB, slotC, slotD] = workbench.pendingPlan.slots
   const idFor = (slot, name) => Number((slot.allowedPieces || []).find(piece => piece.name === name)?.id)
 
@@ -4722,6 +4729,15 @@ test('a 4th distinct pair of shoes under reuse:maximize is rejected, coaching re
   assert.match(reasons, /A shoes/)
   assert.match(reasons, /B shoes/)
   assert.match(reasons, /C shoes/)
+
+  // A plan that packs nothing has no shoe cap, whatever reuse it was given (owner, 2026-10-28).
+  const atHome = await buildPlanSlotWorkbench(slots, { allPieces, question: 'four days', planKind: 'coordinated_plan', constraints: { reuse: 'maximize' } })
+  const homeSlots = atHome.pendingPlan.slots
+  const homeResult = validateSubmittedPlanOutfits(atHome.pendingPlan, homeSlots.map((slot, index) => {
+    const label = 'ABCD'[index]
+    return { slot_id: slot.id, piece_ids: [idFor(slot, `${label} top`), idFor(slot, `${label} bottom`), idFor(slot, `${label} shoes`)] }
+  }))
+  assert.equal(homeResult.accepted.length, 4, JSON.stringify(homeResult.failures))
 })
 
 test('reuse:maximize never blocks the first, second, or third distinct pair of shoes', async () => {
@@ -4877,6 +4893,7 @@ test('the used-shoe ledger survives a spec-23 partial re-plan merge across three
       { label: 'Day C', occasion: 'city', activity: 'none', count: 1 },
       { label: 'Day D', occasion: 'city', activity: 'none', count: 1 },
     ],
+    plan_kind: 'trip',
     constraints: { reuse: 'maximize' }
   }, toolContext)
 
@@ -4896,7 +4913,8 @@ test('the used-shoe ledger survives a spec-23 partial re-plan merge across three
 
   // Round 1 of merge: re-plan Day B.
   await executeTool('plan_outfit_set', {
-    slots: [{ label: 'Day B', occasion: 'city', activity: 'none', count: 1 }]
+    slots: [{ label: 'Day B', occasion: 'city', activity: 'none', count: 1 }],
+    plan_kind: 'trip'
   }, toolContext)
   const slotB = toolContext.pendingPlan.slots.find(slot => slot.label === 'Day B')
   const secondSubmit = await executeTool('submit_plan_outfits', { outfits: [outfitFor(slotB)] }, toolContext)
@@ -4905,7 +4923,8 @@ test('the used-shoe ledger survives a spec-23 partial re-plan merge across three
 
   // Round 2 of merge: re-plan Day C. The 3rd distinct pair must still be accepted.
   await executeTool('plan_outfit_set', {
-    slots: [{ label: 'Day C', occasion: 'city', activity: 'none', count: 1 }]
+    slots: [{ label: 'Day C', occasion: 'city', activity: 'none', count: 1 }],
+    plan_kind: 'trip'
   }, toolContext)
   const slotC = toolContext.pendingPlan.slots.find(slot => slot.label === 'Day C')
   const thirdSubmit = await executeTool('submit_plan_outfits', { outfits: [outfitFor(slotC)] }, toolContext)
@@ -4914,7 +4933,8 @@ test('the used-shoe ledger survives a spec-23 partial re-plan merge across three
 
   // Round 3 of merge: re-plan Day D. A 4th distinct pair must still be rejected.
   await executeTool('plan_outfit_set', {
-    slots: [{ label: 'Day D', occasion: 'city', activity: 'none', count: 1 }]
+    slots: [{ label: 'Day D', occasion: 'city', activity: 'none', count: 1 }],
+    plan_kind: 'trip'
   }, toolContext)
   const slotD = toolContext.pendingPlan.slots.find(slot => slot.label === 'Day D')
   const fourthSubmit = await executeTool('submit_plan_outfits', { outfits: [outfitFor(slotD)] }, toolContext)

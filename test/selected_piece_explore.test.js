@@ -29,10 +29,12 @@ const ANCHOR = 830106
 const LAYER_ANCHOR = 830401
 const DEPENDENT_ANCHOR = 830402
 const BASE_TANK = 830207
+const BASE_DRESS = 830403
 const rows = [
   { id: LAYER_ANCHOR, name: 'patchwork knit buttoned top', category: 'outerwear', outerwear_role: 'indoor_layer', fabric_weight: 'medium', ...common },
   { id: DEPENDENT_ANCHOR, name: 'olive open-knit tunic sweater top', category: 'top', needs_base: 'yes', opacity: 'open_weave', fit_on_body: 'hangs_straight', fabric_weight: 'light', ...common },
   { id: BASE_TANK, name: 'black fitted tank', category: 'top', opacity: 'opaque', fit_on_body: 'skims', sleeve_length: 'sleeveless', fabric_weight: 'light', ...common },
+  { id: BASE_DRESS, name: 'black fitted sleeveless dress', category: 'dress', opacity: 'opaque', fit_on_body: 'skims', sleeve_length: 'sleeveless', fabric_weight: 'light', ...common },
   { id: ANCHOR, name: 'black flare leg denim pants', category: 'bottom', fabric_weight: 'medium', ...common },
   ...Array.from({ length: 6 }, (_, i) => ({ id: 830201 + i, name: `fixture top ${i + 1}`, category: 'top', fabric_weight: 'medium', ...common })),
   { id: 830301, name: 'black slip-on loafers', category: 'shoes', heel_height: 'flat', walk_support: 'high', ...common },
@@ -95,10 +97,11 @@ test('the Explore instruction is intent only: it names no styling dimension, gar
 test('roster prompt: Explore states the outfit count and the instruction; the default is unchanged', () => {
   assert.equal(selectedPieceRosterSystemPrompt(), selectedPieceRosterSystemPrompt(40, { explore: false, outfitCount: 5 }))
   const explore = selectedPieceRosterSystemPrompt(40, { explore: true, outfitCount: 5 })
-  assert.match(explore, /You are choosing for 5 outfits, each taking its own direction\./)
+  assert.match(explore, /You are choosing for up to 5 outfits, each taking its own direction\./)
   assert.ok(explore.includes(EXPLORE_INSTRUCTION))
-  assert.deepEqual(selectedPieceOutfitCount({ explore: true }), { minOutfits: 5, maxOutfits: 5 })
-  assert.deepEqual(selectedPieceOutfitCount(), { minOutfits: 3, maxOutfits: 4 })
+  // Owner ruling 2026-10-27: the count is a ceiling, never filled with outfits she would not recommend.
+  assert.deepEqual(selectedPieceOutfitCount({ explore: true }), { minOutfits: 1, maxOutfits: 5 })
+  assert.deepEqual(selectedPieceOutfitCount(), { minOutfits: 1, maxOutfits: 4 })
 })
 
 test('Style direction reaches the stylist as its label and description, not the bare ID', () => {
@@ -133,9 +136,9 @@ function installHandler(cardCount) {
 test('end to end: Explore sends the instruction to both steps, asks for and delivers five cards, unranked', async () => {
   const calls = installHandler(5)
   const result = await generateOutfitsForPieceInternal({ pieceId: ANCHOR, occasion: 'city', season: 'current season', mission: 'unexpected_pairing', explore: true })
-  assert.ok(calls.roster.system.includes(EXPLORE_INSTRUCTION) && /choosing for 5 outfits/.test(calls.roster.system))
+  assert.ok(calls.roster.system.includes(EXPLORE_INSTRUCTION) && /choosing for up to 5 outfits/.test(calls.roster.system))
   assert.ok(calls.composer.system.includes(EXPLORE_INSTRUCTION) && !calls.composer.system.includes(OUTFIT_VARIETY_RULE))
-  assert.match(calls.composer.text, /Compose 5 complete outfits/)
+  assert.match(calls.composer.text, /Compose up to 5 complete outfits using only shown saved wardrobe pieces\. Return only outfits you would recommend: if fewer than 5 meet that, return fewer and say in "skip" what kept the others out\. Never fill the count with an outfit you would not recommend\./)
   assert.match(calls.composer.text, /Occasion vibe: polished, comfortable, walk-friendly\n/)
   assert.match(calls.composer.text, /Style direction: Unexpected Pairing — /)
   assert.match(calls.roster.text, /Style direction: Unexpected Pairing — /)
@@ -152,7 +155,7 @@ test('end to end: with Explore off the requests are the default ones', async () 
   assert.ok(!calls.roster.system.includes(EXPLORE_INSTRUCTION))
   assert.equal(calls.roster.system, selectedPieceRosterSystemPrompt())
   assert.equal(calls.composer.system, selectedItemVisualComposerSystemPrompt())
-  assert.match(calls.composer.text, /Compose 3-4 complete outfits/)
+  assert.match(calls.composer.text, /Compose up to 4 complete outfits/)
   assert.match(calls.composer.text, /Occasion vibe: polished, comfortable, walk-friendly, clean columns/)
   assert.ok(!/Style direction:|Mission:/.test(calls.composer.text), 'mix sends no direction line')
   assert.equal(result.explore, false)
@@ -309,7 +312,7 @@ test('a top that cannot be worn alone is a layer anchor: both steps say it is wo
     await generateOutfitsForPieceInternal({ pieceId: DEPENDENT_ANCHOR, occasion: 'city', season: 'current season', explore })
     assert.ok(calls.roster.system.includes(ROSTER_DEPENDENT_ANCHOR_BLOCK), `roster, explore=${explore}`)
     assert.ok(!calls.roster.system.includes(ROSTER_LAYER_ANCHOR_BLOCK), 'not the outerwear wording')
-    assert.match(calls.composer.text, /Selected item category is TOP, and it cannot be worn alone against skin\. Every outfit idea must include "olive open-knit tunic sweater top" worn over a top that can be worn alone/)
+    assert.match(calls.composer.text, /Selected item category is TOP, and it cannot be worn alone against skin\. Every outfit idea must include "olive open-knit tunic sweater top" worn over a top or a dress that can be worn alone/)
     assert.doesNotMatch(calls.composer.text, /as the top\. Do not replace it with another top/, 'the line that read as "no other top" is gone')
     assert.equal(calls.composer.text.includes(EXPLORE_DEPENDENT_ANCHOR_LINE), explore, `composer Explore line, explore=${explore}`)
   }
@@ -324,7 +327,8 @@ test('the incident: five cards wearing the tunic alone get one correction call, 
   const calls = installTunicHandler({ outfits: Array.from({ length: 5 }, (_, i) => tunicCard(`Direction ${i + 1}`, BASE_TANK)), skip: '', saveableLearning: '' })
   const result = await generateOutfitsForPieceInternal({ pieceId: DEPENDENT_ANCHOR, occasion: 'city', season: 'current season', explore: true })
   assert.equal(calls.correction.length, 1, 'exactly one correction call')
-  assert.match(calls.correction[0], /cannot be worn alone against skin has no top under it that can be/)
+  assert.match(calls.correction[0], /cannot be worn alone against skin has nothing under it that can be/)
+  assert.match(calls.correction[0], /under a top, a shown dress that can be worn alone in `dress_id` works too/)
   assert.match(calls.correction[0], /- "Direction 1": olive open-knit tunic sweater top cannot be worn alone/)
   assert.match(calls.correction[0], /- "Direction 5": olive open-knit tunic sweater top cannot be worn alone/)
   assert.doesNotMatch(calls.correction[0], /missing a part every outfit needs|garment you named is not/, 'every slot was filled and every name matched')
@@ -342,4 +346,86 @@ test('the incident: a correction that still wears the tunic alone leaves Needs r
   assert.equal(calls.correction.length, 1)
   assert.equal(result.debug.visualCritic.nameCheck.remainingRequiredBase, 5)
   assert.ok(result.structuredOutfits.every(outfit => outfit.broken && outfit.modelSlots.base_top_id === DEPENDENT_ANCHOR && outfit.modelSlots.middle_layer_id === null))
+})
+
+// thread_1793086091146 (owner rulings 2026-10-25 and 2026-10-27): under a top that cannot be worn alone
+// the base may be a dress, and in Explore a base that fits may carry the outfit's direction.
+test('Explore base scope: fit first, then it may carry the direction, and it may still repeat', () => {
+  assert.doesNotMatch(EXPLORE_LAYER_BASE_SCOPE, /not for the less obvious direction/)
+  assert.match(EXPLORE_LAYER_BASE_SCOPE, /must first fit under the anchor; once it does, it may carry the outfit's direction/)
+  assert.match(EXPLORE_LAYER_BASE_SCOPE, /the same base may repeat across outfits/)
+  assert.ok(EXPLORE_DEPENDENT_ANCHOR_LINE.includes('a top or a dress under it'))
+})
+
+test('a dress under the tunic: the tunic worn over a dress ships with no correction call', async () => {
+  const dressCard = label => ({ ...tunicCard(label), base_top_name: null, base_top_id: null, bottom_name: null, bottom_id: null,
+    dress_name: 'black fitted sleeveless dress', dress_id: BASE_DRESS,
+    middle_layer_name: 'olive open-knit tunic sweater top', middle_layer_id: DEPENDENT_ANCHOR })
+  const calls = installTunicHandler({ outfits: [] })
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = ({ system, messages }) => {
+    const text = messages[0].content.map(part => part?.text || '').join('\n')
+    if (String(system).includes('choosing which garments from a client')) return { selection_note: 'all', roster_piece_ids: rows.filter(row => row.id !== DEPENDENT_ANCHOR).map(row => row.id) }
+    if (text.includes('CORRECTION NEEDED')) { calls.correction.push(text); return { outfits: [] } }
+    return { outfits: Array.from({ length: 5 }, (_, i) => dressCard(`Direction ${i + 1}`)), skip: '', saveableLearning: '' }
+  }
+  const result = await generateOutfitsForPieceInternal({ pieceId: DEPENDENT_ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  assert.equal(calls.correction.length, 0)
+  assert.equal(result.structuredOutfits.length, 5)
+  assert.ok(result.structuredOutfits.every(outfit => !outfit.broken), JSON.stringify(result.structuredOutfits.map(o => [o.strength, o.rejectionReason])))
+})
+
+test('the anchor reaches both steps as the shared fact line, not the tagger prose block', async () => {
+  const calls = installTunicHandler({ outfits: [] })
+  await generateOutfitsForPieceInternal({ pieceId: DEPENDENT_ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  assert.match(calls.composer.text, /Selected garment facts:\nID 830402: olive open-knit tunic sweater top; top;/)
+  assert.match(calls.roster.text, /Anchor garment facts:\nID 830402: olive open-knit tunic sweater top; top;/)
+  for (const text of [calls.composer.text, calls.roster.text]) assert.doesNotMatch(text, /garment truth|best use|AI auto-use trust/)
+})
+
+// Outside review, 2026-10-27 (thread_1793090407904): the shortlist cannot verify fit it cannot see, and both
+// calls read the literal "Season: current season".
+test('shortlist fit rule: leave out only the clearly incompatible, bring the plausible, the composer decides on photos', async () => {
+  const calls = installTunicHandler({ outfits: [] })
+  await generateOutfitsForPieceInternal({ pieceId: DEPENDENT_ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  assert.doesNotMatch(calls.roster.system, /Shortlist only candidates that pass/)
+  assert.match(calls.roster.system, /you cannot settle fit here: leave out a candidate whose recorded construction clearly cannot sit inside the anchor, or clearly adds bulk under it/)
+  assert.match(calls.roster.system, /bring every plausible one\. The next step decides fit on the photographs of both/)
+})
+
+test('both calls name the season when the request says "current season"; a named season passes through unchanged', async () => {
+  const calls = installTunicHandler({ outfits: [] })
+  await generateOutfitsForPieceInternal({ pieceId: DEPENDENT_ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  for (const text of [calls.roster.text, calls.composer.text]) {
+    assert.match(text, /\nSeason: (spring|summer|fall|winter) \(the current season\)\n/)
+    assert.doesNotMatch(text, /\nSeason: current season\n/)
+  }
+  const { seasonPromptLabel } = await import('../lib/seasonContext.js')
+  assert.equal(seasonPromptLabel('current season', 'fall'), 'fall (the current season)')
+  assert.equal(seasonPromptLabel('winter', 'fall'), 'winter')
+  assert.equal(seasonPromptLabel('current season', ''), 'current season')
+})
+
+// Owner ruling 2026-10-27: "if the model can't produce the outfits it considers good it should not fill the count
+// in with bad ones."
+test('Explore: two outfits she would recommend ship as two; nothing is padded or corrected toward five', async () => {
+  const calls = installHandler(2)
+  const result = await generateOutfitsForPieceInternal({ pieceId: ANCHOR, occasion: 'city', season: 'current season', explore: true })
+  assert.equal(result.structuredOutfits.length, 2)
+  assert.ok(result.structuredOutfits.every(outfit => !outfit.broken))
+  assert.equal(result.debug.visualCritic.outfitCountCheck.withinRequest, true)
+  assert.equal(result.debug.visualCritic.nameCheck.correctionRan, false)
+  assert.ok(!calls.correction?.length)
+})
+
+// thread_1793144336653 (2026-10-27): a composer timeout came back as an ordinary reply under "I would skip",
+// with rating chips and no retry. The chat now treats it as a failed turn and offers "Try again" for the
+// same piece request.
+test('chat: a failed piece composer is an error bubble with a same-request Try again, and no rating chips', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/components/StylistChat.jsx'), 'utf8')
+  assert.match(src, /if \(data\.debug\?\.compositionSkipped === 'composer_failed'\) \{\s*throw Object\.assign\(new Error\(/)
+  assert.match(src, /const errText = err\.userFacing \? err\.message : `Error: \$\{err\.message\}`/)
+  assert.match(src, /const retryPieceRequest = pieceToSend && shouldGenerateOutfits \? \{/)
+  assert.match(src, /onClick=\{\(\) => send\(\{ input: m\.retryInput, \.\.\.m\.retryPieceRequest, generateOutfitMode: true, editorialVisualMode: false, continueThread: true, forceNewRequest: true, replaceFailedTurn: true \}\)\}/)
+  assert.match(src, /: replacingFailedTurn \? messages\.slice\(0, -1\) : \[\.\.\.messages, userMessage\]/, 'the retry takes the failed turn\'s place, no second piece card')
+  assert.match(src, /\{m\.role === 'assistant' && !m\.isError && !m\.isLocalAcknowledgment && String\(m\.text \|\| ''\)\.trim\(\) &&/, 'rating chips stay off error bubbles')
 })

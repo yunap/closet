@@ -9,6 +9,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS, PHYSICAL_WEARABILITY_REALISM_RULES, STYLIST_COMPETENCE_CONTRACT } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
+import { UPPER_THIGH_LENGTH_DEFINITIONS } from '../styling-engine/lengthCues.js'
+import { SEE_THROUGH_NECKLINE_INSTRUCTION } from '../styling-engine/attributes.js'
 import { layerConstructionPromptRule, layerDirectionPromptRule, layerWearabilityFirstPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, requiredBaseLayerPromptRule, LAYERED_LOOK_STAGES_FACT } from '../styling-engine/outfitValidation.js'
 
 const SLOT_JSON_SHAPE = `JSON shape:
@@ -345,6 +347,17 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     if (key === 'TAG_PIECE_PROMPT') {
       expected = expected.replace("      \"real_wear_notes\": {\n        \"fit\": \"visible placement/strain only; do not claim comfort from still image\",\n        \"drape\": \"\",\n        \"scale\": \"garment volume/visual territory only; no body shape comments\",\n        \"placement\": \"\",\n        \"maintenance\": \"only specify exceptional physical care burdens (e.g. dry clean only, wrinkles easily, pills easily). leave empty or omit for standard machine-washable items.\"\n      },", "      \"real_wear_notes\": {\n        \"_rule\": \"OMIT any key below rather than sending an empty string, and omit the whole object if none apply. Each value is at most 8-12 words. Measured 2026-09-02: this block was filled 4.9 keys out of 5 on average, including on garments whose own instructions said to leave a key out \u2014 the empty-string placeholders were reading as slots that had to be answered.\",\n        \"fit\": \"visible fit/strain/placement only; do not claim comfort from a still image; 8-12 words\",\n        \"drape\": \"how the fabric falls or hangs; 8-12 words; OMIT if not visually meaningful\",\n        \"placement\": \"where key garment features sit on the body; 8-12 words; OMIT if it repeats fit\",\n        \"scale\": \"garment volume/visual territory only; no body shape comments; 8-12 words\",\n        \"maintenance\": \"an exceptional, VISIBLE care burden only (dry clean only, wrinkles easily, pills easily); 8-12 words; OMIT for ordinary machine-washable items\"\n      },")
       expected = expected.replace("  \"_confidence\": {\n", "  \"_confidence\": {\n" + "    \"_rule\": \"OMIT entries for fields that do not apply to this garment's category \u2014 a coat has no heel_height, jewelry_type or waistband_type, and rating them is pure bookkeeping. Rate only what you were actually asked to produce above.\"," + "\n")
+    }
+    // 2026-10-26: top length 'tunic' renamed to 'mid_thigh' (thread_1793058184605). 'tunic' named a
+    // garment type, not a place on the body, and a tunic-tagged knit rendered cropped at the waist.
+    // Same day: 'above_knee' added for tops and outerwear (lower thigh, between mid_thigh and knee),
+    // with the two thigh values defined for the tagger from lengthCues.js.
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace('top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|', 'top -> cropped|waist|high_hip|hip|low_hip|mid_thigh|above_knee|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|above_knee|knee|')
+      expected = expected.replace('that lives in a separate field). Not applicable to accessory.', `that lives in a separate field). ${UPPER_THIGH_LENGTH_DEFINITIONS} Not applicable to accessory.`)
+      // Same day (thread_1793066674849): neckline means the front edge; a see-through garment's back neckline can show
+      // through the front in a photo (a scoop-neck tunic with a V back was tagged and rendered as a V-neck).
+      expected = expected.replace('shawl|other|unknown",', `shawl|other|unknown — the FRONT neckline. ${SEE_THROUGH_NECKLINE_INSTRUCTION}",`)
     }
     // 2026-08-21: the composer proposes from isolated per-garment photos and was observed
     // rationalizing a two-print pairing ("shares a warm palette", "reads quieter because the
