@@ -1186,7 +1186,7 @@ const GARMENT_CATEGORY_WORDS = ['shorts', 'pants', 'trousers', 'slacks', 'jeans'
 // "black wide-leg knit trousers" just discussed "pants", and only a different garment named
 // "...knit pants" could match — the answer described that one's cotton ponte as theirs.
 const GARMENT_CATEGORY_SYNONYMS = [['pants', 'trousers', 'slacks']]
-export function recentReferentPieceIds(question = '', history = [], pieces = []) {
+export function recentReferentPieceIds(question = '', history = [], pieces = [], { fullOnly = false } = {}) {
   const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
   const questionNorm = normalize(question)
   const categoryWord = GARMENT_CATEGORY_WORDS.find(word => new RegExp(`\\b${word}\\b`).test(questionNorm))
@@ -1210,8 +1210,37 @@ export function recentReferentPieceIds(question = '', history = [], pieces = [])
     })
     .filter(candidate => candidate && Number.isFinite(candidate.id))
   const fullyNamed = candidates.filter(candidate => candidate.full)
-  const pool = fullyNamed.length ? fullyNamed : candidates
+  const pool = fullyNamed.length || fullOnly ? fullyNamed : candidates
   return pool.length === 1 ? [pool[0].id] : []
+}
+
+// The garment on the thread's own cards that a question refers to by a shortened name.
+// thread_1793329874358: the stylist called Look 4's "navy cream striped button-up shirt" "the striped
+// button-up shirt"; the wardrobe-wide match above allows one missing word, so it picked the "grey
+// striped button-up shirt" that was on no card, and every answer after it described the wrong shirt.
+// Among the cards' pieces the question and the last exchange are read together, and the piece of a category the
+// question names that shares the most name words with them (at least two) is the one meant; a tie is no answer.
+export function cardReferentPieceIds(question = '', history = [], pieces = [], cardPieceIds = []) {
+  const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const onCards = new Set((Array.isArray(cardPieceIds) ? cardPieceIds : []).map(Number))
+  if (!onCards.size) return []
+  const questionNorm = normalize(question)
+  // Every category the question names ("the shirt … in the Striped Button-Up and Boyfriend Jeans outfit").
+  const categoryWords = GARMENT_CATEGORY_WORDS.filter(word => new RegExp(`\\b${word}\\b`).test(questionNorm))
+    .flatMap(word => GARMENT_CATEGORY_SYNONYMS.find(group => group.includes(word)) || [word])
+  if (!categoryWords.length) return []
+  const words = new Set(`${questionNorm} ${normalize(compactRecentHistory(history, 2))}`.split(' ').filter(Boolean))
+  const scored = (Array.isArray(pieces) ? pieces : [])
+    .filter(piece => onCards.has(Number(piece?.id)))
+    .map(piece => {
+      const nameWords = normalize(piece?.name).split(' ').filter(Boolean)
+      if (!nameWords.some(word => categoryWords.includes(word))) return null
+      return { id: Number(piece.id), matched: nameWords.filter(word => words.has(word)).length }
+    })
+    .filter(candidate => candidate && candidate.matched >= 2 && Number.isFinite(candidate.id))
+  const best = Math.max(0, ...scored.map(candidate => candidate.matched))
+  const top = scored.filter(candidate => candidate.matched === best)
+  return top.length === 1 ? [top[0].id] : []
 }
 
 // The router reads the recent exchange and names the garment the request is about. Only an exact
@@ -7825,9 +7854,16 @@ router.post('/ask', async (req, res) => {
               ...explicitResolvedPieceIds
             ])]
             const questionNamesGarment = questionGarmentIds.length > 0
+            const cardPieceIds = (compactContext.outfits || []).flatMap(outfit => outfit?.pieceIds || outfit?.piece_ids || [])
+            const onCardReferentIds = cardReferentPieceIds(currentQuestion, req.body.history, activePieceIdentities, cardPieceIds)
+            // A garment named in full still wins; a shortened name is read against the cards' own pieces
+            // before the whole wardrobe (cardReferentPieceIds).
             const resolveReferent = () => {
               const fromRouter = routerSubjectPieceIds(routed.value?.subject, activePieceIdentities)
               if (fromRouter.length) return fromRouter
+              const namedInFull = recentReferentPieceIds(currentQuestion, req.body.history, activePieceIdentities, { fullOnly: true })
+              if (namedInFull.length) return namedInFull
+              if (onCardReferentIds.length) return onCardReferentIds
               const fromExchange = recentReferentPieceIds(currentQuestion, req.body.history, activePieceIdentities)
               return fromExchange.length ? fromExchange : followUpSubjectIds
             }
@@ -7865,7 +7901,9 @@ router.post('/ask', async (req, res) => {
               // piece alone was right for garment_fact but left thread_1792563578975 comparing two
               // outfits with only the cardigan's photo, so it judged the sleeves underneath blind.
               const cardVisualIds = compactProfile === 'existing_card_explanation'
-                ? cardExplanationVisualPieceIds({ question: currentQuestion, outfits: compactContext.outfits, leadPieceIds: exactNamedPieceIds })
+                // The garment the question is about leads, so the photo limit never runs out before it
+                // (thread_1793329874358 msg 16: Looks 1-3 took all 8 photos, the shirt asked about got none).
+                ? cardExplanationVisualPieceIds({ question: currentQuestion, outfits: compactContext.outfits, leadPieceIds: [...exactNamedPieceIds, ...onCardReferentIds] })
                 : null
               const visualPieces = cardVisualIds
                 ? cardVisualIds.map(id => compactPieces.find(piece => Number(piece.id) === id)).filter(Boolean)

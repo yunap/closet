@@ -503,6 +503,44 @@ test('a garment follow-up keeps the garment the conversation is about', async ()
   assert.deepEqual(exactNamedPieceIdsFromQuestion(both, pieces), [])
 })
 
+// Live thread_1793329874358: Look 4 wore the "navy cream striped button-up shirt"; the stylist then called it "the
+// striped button-up shirt". The wardrobe-wide near match (one word may be missing) picked the "grey striped button-up
+// shirt", on no card, and the answers described it; the correction turn's photos ran out before Look 4's shirt.
+test('a shortened garment name resolves to the piece on the thread\'s cards, and that piece leads the card photos', async () => {
+  const { recentReferentPieceIds, cardReferentPieceIds, cardExplanationVisualPieceIds } = await import('../routes/ai.js')
+  const pieces = [
+    { id: 133, name: 'navy cream striped button-up shirt' },
+    { id: 996795, name: 'grey striped button-up shirt ' },
+    { id: 996889, name: 'plum quarter-zip relaxed pullover sweatshirt' },
+    { id: 996880, name: 'sage green wide-leg lounge pants' },
+    { id: 996878, name: 'classic medium-wash boyfriend jeans' },
+  ]
+  const outfits = [{ label: 'Hosting at Home', piece_ids: [996889, 996880, 214] }, { label: 'Sunday Wind-Down', piece_ids: [133, 996878, 198] }]
+  const cardPieceIds = outfits.flatMap(outfit => outfit.piece_ids)
+  const history = [
+    { role: 'user', content: 'ok, so do you want me to have look 1 on for all 4 days while cooking breakfast?' },
+    { role: 'assistant', content: "If you'd prefer a change of pace on another morning, you could easily swap in the striped button-up shirt with those same lounge pants." },
+  ]
+  const question = 'the striped button-up shirt for cooking? please take a look at the photo and tell me what you see'
+  // What went wrong: the wardrobe-wide near match.
+  assert.deepEqual(recentReferentPieceIds(question, history, pieces), [996795])
+  // Nothing names a shirt in full, so the cards' own shirt is the one meant.
+  assert.deepEqual(recentReferentPieceIds(question, history, pieces, { fullOnly: true }), [])
+  assert.deepEqual(cardReferentPieceIds(question, history, pieces, cardPieceIds), [133])
+  // The correction names the card by the title the user saw; the shirt is still found and its photo leads.
+  const correction = 'You are talking about the wrong shirt. I was referring to the one you used in "Striped Button-Up and Boyfriend Jeans" outfit'
+  const lead = cardReferentPieceIds(correction, [], pieces, cardPieceIds)
+  assert.deepEqual(lead, [133])
+  assert.equal(cardExplanationVisualPieceIds({ question: correction, outfits, leadPieceIds: lead })[0], 133)
+  // A garment the exchange names in full wins over the cards, even when it is on none of them.
+  const namedGrey = [{ role: 'assistant', content: 'You could swap in the grey striped button-up shirt.' }]
+  assert.deepEqual(recentReferentPieceIds('is that shirt washable?', namedGrey, pieces, { fullOnly: true }), [996795])
+  // No category word, no card pieces, or a tie: no answer.
+  assert.deepEqual(cardReferentPieceIds('is it washable?', history, pieces, cardPieceIds), [])
+  assert.deepEqual(cardReferentPieceIds(question, history, pieces, []), [])
+  assert.deepEqual(cardReferentPieceIds(question, history, pieces, [133, 996795]), [])
+})
+
 test('the route resolves a garment answer\'s subject before falling back to every card piece, and stores it', () => {
   const routeSrc = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
   const start = routeSrc.indexOf('const resolveReferent = () => {')
