@@ -1,6 +1,6 @@
 # Plan prompt audit: generic knowledge turned into rules
 
-**Status:** audit for owner rulings, 2026-10-30. Implemented: item 0 (engine map 90); items 7, 10 and 11 (owner-approved, engine map 91). Item 7 took only the factual half of the set-aside rewording. Everything else awaits rulings. Evidence:
+**Status:** audit for owner rulings, 2026-10-30. Implemented: item 0 (engine map 90); items 7, 10 and 11 (engine map 91); rulings 1–4, 10 and 11 below (engine map 92), which also fixed owner rules never reaching the shortlist. Open: time-outside field, constitution rewordings, saved-reactions investigation, review call. Evidence:
 `thread_1793347659171` (guests at home, mornings, 3.7 Flash; capture `scratch/captures/thread_1793347659171/`) and an
 outside review of that capture.
 
@@ -44,6 +44,29 @@ first commit and, where one exists, its doc.
 | 12 | Style Constitution: "open shirt or vest over a fitted base is almost always better than the top alone"; "Dark fitted/structured top + wide-leg … is the most reliable version"; "Light colors expand, dark colors recede" | the owner's constitution | the owner | Not edited in a prompt cleanup. **Owner review**: the first two read as formulas, the third is generic theory |
 | 13 | 24 saved reactions in every stylist call ("catalog_like … Rich emerald structured blazer", "too_safe … Monochrome Elegance", …), each scoped to an old board | conversational prompt | feedback memory | Selection and relevance, not wording: route through `docs/feedback-and-memory-map.md` before changing |
 | 14 | `piece_jobs` / card reasons justify choices without comparing them | shortlist, composer | — | Agreed with the reviewer: a quality-testing problem, not more prompt. The review call of `docs/situation-fit-plan.md` step 5 is the candidate |
+
+## Owner rulings (2026-10-30)
+
+1. Item 0, trips: remove "a coat comes off indoors…" from trips too.
+2. Item 1: the layering explanation goes; the owner's wish to see layered looks is stated as her own preference
+   (her rules, not the shared prompt), plus the app fact that open layers are filed under outerwear. **Trips keep "What layers are for" unchanged** (owner, same day); only at-home plans lose it.
+3. Items 2–5: remove the tutorials from the shortlist (plans and trips), keeping the walking-footwear gate, the
+   `needs_base` rule, the tops-count fact and the ultralight-layer floor.
+4. Then one rerun of `thread_1793347659171`'s turn on 3.7 Flash (≈ $0.14).
+5. Item 6: a time-outside field (the set-aside `time_outside` design: home / brief / to-and-from).
+6. Item 8: plans stay garments-only for now.
+7. Item 12: propose rewordings of the Style Constitution lines, each for the owner's approval.
+8. Item 13: investigate how the saved reactions are chosen; report before changing anything.
+9. Item 14: add the review call after the cleanup and the time-outside field.
+10. Looks per day: relax the 2026-10-27 one-look-per-day ruling to "a few looks to choose from" and reword the tool
+    description.
+11. Tests: delete the remaining absence-only print-count test; no absence checks for removed text.
+
+## Owner rating after the changes (2026-10-30)
+
+`thread_1793383994504` (indoor only: "making and serving breakfast and entertaining my guests"; one `home` slot; owner
+rule and shoe photos reached the shortlist): "a ton better than the threads we saw earlier". Still not great at the
+stove: the high mock-neck and the cashmere cocoon vest of look 1.
 
 ## Proposed order
 

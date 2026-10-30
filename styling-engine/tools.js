@@ -1399,10 +1399,9 @@ export const STYLIST_TOOLS = [
         },
         slots: {
           type: "array",
-          // Owner ruling 2026-10-27 (thread_1793159779428): rotation exists because a trip's clothes are packed; an
-          // at-home coordinated plan packs nothing, so every day it covers gets its own look. The shared sentence read
-          // "set count so a few distinct looks rotate" for every plan kind, and four days of hosting at home got two.
-          description: "The plan's use-case slots, in wearing order. How many looks a slot gets follows from plan_kind. A trip packs a suitcase: estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination. A seasonal capsule shows a representative rotation, never every possible combination: the total card cap is min(piece_budget, 12); keep compact/travel capsules around 6-8 cards and larger seasonal capsules around 8-12 cards. A coordinated_plan packs nothing and has no rotation: every day or occasion the person will be dressed for gets its own look, so give each day its own slot with its date, or a count equal to the days a slot covers. One-off use cases get count 1.",
+          // Owner, 2026-10-30 (plan prompt audit): a recurring at-home use case gets a few looks to choose from. This
+          // replaces the 2026-10-27 one-look-per-day sentence, which no run followed (three mornings got two looks, three times).
+          description: "The plan's use-case slots, in wearing order. How many looks a slot gets follows from plan_kind. A trip packs a suitcase: estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination. A seasonal capsule shows a representative rotation, never every possible combination: the total card cap is min(piece_budget, 12); keep compact/travel capsules around 6-8 cards and larger seasonal capsules around 8-12 cards. A coordinated_plan packs nothing: a use case that recurs over several days gets a few distinct looks to choose from (count up to 3), not one per day. One-off use cases get count 1.",
           items: {
             type: "object",
             properties: {
@@ -3930,6 +3929,9 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           // selection. Garment-scoped guidance is selected again inside the bounded compose pool.
           pieces: [],
         })
+        // The shortlist reads its owner guidance from here (chooseTripRosterWithProvider); nothing set it before
+        // 2026-10-30, so no plan or trip shortlist ever saw the owner's rules — only the composer did.
+        toolContext.tripRosterOwnerRules = ownerRules
         const workbench = await buildPlanSlotWorkbench(planSlots, {
           constraints: planConstraints,
           allPieces: planPieces,

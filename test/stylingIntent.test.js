@@ -347,10 +347,6 @@ test('stylist prompt proposes via propose_outfit and narrows visual tool trigger
   assert.ok(!STYLIST_SYSTEM.includes('Every outfit MUST include a shoes-role piece'), 'and is no longer restated in the cached prompt')
 })
 
-test('stylist prompt carries no fixed print count (owner ruling 2026-09-15: print judgment is case by case)', () => {
-  assert.ok(!/at most ONE bold print/i.test(STYLIST_SYSTEM))
-})
-
 test('stylist prompt treats capsule intent separately from its optional piece budget', () => {
   assert.doesNotMatch(STYLIST_SYSTEM, /the budget is what makes it a capsule/i)
   assert.doesNotMatch(STYLIST_SYSTEM, /16-20 cards|8-14 outfit cards/i)

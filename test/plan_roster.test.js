@@ -182,9 +182,7 @@ test('one roster prompt for every plan: the trip\'s, with only its packing parag
   assert.match(tripRosterSelectionSystemPrompt(), /suitcase/, 'the trip prompt keeps its packing contract')
   // The trip's lessons that are not about packing reach every plan (owner, 2026-10-28).
   assert.match(system, /- Where the warmth comes from: read the sleeves/)
-  assert.match(system, /- What layers are for:/)
   assert.match(system, /INDEPENDENT WEARABILITY:/)
-  assert.match(system, /FOOTWEAR THAT SUITS EACH JOB:/)
   assert.match(system, /STYLE CONSTITUTION — BODY CONTRACT:/)
   for (const tripOnly of [/HOW A DAY AWAY WORKS/, /HOW THE TRAVELLER PACKS/, /REUSE ACROSS USE CASES/, /How it comes out of the bag/, /A DISTINCT JOB FOR EVERY BULKY PIECE/, /THE USE CASES ARE NOT A SCHEDULE/]) {
     assert.doesNotMatch(system, tripOnly)
@@ -237,11 +235,11 @@ test('naming the wearer\'s own home on a plan does not make it a trip; another p
 })
 
 // Owner ruling 2026-10-27 (thread_1793159779428): an at-home plan packs nothing, so it has no rotation.
-test('the plan tool tells the stylist that rotation is for packed plans only; a coordinated plan dresses every day', async () => {
+test('the plan tool tells the stylist that a trip rotates packed looks and a recurring at-home use case gets a few looks', async () => {
   const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
   const slots = STYLIST_TOOLS.find(tool => tool.name === 'plan_outfit_set').input_schema.properties.slots.description
   assert.match(slots, /A trip packs a suitcase: estimate recurring instances \(e\.g\. 3 winery days\) and set count so a few distinct looks rotate/)
-  assert.match(slots, /A coordinated_plan packs nothing and has no rotation: every day or occasion the person will be dressed for gets its own look/)
+  assert.match(slots, /A coordinated_plan packs nothing: a use case that recurs over several days gets a few distinct looks to choose from/)
   assert.doesNotMatch(slots, /^The plan's use-case slots, in wearing order\. Estimate recurring instances/)
 })
 
@@ -361,4 +359,33 @@ test('a stated span from today wins over a single day named later in the message
   const tomorrow = extractStatedTripDateRange('friends visit tomorrow to Saturday', { currentDate: thursdayEveningPacific, timeZone: 'America/Los_Angeles' })
   assert.deepEqual([tomorrow.start, tomorrow.end], ['2026-10-30', '2026-10-31'])
   assert.equal(extractStatedTripDateRange('dinner on Saturday', { currentDate: thursdayEveningPacific, timeZone: 'America/Los_Angeles' }).start, '2026-10-31', 'a single day alone is still that day')
+})
+
+// 2026-10-30: the shortlist read its owner guidance from toolContext.tripRosterOwnerRules, which nothing set, so no
+// plan shortlist ever saw the owner's rules (only the composer did).
+test('a plan shortlist receives the owner\'s rules', async () => {
+  const insertRule = db.prepare("INSERT INTO stylist_feedback (feedback_type, target_type, context_type, note, payload) VALUES ('owner_rule', 'message', 'general', ?, ?)")
+  const universal = { ownerGuidanceApplicability: { version: 1, reach: 'universal', garment: { piece_ids: [], categories: [], footwear: [], materials: [] }, context: { occasions: [], activities: [], seasons: [], weather: [], situations: [] }, source: 'test' } }
+  const ruleId = insertRule.run('I want to see some layered outfits.', JSON.stringify(universal)).lastInsertRowid
+  let rulesAtShortlist = null
+  const toolContext = {
+    declaredIntent: { want: 'cards' },
+    generatedOutfits: [],
+    question: 'guests staying with us, mornings at home',
+    choosePlanRoster: async () => {
+      rulesAtShortlist = toolContext.tripRosterOwnerRules
+      return rosterOf([ids.tops[0], ids.bottoms[0], ids.shoes[0]])
+    },
+  }
+  try {
+    await executeTool('plan_outfit_set', {
+      plan_kind: 'coordinated_plan',
+      slots: [{ label: 'Mornings at Home', occasion: 'casual', activity: 'none', environment: 'home', count: 1 }],
+    }, toolContext)
+  } finally {
+    db.prepare('DELETE FROM stylist_feedback WHERE id = ?').run(ruleId)
+  }
+  assert.ok(Array.isArray(rulesAtShortlist) && rulesAtShortlist.includes('I want to see some layered outfits.'), JSON.stringify(rulesAtShortlist))
+  const text = tripRosterSelectionUserText({ bench: [], slots: [], dateRange: {}, planKind: 'coordinated_plan', ownerRules: rulesAtShortlist })
+  assert.match(text, /OWNER GUIDANCE — applicable to these use cases\. Follow it unless the owner explicitly changes it in this request: "I want to see some layered outfits\."/)
 })
