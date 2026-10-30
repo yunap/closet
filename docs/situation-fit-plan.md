@@ -49,31 +49,39 @@ Each step lands and is verified offline before the next. Paid runs only where ma
 ### Step 0 — home slots get no outdoor weather · done (`0a1e292`)
 `environment: 'home'`: no travel or time outdoors; no outside numbers, "the indoor temperature was not stated".
 
-### Step 1 — one look per day it covers · done 2026-10-30, uncommitted, not run live
-- `plan_outfit_set` slots take `dates`: every day the use case happens. The no-rotation sentence now tells her to
-  list them.
-- In a `coordinated_plan`, `normalizePlanSlots` keeps real dates inside the plan's range (deduplicated, in order) and
-  sets the slot's look ceiling from how many there are; `count` is not used. A slot on one date is dated to it, so it
-  takes that day's weather. More than 3 days gives 3 looks, disclosed as "covers N days and shows 3 looks"; the plan
-  cap of 8 trims as before and keeps the larger number it recorded. `shiftSlotDate` moves `dates` with `date`.
-- The shortlist's use-case line shows the slot's days instead of the plan's first day standing in; the composer's
-  slot carries `dates`.
-- Trips and capsules: unchanged. A slot without `dates` keeps today's `count` (lenient default, chosen while the
-  owner's decision is open).
-- Tests: `test/planSlotDates.test.js`. Offline rebuild of `thread_1793331990443`'s plan call with the mornings
-  `home` and dated Fri–Sun: "Mornings at Home (…, 2026-10-30, 2026-10-31, 2026-11-01, at home, no travel or time
-  outdoors; …) — up to 3 outfits".
-- **Not done:** tying each composed look to one of its dates. The coordinated composer has no `worn_on_date` (the
-  trip composer does), and a slot over several days still takes the whole plan's weather range, not its own days'.
-  Worth doing only if a run shows a look dressed for the wrong day.
-- **Decide:** a recurring slot with no `dates` — keep the lenient fallback, or return the call once asking for them?
+### Step 1 — one look per day · built, then removed (2026-10-30)
+A `dates` field per slot set the look count from the days a use case happens (commit `709f6c3`). Step 2's run did
+not fill it in, and it did not inform any styling decision: a home slot has no weather, a multi-day slot kept the
+plan's weather range, and a one-day slot already had `date`. Owner: "unless having dates will help the model make the
+right styling decisions I do not need dates." Removed; slots use `count` as before. The no-rotation ruling's sentence
+is unchanged, and it is still not followed (three mornings got two looks in all three runs).
 
 ### Step 2 — one paid check before building more (≈ 2–4 cents)
 Rerun the original request once on **3.7 Flash** and once on **Flash-Lite**, after steps 0–1. Read: does she choose
 `home` for the mornings; how many morning looks; which tops the shortlist takes and why. This decides how much of
 steps 3–5 is needed: if the honest temperature alone moves the shortlist to practical, good-looking tops, step 3
 shrinks to the pieces the run still shows missing.
-**Decide:** which model(s) — the app's configured stylist model only, or both?
+**Run 2026-10-30, 3.7 Flash (owner's choice), one turn, $0.137** (estimate was wrong: 6 calls, the roster call
+alone $0.042). `scratch/freeform_turn_on_model_now.mjs`, DB copy, Thursday 21:44 PT like the original; output and
+captures in `scratch/garment_read_runs/2026-10-30/guests_step2_37flash*`.
+- She set the mornings `environment: 'home'`; the shortlist and composer saw no outdoor weather for them, and her
+  reply said "Indoor lounging with guests (no outdoor transit)".
+- **She did not send `dates`** (mornings `count: 2` again; the plan still ran Thursday–Sunday). Step 1's lenient
+  fallback kept the bug.
+- Shortlist: no cashmere for the mornings. Morning tops were the striped cotton tee, the mauve terry knit
+  (polyester/nylon) and the grey cowl lounge top, with sage and grey knit trousers and the striped wool cardigan;
+  the two cashmere sweaters went to the outings. Morning looks: mauve knit + sage lounge pants + olive slip-ons; grey
+  cowl top + grey knit trousers + slip-ons. Practical and washable; plain rather than interesting, and the cardigan
+  went unused.
+- Outings: stripe tee + boyfriend jeans + wool sneakers, plaid fleece coat assigned; floral cashmere + emerald
+  corduroy + wool sneakers (the corduroy picks up the sweater's green hem — checked on the photos). Dinner: charcoal
+  wrap dress + low black ankle boots, herringbone coat assigned.
+- The reply named neither assigned coat and told her to "bring a light jacket" for the outing whose card carries the
+  fleece coat; it again described the mornings as "making coffee, chatting over breakfast" (inferred, unflagged).
+
+Reading for steps 3–5: the honest temperature alone removed the cashmere from the mornings, so steps 3–4 are no
+longer driven by this case; what remains is whether the looks are interesting (owner's rating), the missing `dates`,
+and the reply not matching its cards.
 
 ### Step 3 — the situation, as facts the shortlist and composer read (code + schema)
 Not free text: each slot gains short structured lists the stylist fills when she plans:

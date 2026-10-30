@@ -385,10 +385,6 @@ function describePlanCapTrim(slot = {}) {
     if (actual === 0) return ''
     return `[rotation limit: "${label}" reduced from ${requested} to ${actual} look${actual === 1 ? '' : 's'} — this capsule roster has no further distinct outfit core for that use case]`
   }
-  // A coordinated-plan slot whose days outnumber the three looks one use case can show.
-  if (Array.isArray(slot?.dates) && slot.dates.length > 3 && actual === 3) {
-    return `[plan trimmed: "${label}" covers ${slot.dates.length} days and shows 3 looks — one use case shows at most 3]`
-  }
   const cap = Number(slot?.totalOutfitCap) || PLAN_TOTAL_OUTFIT_CAP
   return `[plan trimmed: "${label}" reduced from ${requested} to ${actual} look${actual === 1 ? '' : 's'} — the plan asked for more outfits than the ${cap}-outfit total across the set allows]`
 }
@@ -5040,7 +5036,6 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       environment: slot.environment || '',
       register: slot.register || '',
       target_outfits: targetOutfits,
-      ...(Array.isArray(slot.dates) && slot.dates.length ? { dates: slot.dates } : {}),
       weather_used: weatherLabel,
       styling_context: slot.stylingContext,
       register_ceiling: registerRankName(ceilingRank),
@@ -6694,7 +6689,6 @@ export function normalizePlanSlots(rawSlots = [], {
   fallbackUserWeather = null,
   fallbackWeatherEstimate = null,
   dateRange = null,
-  planKind = '',
   maxSlots = PLAN_TOTAL_OUTFIT_CAP,
   maxTotalOutfits = PLAN_TOTAL_OUTFIT_CAP,
   tripSummary = null,
@@ -6766,14 +6760,7 @@ export function normalizePlanSlots(rawSlots = [], {
         : environment === 'beach_coastal'
           ? ''
           : (isIndoorPlanSlot(slot, { occasion, activity }) ? 'indoor' : '')
-      // A coordinated plan's slot states the days it happens (2026-10-30): one look per day, and a
-      // slot on one day is dated to it. Only real days inside the plan's range count.
-      const slotDates = planKind === 'coordinated_plan' && Array.isArray(slot?.dates)
-        ? [...new Set(slot.dates.map(day => String(day || '').trim().slice(0, 10)))]
-            .filter(day => /^\d{4}-\d{2}-\d{2}$/.test(day) && planSlotDateCompatibleWithRange(day, dateRange))
-            .sort()
-        : []
-      const slotDate = String(slot?.date || '').trim() || (slotDates.length === 1 ? slotDates[0] : '')
+      const slotDate = String(slot?.date || '').trim()
       // Spec §4.2: structured weather binds to the containing location/date
       // identity. A slot's OWN explicit field always wins; inheriting the
       // PLAN-level field requires both a matching location and a compatible
@@ -6859,10 +6846,7 @@ export function normalizePlanSlots(rawSlots = [], {
         }),
         bestFor,
         coverage,
-        ...(slotDates.length ? { dates: slotDates } : {}),
-        targetOutfits: Math.min(3, Math.max(1, slotDates.length || Number.parseInt(slot?.count, 10) || 1)),
-        // More days than one slot can show: recorded like a plan-cap trim, so the shortfall is disclosed.
-        ...(slotDates.length > 3 ? { requestedOutfits: slotDates.length } : {}),
+        targetOutfits: Math.min(3, Math.max(1, Number.parseInt(slot?.count, 10) || 1)),
         totalOutfitCap: maxTotalOutfits,
         register: normalizeRegisterLevel(slot?.register),
         tripSummary,
@@ -6884,7 +6868,7 @@ export function normalizePlanSlots(rawSlots = [], {
       // only gets set on a slot that was actually trimmed, so the caller can
       // tell "the wardrobe couldn't fill this" (the coverage-gap case) apart
       // from "the plan never even asked the wardrobe for the full count."
-      slot.requestedOutfits = Math.max(slot.targetOutfits, Number(slot.requestedOutfits) || 0)
+      slot.requestedOutfits = slot.targetOutfits
       slot.targetOutfits -= trim
       total -= trim
     }

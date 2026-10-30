@@ -6343,9 +6343,7 @@ export function tripRosterSelectionUserText({
     const outfits = Math.max(1, Number(slot.targetOutfits) || 1)
     const resolvedSeason = seasonPromptLabel(slot.stylingContext?.season || 'current season', slot.stylingContext?.calendarSeason || '')
     const season = resolvedSeason === 'current season' ? '' : resolvedSeason
-    // A slot's own days when it states them; otherwise its date, which may be the plan's first day standing in.
-    const when = Array.isArray(slot.dates) && slot.dates.length > 1 ? slot.dates.join(', ') : (slot.date ? String(slot.date).slice(0, 10) : '')
-    const where = [slot.occasion || 'general', slot.activity && slot.activity !== 'none' ? slot.activity : '', slot.environment || '', when, season ? `season: ${season}` : '', slot.weatherLabel || slot.slotWeather || ''].filter(Boolean).join(', ')
+    const where = [slot.occasion || 'general', slot.activity && slot.activity !== 'none' ? slot.activity : '', slot.environment || '', slot.date ? String(slot.date).slice(0, 10) : '', season ? `season: ${season}` : '', slot.weatherLabel || slot.slotWeather || ''].filter(Boolean).join(', ')
     return `- ${slot.label} (${where}) — up to ${outfits} outfit${outfits === 1 ? '' : 's'}: ${slot.bestFor || slot.label}`
   }) : slots.map(slot => {
     const distinctOutfits = Math.max(1, Number(slot.targetOutfits) || 1)

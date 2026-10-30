@@ -1402,7 +1402,7 @@ export const STYLIST_TOOLS = [
           // Owner ruling 2026-10-27 (thread_1793159779428): rotation exists because a trip's clothes are packed; an
           // at-home coordinated plan packs nothing, so every day it covers gets its own look. The shared sentence read
           // "set count so a few distinct looks rotate" for every plan kind, and four days of hosting at home got two.
-          description: "The plan's use-case slots, in wearing order. How many looks a slot gets follows from plan_kind. A trip packs a suitcase: estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination. A seasonal capsule shows a representative rotation, never every possible combination: the total card cap is min(piece_budget, 12); keep compact/travel capsules around 6-8 cards and larger seasonal capsules around 8-12 cards. A coordinated_plan packs nothing and has no rotation: every day or occasion the person will be dressed for gets its own look, so list in each slot's dates every day it happens — the slot gets one look per date. One-off use cases get count 1.",
+          description: "The plan's use-case slots, in wearing order. How many looks a slot gets follows from plan_kind. A trip packs a suitcase: estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination. A seasonal capsule shows a representative rotation, never every possible combination: the total card cap is min(piece_budget, 12); keep compact/travel capsules around 6-8 cards and larger seasonal capsules around 8-12 cards. A coordinated_plan packs nothing and has no rotation: every day or occasion the person will be dressed for gets its own look, so give each day its own slot with its date, or a count equal to the days a slot covers. One-off use cases get count 1.",
           items: {
             type: "object",
             properties: {
@@ -1436,10 +1436,7 @@ export const STYLIST_TOOLS = [
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. An ordinary restaurant dinner or a night out that is not dressy is 'smart casual' (or 'city'); reserve 'evening' for genuinely dressier night-out use cases — a dinner date, wine bar, theater, cocktails." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
               environment: { type: "string", enum: ["indoor", "home", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/home/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries, museums) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. Use 'home' when the whole slot is spent inside the home the person is living or staying in, with no travel and no time outdoors: no outside weather is given for it, and you dress for the room and what happens in it. A museum or gallery visited while away on a trip is still 'indoor', and its activity is 'walking': the wearer walks the streets to it and between places, so the shoes are chosen for that. Omit when unsure; outdoor is the default." },
-              count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1. In a coordinated_plan with dates, the dates set it instead." },
-              // 2026-10-30 (thread_1793331707106, thread_1793331990443): both models gave three mornings count 2 with
-              // the no-rotation sentence above in front of them. The days are a fact she can state; the look count follows.
-              dates: { type: "array", items: { type: "string" }, description: "coordinated_plan: every day, as YYYY-MM-DD, on which this use case happens and the person is dressed for it (each morning of a stay that is still ahead; the one night of a dinner). The slot gets one look per date." },
+              count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
               user_weather: USER_WEATHER_SCHEMA,
               weather_estimate: WEATHER_ESTIMATE_SCHEMA,
               location: { type: "string", description: "This slot's location if it differs from the plan location (e.g. 'drive to the coast' → 'Cambria, CA'). Free text, geocoded for a live per-slot forecast — this is how microclimates get caught. Omit to inherit the plan location." },
@@ -3768,19 +3765,12 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           const days = Math.round((Date.parse(`${planDateRange.start}T00:00:00Z`) - Date.parse(`${modelDateRange.start}T00:00:00Z`)) / 86400000)
           return Number.isFinite(days) ? days : 0
         })()
-        const shiftOneDate = value => {
-          const own = String(value || '').trim().slice(0, 10)
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(own)) return ''
-          const moved = new Date(Date.parse(`${own}T00:00:00Z`) + slotDateShiftDays * 86400000).toISOString().slice(0, 10)
-          return moved >= planDateRange.start && (!planDateRange.end || moved <= planDateRange.end) ? moved : ''
-        }
         const shiftSlotDate = slot => {
-          if (!slotDateShiftDays) return slot
           const own = String(slot?.date || '').trim().slice(0, 10)
-          const shifted = /^\d{4}-\d{2}-\d{2}$/.test(own) ? { ...slot, date: shiftOneDate(own) } : slot
-          return Array.isArray(slot?.dates)
-            ? { ...shifted, dates: slot.dates.map(shiftOneDate).filter(Boolean) }
-            : shifted
+          if (!slotDateShiftDays || !/^\d{4}-\d{2}-\d{2}$/.test(own)) return slot
+          const moved = new Date(Date.parse(`${own}T00:00:00Z`) + slotDateShiftDays * 86400000).toISOString().slice(0, 10)
+          const inside = moved >= planDateRange.start && (!planDateRange.end || moved <= planDateRange.end)
+          return inside ? { ...slot, date: moved } : { ...slot, date: '' }
         }
         const sanitizedSlots = (Array.isArray(args?.slots) ? args.slots : []).map(slot =>
           slot && looksLikeTimezoneIdentifier(String(slot?.location || '')) ? { ...slot, location: '' } : slot
@@ -3844,7 +3834,6 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           fallbackUserWeather: args?.user_weather || null,
           fallbackWeatherEstimate: args?.weather_estimate || null,
           dateRange: planDateRange,
-          planKind,
           maxSlots: planTotalOutfitCap,
           maxTotalOutfits: planTotalOutfitCap,
           tripSummary,
