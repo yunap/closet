@@ -123,7 +123,7 @@ beforeEach(() => {
 
 test('plan_outfit_set slot schema declares environment and requires activity', () => {
   const schema = planOutfitSetSlotSchema()
-  assert.deepEqual(schema.properties.environment.enum, ['indoor', 'outdoor', 'beach_coastal'])
+  assert.deepEqual(schema.properties.environment.enum, ['indoor', 'home', 'outdoor', 'beach_coastal'])
   assert.ok(schema.required.includes('activity'))
   const submitTool = STYLIST_TOOLS.find(entry => entry.name === 'submit_plan_outfits')
   assert.ok(submitTool, 'submit_plan_outfits tool must exist for model-composition mode')

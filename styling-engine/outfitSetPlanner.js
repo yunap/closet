@@ -1321,6 +1321,22 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   // live Nice Dinners slot (evening occasion, indoor) inherited the day's full 95°F/55°F envelope as
   // its transit temperature instead of the actual ~55-65°F evening window as a direct result.
   const isIndoorSlot = slot.statedWeather === 'indoor'
+  // A slot spent at home has no way there and back (2026-10-30, thread_1793331990443): "Mornings at
+  // Home" was labelled "indoor; transit: mornings 48–63°F", the shortlist read the outdoor low as the
+  // morning's temperature and chose sweaters "to keep warm". Nothing is looked up; the room's own
+  // temperature is unknown and is said to be. Stated or estimated weather is not used either: a slot
+  // inherits the plan's, which is the outside forecast ("it'll be 45 this weekend").
+  if (slot.atHome === true) {
+    return {
+      profile: {
+        isHot: false, isCold: false, isColdSevere: false, isExtremeHeat: false, isIndoor: true,
+        weatherSource: 'not_applicable',
+        resolvedWeatherContext: { status: 'not_applicable', overallSource: '' },
+      },
+      label: 'at home, no travel or time outdoors; the indoor temperature was not stated',
+      timeSensitivity: { status: 'not_material' }
+    }
+  }
   // 2026-10-02 (live thread_1790929985430): a trip activity with no day of its own inherits the
   // trip's FIRST day as a stand-in (normalizePlanSlots, dateInherited). Slicing that one day
   // dressed a week of evenings for one flat, rainy evening. Such a slot now takes its time-of-day
@@ -4562,6 +4578,7 @@ export function serializeTripRequirementSlot(slot = {}) {
     planNote: slot.planNote || '',
     statedWeather: slot.statedWeather || '',
     environment: slot.environment || '',
+    ...(slot.atHome === true ? { atHome: true } : {}),
     register: slot.register || '',
     occasion: slot.stylingContext?.occasion || slot.occasion || '',
     activity: slot.stylingContext?.activity || slot.activity || '',
@@ -4586,6 +4603,7 @@ export function restoreTripRequirementSlot(persisted = {}) {
     planNote: persisted.planNote,
     statedWeather: persisted.statedWeather,
     environment: persisted.environment,
+    ...(persisted.atHome === true ? { atHome: true } : {}),
     register: persisted.register,
     occasion: persisted.occasion,
     activity: persisted.activity,
@@ -6703,7 +6721,11 @@ export function normalizePlanSlots(rawSlots = [], {
       // fallback to infer it from — that field is removed from the tool
       // schema entirely (§3.1); a model that wants indoor/outdoor/coastal
       // sets `environment` directly.
-      const explicitEnvironment = normalizePlanEnvironment(slot?.environment)
+      // 'home' (2026-10-30, thread_1793331990443): the whole slot is spent in the home the person is
+      // living or staying in. It is an indoor slot in every other respect; resolveSlotWeather reads
+      // atHome to give it no outside weather, because there is no way there and back.
+      const atHome = String(slot?.environment || '').trim().toLowerCase() === 'home'
+      const explicitEnvironment = atHome ? 'indoor' : normalizePlanEnvironment(slot?.environment)
       const proseEnvironment = explicitEnvironment ? '' : normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
       const declaredDeclaredEnvironment = explicitEnvironment
       // Owner ruling 2026-07-30: the slot's own label wins over a declared
@@ -6790,6 +6812,7 @@ export function normalizePlanSlots(rawSlots = [], {
           : '',
         location,
         environment,
+        ...(atHome ? { atHome: true } : {}),
         date: resolvedSlotDate,
         // True when the slot named no day of its own and resolvedSlotDate is only the trip's first
         // day standing in for it. resolveSlotWeather reads this to slice the slot's time of day
