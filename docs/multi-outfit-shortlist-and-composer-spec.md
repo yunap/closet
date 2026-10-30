@@ -60,7 +60,7 @@ A `generate_outfits` request is a coordinated plan with **one slot**. A coordina
 - **The full eligible catalog:** every active piece that passes at least one slot's gates. Those are today's gates, unchanged: `slotGateEligiblePieces` for plans, and the gate stage of `evaluateVisualComposerPiecePool` for `generate_outfits`, **without its 90-photo cap**. Each piece is one sparse row (`sparseGarmentCatalogRow`, the format the selected-piece and trip catalogs use), annotated with **which slots it is eligible for** (the trip bench's `slotLabelsById` precedent: a recorded fact, not advice).
 - **Owner rules and rejections,** through the shared source-labelled notes channel (`garmentNotesBlock`).
 - **Recent wear** (`generate_outfits` today: `getRecentWholeWardrobeSessionInfluence`), stated as a fact per piece ("worn in a look 3 days ago"). It is information for her to weigh, not a filter.
-- **No garment photos.** On 2026-10-03 the trip packer was shown every photo while choosing and made the same mistakes at higher cost (`TRIP_ROSTER_PHOTOS_ENABLED = false`). Photos are spent in Stage 2, where outfits are judged.
+- **No garment photos.** On 2026-10-03 the trip packer was shown every photo while choosing and made the same mistakes at higher cost (`TRIP_ROSTER_PHOTOS_ENABLED = false`). Photos are spent in Stage 2, where outfits are judged. **Narrowed 2026-10-30 for shoes:** plan shortlists attach a photo of each shoe candidate (engine map item 89) — the record could not show how heavy, stiff or sneaker-like a shoe is, and text-only replays chose street shoes for mornings at home.
 
 **Output:** for each slot, the IDs she wants to see for that slot, plus a one-line `selection_note` on the directions she's choosing for.
 

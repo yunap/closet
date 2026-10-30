@@ -6244,7 +6244,7 @@ INDEPENDENT WEARABILITY:
 Default to independently wearable garments. A piece that always needs something else under it (\`needs_base: yes\`) ${trip ? `costs two packing places to produce one look. Select a piece that needs a base only if you deliberately pack a compatible underlayer for it;` : `takes two garments to make one look. Select a piece that needs a base only if you deliberately choose a compatible underlayer for it;`} otherwise prefer standalone tops. When you do take a piece that needs a base, its base must be a genuine visual and physical match, not merely present: check opacity, fit, neckline, strap or sleeve shape, and whether it sits right under that garment.
 
 OCCASION REALISM & PRACTICAL UTILITY: FOOTWEAR THAT SUITS EACH JOB:
-Every use case needs shoes suited to what is done in them. ${trip ? `Pack shoes appropriate for each register:` : `Choose shoes appropriate for each register:`} shoes made for walking for walking-heavy days (not heels or wedges); for a trail, nature walk or hike, footwear with real grip and support when the wardrobe has it; polished boots, loafers, or elevated flats for evening dining. One pair may cover several use cases only when it genuinely suits each.${trip ? ` A second pair earns its place by doing a job no packed pair does — trail footing and an evening out are different jobs from city walking — and weigh each additional pair against whether its job is truly distinct from a pair already packed, rather than being another option for the same job.` : ''} For outdoor walks and trails, choose practical, durable garments; avoid delicate or high-maintenance pieces there when practical alternatives exist.
+Every use case needs shoes suited to what is done in them. Picture the shoes on the feet through the use case's moments — where they are worn, for how long, standing, walking or sitting, and what the place asks of them — and choose from what each shoe is: its type, upper, sole, support and weight, and what it reads as, not its name or category alone. ${trip ? `Pack shoes appropriate for each register:` : `Choose shoes appropriate for each register:`} shoes made for walking for walking-heavy days (not heels or wedges); for a trail, nature walk or hike, footwear with real grip and support when the wardrobe has it; polished boots, loafers, or elevated flats for evening dining. One pair may cover several use cases only when it genuinely suits each.${trip ? ` A second pair earns its place by doing a job no packed pair does — trail footing and an evening out are different jobs from city walking — and weigh each additional pair against whether its job is truly distinct from a pair already packed, rather than being another option for the same job.` : ''} For outdoor walks and trails, choose practical, durable garments; avoid delicate or high-maintenance pieces there when practical alternatives exist.
 
 ${trip ? `LAYERING / OUTERWEAR THAT SUITS THE TRIP:
 Consider the trip as a whole, including repeated outdoor time, transitions between indoor and outdoor settings, and variation across the stay. Compare the supplied construction, warmth, insulation, weather-protection, and removability facts for available layers. Choose a layering strategy that is practical across the stated activities and conditions, covering the real outdoor activities on the trip. Never rely solely on dressy, elevated, or high-maintenance outerwear when the trip includes trail walking, nature hikes, or active outdoor exploration — pack a practical, casual layer suited to the activity. A button-up, popover, or collared woven blouse is not a substitute for outerwear: do not count one as the trip's warm layer. Worn open over another top it is a layer for the look, which is a different job. Avoid packing rainwear or heavy storm layers unless wet weather or rain is actually indicated in the trip context. A layer recorded as ultralight, unlined and with no insulation is not accepted as the warm layer for an outfit that needs one; it can still be packed for sun or wind.
@@ -6254,7 +6254,7 @@ Consider the use cases as a whole, including the time spent outdoors, transition
 
 `}${trip ? `A DISTINCT JOB FOR EVERY BULKY PIECE. If two pairs of shoes or two coats would do the same job for the same use case, keep the one that does it better. Tops and light layers are the opposite case: several that suit the same days are what make those days different from one another.
 
-` : ''}For every selected ID, give exactly one piece_jobs entry ${trip ? `naming the job it does on this trip` : `naming the job it does in this plan`} — which use case(s) it serves and why it earned a place. Include no unselected IDs and do not repeat an ID.
+` : ''}For every selected ID, give exactly one piece_jobs entry ${trip ? `naming the job it does on this trip` : `naming the job it does in this plan`} — which use case(s) it serves and why it earned a place. For shoes, say why that pair suits those moments, from the shoe itself. Include no unselected IDs and do not repeat an ID.
 
 ${trip ? `In packing_reasoning, briefly explain the overall shape of what you packed and why — how many pieces, why that count is right for this trip, and anything you deliberately left out despite it being eligible. Name only pieces you actually selected; a piece you left out is described as left out.
 
@@ -6310,7 +6310,11 @@ const TRIP_ROSTER_CATALOG_CONVENTIONS = `${SPARSE_CATALOG_CONVENTIONS} Unlike ot
 function tripRosterCandidateLine(piece = {}, slotLabelsById = null) {
   const labels = slotLabelsById?.get?.(Number(piece?.id)) || []
   const slotsSuffix = ` | slots: ${labels.length ? labels.join(', ') : 'none'}`
-  return `${stylistCatalogLine(piece)}${tripPieceOccasionsFact(piece)}${slotsSuffix}`
+  // 2026-10-30 (guests-at-home rerun): "olive suede slip-on shoes", type slip_on, was chosen as "effortless indoor
+  // wear"; its own reads_as is "olive suede sneakers". The list itself is text, so a shoe's name and type were all
+  // there was to picture it by (plans now also attach shoe photos: choosePlanRosterWithProvider).
+  const readsAs = piece?.category === 'shoes' && String(piece?.reads_as || '').trim() ? ` | reads as: ${String(piece.reads_as).trim()}` : ''
+  return `${stylistCatalogLine(piece)}${readsAs}${tripPieceOccasionsFact(piece)}${slotsSuffix}`
 }
 
 export function tripRosterSelectionUserText({
@@ -6502,7 +6506,7 @@ export async function shortlistTripRosterWithProvider({ bench, slots, dateRange 
   return value || {}
 }
 
-export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {}, attempt, failures, previousRosterIds, slotLabelsById, withPhotos = false, planKind = 'trip', constraints = {} }, toolContext) {
+export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {}, attempt, failures, previousRosterIds, slotLabelsById, withPhotos = false, shoePhotos = false, planKind = 'trip', constraints = {} }, toolContext) {
   const trip = planKind === 'trip'
   const acceptedLessons = getAcceptedFeedbackSynthesisMemory(8, {
     pieceIds: bench.map(piece => piece.id),
@@ -6515,7 +6519,9 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
       requestText: [slot?.label, slot?.occasion, slot?.activity, slot?.bestFor].filter(Boolean).join(' '),
     })),
   })
-  const imageParts = withPhotos && bench.length <= (toolContext?.tripRosterPhotoLimit || TRIP_ROSTER_PHOTO_LIMIT) ? await tripRosterImageParts(bench) : []
+  const imageParts = withPhotos && bench.length <= (toolContext?.tripRosterPhotoLimit || TRIP_ROSTER_PHOTO_LIMIT)
+    ? await tripRosterImageParts(bench)
+    : (shoePhotos ? await tripRosterImageParts(bench.filter(piece => piece?.category === 'shoes')) : [])
   const content = tripRosterSelectionContent({
     bench, slots, dateRange, ownerRules: toolContext?.tripRosterOwnerRules || [], acceptedLessons,
     attempt, failures, previousRosterIds, slotLabelsById, imageParts,
@@ -6878,8 +6884,12 @@ The garments you bring in are held to the same standard as your original picks. 
 
 // Every plan but a trip uses the trip's own roster call and prompt (tripRosterSelectionSystemPrompt), with only what
 // packing adds left out.
+// Shoes are the exception to the text-only list (2026-10-30, guests-at-home rerun): asked to reason from each shoe,
+// the shortlist twice chose worn rubber-soled boat shoes, recorded as `loafer` / "casual slip-on shoes", as "not
+// feeling like outdoor footwear". How heavy, hot, stiff or clunky a shoe is for the hours it is worn shows when it is
+// looked at; the record carries only part of that.
 export function choosePlanRosterWithProvider(request, toolContext) {
-  return chooseTripRosterWithProvider({ ...request, withPhotos: false, planKind: 'coordinated_plan' }, toolContext)
+  return chooseTripRosterWithProvider({ ...request, withPhotos: false, shoePhotos: true, planKind: 'coordinated_plan' }, toolContext)
 }
 
 export const COORDINATED_PLAN_GARMENT_FACT_CONVENTIONS = `${GARMENT_FACT_CONVENTIONS} A garment's tagged season is the season it is tagged to be worn in; each slot states its own season. Occasions are stated per piece here because one plan spans several use cases with different occasions; a piece's occasions are its recorded tags, not a suitability verdict for any specific slot — read them alongside formality and the slot's own best_for text.`

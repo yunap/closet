@@ -119,6 +119,11 @@ by replaying the router on its captured requests (≈ $0.0025 a call).
 The original request, plus one other at-home plan from the captures, on the configured stylist model. Rated by the
 owner on practical **and** interesting looks; a run that only avoids cashmere does not pass.
 
+### Found on the rerun — shoes for mornings at home · done 2026-10-30
+The owner rated the rerun's morning shoes (olive suede sneakers) a serious issue. Fixed by asking the shortlist to
+reason from each shoe and showing it a photo of each shoe candidate; see engine map item 89. Replays chose light
+step-in shoes with reasons about weight and feel. Not run live.
+
 ## 4 · Not in this plan
 
 - Re-landing the situation read turn or `get_weather` from the set-aside branch.
