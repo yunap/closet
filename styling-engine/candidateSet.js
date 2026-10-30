@@ -7,12 +7,15 @@ const dependentTop = piece => groupIs('top')(piece) && pieceRequiresBaseLayer(pi
 const independentDress = piece => groupIs('dress')(piece) && !pieceRequiresBaseLayer(piece)
 const dependentDress = piece => groupIs('dress')(piece) && pieceRequiresBaseLayer(piece)
 const usableRequiredBase = piece => evaluateBaseLayerCandidate(piece).verdict !== 'incompatible'
+// A dress worn as the base under a top that cannot be worn alone (owner ruling 2026-10-25).
+const usableDressBase = piece => groupIs('dress')(piece) && evaluateBaseLayerCandidate(piece, { dressAllowed: true }).verdict !== 'incompatible'
 
 const slot = (key, predicate) => ({ key, predicate })
 
 const separatesPaths = [
   [slot('top', independentTop), slot('bottom', groupIs('bottom')), slot('shoes', groupIs('shoes'))],
   [slot('dependent_top', dependentTop), slot('required_base', usableRequiredBase), slot('bottom', groupIs('bottom')), slot('shoes', groupIs('shoes'))],
+  [slot('dependent_top', dependentTop), slot('required_base', usableDressBase), slot('shoes', groupIs('shoes'))],
 ]
 const dressPaths = [
   [slot('dress', independentDress), slot('shoes', groupIs('shoes'))],
@@ -26,7 +29,10 @@ export function completeOutfitSupplyRequirement({ anchorPiece = null, id = 'comp
   let alternatives
   if (anchorGroup === 'top') {
     alternatives = pieceRequiresBaseLayer(anchorPiece)
-      ? [[slot('required_base', usableRequiredBase), slot('bottom', groupIs('bottom')), slot('shoes', groupIs('shoes'))]]
+      ? [
+          [slot('required_base', usableRequiredBase), slot('bottom', groupIs('bottom')), slot('shoes', groupIs('shoes'))],
+          [slot('required_base', usableDressBase), slot('shoes', groupIs('shoes'))],
+        ]
       : [[slot('bottom', groupIs('bottom')), slot('shoes', groupIs('shoes'))]]
   } else if (anchorGroup === 'bottom') {
     alternatives = [
@@ -43,6 +49,7 @@ export function completeOutfitSupplyRequirement({ anchorPiece = null, id = 'comp
       [slot('dependent_dress', dependentDress), slot('required_base', usableRequiredBase)],
       [slot('top', independentTop), slot('bottom', groupIs('bottom'))],
       [slot('dependent_top', dependentTop), slot('required_base', usableRequiredBase), slot('bottom', groupIs('bottom'))],
+      [slot('dependent_top', dependentTop), slot('required_base', usableDressBase)],
     ]
   } else {
     alternatives = [...dressPaths, ...separatesPaths]

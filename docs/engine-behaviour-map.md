@@ -3398,6 +3398,14 @@ marks body fit and drape unconfirmed and tells the renderer to infer them conser
 structured garment data. Comparison sheets remain capped at one reference per garment, preferring
 the worn photo, because they may contain 18 unique garments.
 
+The worn photo's caption tells the renderer not to copy its face, hair or expression — the
+calibration photos own those. It does **not** disclaim body proportions. **Owner ruling
+2026-10-26** (thread_1793058184605): renders are meant to read as her try-on photos, and the worn
+photo is her, so its garment-on-body proportions are exactly the evidence wanted. From #224
+(2026-08-12) until this ruling the caption also said not to use the photo's "body proportions",
+which undercut the hem-position authority described above: a mid-thigh tunic rendered cropped at
+the waist. The calibration captions likewise describe a worn photo as her, not "a person".
+
 This improves the renderer's evidence but does not replace the wrong-length metadata-review path.
 Some image complaints have correctly exposed mislabeled `length_hits_at` or `sleeve_type` values;
 the field-specific task remains the way to correct those facts. Better photo delivery and metadata
@@ -3470,7 +3478,9 @@ both actual prints recognizable", "do not add extra hero garments, belts, scarve
 realistic proportions, no beauty retouching, no text or watermark, "closer to a real try-on than a
 fashion ad"); and the outfit's own label, direction, silhouette, mechanics and `watchFor` — the
 `watchFor` line is passed as *"Avoid drift:"*, so the outfit-level warning becomes a rendering
-instruction. Pieces are described with `buildPieceText`, the structured truth text.
+instruction. Pieces are described with `renderGarmentEvidenceLine` (`garmentEvidenceLine.js`): the
+shared fact line plus source-labelled notes, never truncated — see the 2026-10-26 note below. (Until
+then they were described with `buildPieceText`, the structured truth text, cut at 900 characters.)
 
 **PR 188 closes a card-to-render truth gap.** Generated outfit/card payloads now retain the linked
 piece records needed by the renderer instead of relying on the card's short rationale. Planner
@@ -3568,10 +3578,27 @@ and the same shape as the Visual Composer athletic-pants incident already on rec
 > on 59 bottoms, 13 accessories and 6 shoes. Tests: `test/editorialIdealAdditions.test.js`.
 > The 900-character truncation below is **not** fixed.
 
-**One more loss on the better path:** `wholeWardrobeImagePrompt` truncates each piece's truth text
-at 900 characters, and the real median is **1,130** — so **169 of 236 pieces lose their tail**.
-`buildWardrobePieceTruthText` appends in a fixed order, with `fit_on_body`, tuck behavior,
-occasions and trust status last, so those are the fields that fall off the end.
+**One more loss on the better path (FIXED 2026-10-26):** `wholeWardrobeImagePrompt` truncated each
+piece's truth text at 900 characters, and the real median was **1,130** — so **169 of 236 pieces
+lost their tail**. `buildWardrobePieceTruthText` appends in a fixed order, so the owner's `notes`
+came last and were always the first thing lost, while tagger prose (best use, style risk, "AI
+auto-use trust") filled the budget. `savedOutfitImagePrompt` cut at 500 and each whole-wardrobe
+reference-photo caption at 700. `thread_1793058184605`: the owner's note on where a tunic's hem lands
+(character 1,192 of 1,494) never reached a render. All three now use `renderGarmentEvidenceLine`:
+the shared fact line, then the saved-record notes, then — **owner ruling 2026-10-26, renders only**
+— the free `notes` field when `manual_overrides` records it as saved in the app, labelled "author
+not recorded", with any text the retired Save button appended from chat removed. The chat paths
+keep the 2026-09-15 rule and do not carry `notes`. Tagger prose is no longer sent to renders. Also
+fixed: the truth text's low-confidence marker said "add worn photo" on pieces that have one.
+
+**Length tag owns hem position (2026-10-26, owner ruling: a length tag alone must be enough).**
+With all of the above in place, renders of a tunic tagged `mid_thigh`, then `above_knee`, on both
+image models, still put its hem at the fingertips. Photo captions now name the recorded length, not
+the photos, as the authority for hem position when one is recorded. *Tried and removed the same
+day:* a post-render vision check of each hem plus one targeted "lengthen this garment" edit. The
+check read the owner's own worn photos — the true length — as `low_hip`/`mid_thigh` on both Gemini
+Flash-Lite tiers, so it could not tell a correct hem from a short one, and the edit moved the hem
+only about an inch. Do not re-propose without a check that separates the two.
 
 ---
 

@@ -599,8 +599,15 @@ function initDb(dbPath) {
       'mid-thigh': 'mid_thigh', 'full-length': 'full_length', 'mid-calf': 'mid_calf',
       'over-knee': 'over_knee',
     }
-    const TOP_VALID = new Set(['cropped', 'waist', 'high_hip', 'hip', 'low_hip', 'tunic'])
-    const OUTERWEAR_VALID = new Set(['cropped', 'waist', 'high_hip', 'hip', 'low_hip', 'mid_thigh', 'knee', 'mid_calf', 'ankle'])
+    // 2026-10-26: top 'tunic' renamed to 'mid_thigh' (thread_1793058184605). 'tunic' was the one
+    // value naming a garment type rather than a place on the body, and the image model drew a
+    // tunic-tagged knit cropped at the waist. Renamed here, in the remap that runs every startup,
+    // so a stale 'tunic' from any source is converted rather than nulled as invalid.
+    // 2026-10-26: above_knee added to both (lower thigh, between mid_thigh and knee). Outerwear also gains
+    // full_length/floor_length: the tagger has offered them since 2026-08-14, but this list never did, so this
+    // every-startup remap blanked them.
+    const TOP_VALID = new Set(['cropped', 'waist', 'high_hip', 'hip', 'low_hip', 'mid_thigh', 'above_knee'])
+    const OUTERWEAR_VALID = new Set(['cropped', 'waist', 'high_hip', 'hip', 'low_hip', 'mid_thigh', 'above_knee', 'knee', 'mid_calf', 'ankle', 'full_length', 'floor_length'])
     const SKIRT_VALID = new Set(['mini', 'above_knee', 'knee', 'below_knee', 'midi', 'ankle', 'maxi'])
     const PANTS_VALID = new Set(['shorts', 'knee', 'mid_calf', 'ankle', 'full_length', 'floor_length'])
     const SHOES_VALID = new Set(['low', 'below_ankle', 'ankle', 'high_top', 'mid_calf', 'knee', 'over_knee'])
@@ -630,7 +637,7 @@ function initDb(dbPath) {
       let remapped = null
       let subtypeToWrite = null
       if (category === 'top') {
-        remapped = remapLength(piece.length_hits_at, TOP_VALID)
+        remapped = remapLength(piece.length_hits_at, TOP_VALID, { tunic: 'mid_thigh' })
       } else if (category === 'outerwear') {
         remapped = remapLength(piece.length_hits_at, OUTERWEAR_VALID)
       } else if (category === 'dress') {

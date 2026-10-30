@@ -23,9 +23,9 @@
 // constraints.no_repeat / allow_repeat (per category group), and
 // constraints.shared_anchor_ids (soft-pinned across slots and exempt from
 // no_repeat). The plan report is objective-driven: a piece_budget leads with
-// the roster + combination count, a diversified / no_repeat plan leads with the
-// repeat schedule, everything else keeps the packing-reuse headline (see
-// buildPlanReport).
+// the roster + combination count; a trip that is diversified or has a no_repeat
+// rule leads with the repeat schedule, any other trip with the packing-reuse
+// headline; a plan that packs nothing reports no reuse (see buildPlanReport).
 
 import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, weatherHasCoolEnd, HOT_F, COOL_LOW_F, resolveExposureWindowHourly, resolveExposureWindowAcrossDays, resolveDaypartHourlyEvidence } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
@@ -188,10 +188,10 @@ function collectPieceRoster(outfits = []) {
 
 // Objective-driven plan report (build step 5). The report sections are chosen
 // by what the set is FOR, not hardcoded to packing: a capsule (piece_budget)
-// leads with the roster + how many outfits it yields; a diversified plan or one
+// leads with the roster + how many outfits it yields; a diversified trip or one
 // with a no_repeat rule leads with the repeat schedule (its success is "nothing
-// repeats"); everything else keeps the packing-reuse headline. Returns the
-// report lines to append to the shared plan lines.
+// repeats"); any other trip keeps the packing-reuse headline; a plan that packs
+// nothing reports no reuse. Returns the report lines to append to the shared plan lines.
 // WHAT TO PACK, as its own section — the roster is authoritative, cards are examples drawn from it
 // (docs/README.md: trip roster architecture). Deliberately NOT card annotations: a shared jacket
 // does not get a "remember to add jacket" note pasted onto every card that omits it, which is the
@@ -219,7 +219,8 @@ function buildPlanReport(pieceReuse, tripOutfits = [], {
   capsuleRoster = [],
   capsuleCapacity = 0,
   statedPalette = [],
-  tripRoster = []
+  tripRoster = [],
+  planKind = 'trip'
 } = {}) {
   const outfitCount = tripOutfits.length
   const lines = []
@@ -250,6 +251,9 @@ function buildPlanReport(pieceReuse, tripOutfits = [], {
     }
     return lines
   }
+  // A plan that packs nothing reports no reuse: at home every day has its own look (owner, 2026-10-27), and the
+  // repeat line was copied into the reply as a "Repeat Schedule" (thread_1793264604857, owner 2026-10-29).
+  if (planKind !== 'trip') return lines
   if (reuseMode === 'diversify' || noRepeatCats.size) {
     if (!pieceReuse.repeated.length) {
       lines.push(`Every look is distinct — no piece repeats across the ${outfitCount} ${outfitCount === 1 ? 'outfit' : 'outfits'}.`)
@@ -811,12 +815,12 @@ function buildCoverageGapLines(coverageGaps = []) {
   return (Array.isArray(coverageGaps) ? coverageGaps : []).filter(Boolean)
 }
 
-function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [], tripRoster = [], tripRequirementSlots = [] } = {}) {
+function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [], tripRoster = [], tripRequirementSlots = [], planKind = 'trip' } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
   const durationLabel = source === 'plan_outfit_set' ? 'Plan length' : 'Trip length'
   const pieceReuse = describeTripPieceReuse(tripOutfits)
-  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity, statedPalette, tripRoster })
+  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity, statedPalette, tripRoster, planKind })
   const weatherLine = buildWeatherLine(slotWeather)
   const gapLines = buildCoverageGapLines(coverageGaps)
   // WHAT TO PACK, structured for the client the same way capsulePlanContext already is — same
@@ -1683,7 +1687,6 @@ function outfitDressId(outfit = {}) {
 // the soft-report behavior instead.
 export const MIN_ENFORCED_CAPSULE_BUDGET = 6
 const PLAN_WORKBENCH_PIECE_LIMIT = 40
-
 // `taupe` and `oatmeal` were added 2026-07-30. They were missing, which was
 // harmless while the neutral test was "does ANY colour match" — one recognised
 // neutral carried the piece. It stopped being harmless when the test became
@@ -4233,9 +4236,11 @@ function pieceHasGenuineOutdoorAffinity(piece) {
 // requested use case — no cap, no ranking, no truncation. Each piece is annotated with which of the
 // trip's own slots it is gate-eligible for (slotLabelsById), a recorded fact the model reads directly
 // rather than a hidden reason it was never shown a piece at all.
-function buildTripBench(pool = [], { slots = [], calendarSeason = '', tripHasHotWeather = false } = {}) {
+function buildTripBench(pool = [], { slots = [], calendarSeason = '', tripHasHotWeather = false, seasonGate = true } = {}) {
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
-  const seasonEligiblePool = tripSeasonEligiblePool(pool, calendarSeason, { tripHasHotWeather })
+  // A coordinated plan states the season to the stylist instead of gating by it (owner, 2026-09-12 ruling kept
+  // 2026-10-27); a trip keeps its season eligibility.
+  const seasonEligiblePool = seasonGate ? tripSeasonEligiblePool(pool, calendarSeason, { tripHasHotWeather }) : pool
   const eligible = capsulePiecesEligibleForAnySlot(seasonEligiblePool, normalizedSlots, {})
     .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
   const slotLabelsById = new Map()
@@ -4630,7 +4635,8 @@ export const GEMINI_TRIP_ROSTER_PHOTO_LIMIT = 300
 // true sends photos again (whole bench on Gemini, model shortlist elsewhere).
 export const TRIP_ROSTER_PHOTOS_ENABLED = false
 
-export async function selectTripRosterViaModel({
+// plan_outfit_set's roster selection, written first for trips; the trip name stays as an alias for its callers.
+export async function selectPlanRosterViaModel({
   pool = [],
   slots = [],
   calendarSeason = '',
@@ -4639,6 +4645,10 @@ export async function selectTripRosterViaModel({
   shortlistRoster = null,
   photoLimit = TRIP_ROSTER_PHOTO_LIMIT,
   photos = TRIP_ROSTER_PHOTOS_ENABLED,
+  seasonGate = true,
+  // The plan's shared rules: the pieces the looks are built around, and the categories that may not repeat.
+  constraints = {},
+  fallbackGapText = '[trip roster: the model\'s packing selection could not satisfy the trip\'s structural requirements after one repair attempt — offering the full coverage-guaranteed candidate set instead of a curated packing list]',
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
@@ -4654,8 +4664,20 @@ export async function selectTripRosterViaModel({
   // trip reaches HOT_F, alongside the fall ones the typical-day reading keeps; which to pack is the
   // packer's call, told by the weather sentence which days are warm.
   const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot) || weatherProfileReachesHot(slot?.weatherProfile))
-  const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason, tripHasHotWeather })
+  const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason, tripHasHotWeather, seasonGate })
   const benchById = pieceMapForPieces(bench)
+  const anchorIds = [...(constraints?.anchorIds || [])].map(Number).filter(Boolean)
+  const rosterConstraints = { anchorIds, noRepeat: [...(constraints?.noRepeat || [])] }
+  // A piece the looks are built around has to be in the selection; one the gates left off the bench cannot be.
+  const rosterFailuresFor = (roster, candidates) => {
+    const rosterIds = idSetForPieces(roster)
+    const candidateIds = idSetForPieces(candidates)
+    const missingAnchors = anchorIds.filter(id => candidateIds.has(id) && !rosterIds.has(id))
+    return [
+      ...validateTripRoster(roster, { slots, pool: candidates }).failures,
+      ...missingAnchors.map(id => ({ code: 'anchor_missing', message: `${benchById.get(id)?.name || `piece ${id}`} (ID ${id}) is a piece these looks are built around, and the selection leaves it out` })),
+    ]
+  }
 
   if (typeof chooseRoster !== 'function') {
     return { roster: bench, source: 'bench_fallback', failures: [], bench, coverageGaps: ['[trip roster: no model roster call available — offering the full coverage-guaranteed candidate set instead of a curated packing list]'] }
@@ -4738,18 +4760,18 @@ export async function selectTripRosterViaModel({
   }
 
   bump('tripRosterModelCalls')
-  const first = await attemptChoose({ bench: choiceBench, withPhotos, slots, dateRange, attempt: 1, failures: [], slotLabelsById })
-  let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: choiceBench }).failures
+  const first = await attemptChoose({ bench: choiceBench, withPhotos, slots, dateRange, attempt: 1, failures: [], slotLabelsById, constraints: rosterConstraints })
+  let failures = first.contractFailures.length ? first.contractFailures : rosterFailuresFor(first.roster, choiceBench)
   if (!failures.length) {
     return { roster: first.roster, source: 'model', jobs: first.jobs, packingReasoning: first.packingReasoning, failures: [], bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
   }
 
   bump('tripRosterModelRepairs')
   const second = await attemptChoose({
-    bench: choiceBench, withPhotos, slots, dateRange, attempt: 2, failures, slotLabelsById,
+    bench: choiceBench, withPhotos, slots, dateRange, attempt: 2, failures, slotLabelsById, constraints: rosterConstraints,
     previousRosterIds: first.roster.map(piece => Number(piece.id)),
   })
-  const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: choiceBench }).failures
+  const secondFailures = second.contractFailures.length ? second.contractFailures : rosterFailuresFor(second.roster, choiceBench)
   if (!secondFailures.length) {
     return { roster: second.roster, source: 'model_repaired', jobs: second.jobs, packingReasoning: second.packingReasoning, failures: [], bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
   }
@@ -4769,13 +4791,16 @@ export async function selectTripRosterViaModel({
     source: 'bench_fallback',
     failures: secondFailures,
     bench,
-    coverageGaps: ['[trip roster: the model\'s packing selection could not satisfy the trip\'s structural requirements after one repair attempt — offering the full coverage-guaranteed candidate set instead of a curated packing list]'],
+    coverageGaps: [fallbackGapText],
   }
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, shortlistTripRoster = null, tripRosterPhotoLimit = 0, onDiagnostic = null } = {}) {
-  const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, shortlistTripRoster = null, tripRosterPhotoLimit = 0, choosePlanRoster = null, onDiagnostic = null } = {}) {
+  const { reuse: requestedReuse, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
+  // reuse:'maximize' is packing light: fewer pieces to carry, at most three pairs of shoes (spec 24). Only a trip packs
+  // and only a capsule rotates; any other plan gives every day its own look (owner, 2026-10-27), so it never takes it.
+  const reuseMode = requestedReuse === 'maximize' && planKind !== 'trip' && !isSeasonalCapsule ? '' : requestedReuse
   const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
   slots = await Promise.all(slots.map(async slot => {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
@@ -4833,31 +4858,44 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       ownerRules
     })
   }
-  // Trip packing roster (docs/README.md: trip roster architecture; selectTripRosterViaModel above).
-  // Same stage-2 shape as the capsule roster immediately above — model picks, engine validates
-  // structurally — deliberately NOT the same call: no budget, no palette, no register reserve, and
-  // the bench is ranked by cross-use-case reuse rather than capsule versatility.
-  let tripRosterSelection = null
-  if (typeof chooseTripRoster === 'function' && planKind === 'trip') {
-    // A trip roster is chosen ONCE for the whole trip, not per slot -- the first slot's already-
-    // resolved calendarSeason stands in for the whole trip (docs/trip-roster-season-eligibility-
-    // spec.md §5: a documented simplification, not solved here, for the rare trip whose slots span
-    // a season boundary).
-    tripRosterSelection = await selectTripRosterViaModel({
+  // The plan roster (docs/multi-outfit-shortlist-and-composer-spec.md, owner 2026-10-27): plan_outfit_set's one
+  // garment-selection step, for every plan that is not a budgeted capsule. The stylist chooses from every gate-eligible
+  // piece, each labelled with the use cases it can serve; the engine checks the roster can dress every use case, asks
+  // for one repair, and on failure offers every eligible piece, disclosed. Model picks, engine validates structurally —
+  // the capsule roster's shape without its budget, palette or register reserve. A trip is the packing variant: its
+  // chooser packs a suitcase, its bench drops out-of-season pieces (docs/trip-roster-season-eligibility-spec.md), and a
+  // large bench may be shortlisted first. Any other plan packs nothing, and the season is stated to her instead of
+  // gated (owner ruling 2026-09-12).
+  // Chosen ONCE for the whole plan, not per slot -- the first slot's already-resolved calendarSeason stands in for the
+  // whole plan (trip-roster-season-eligibility-spec §5: a documented simplification for slots spanning a season
+  // boundary).
+  const isTripPlan = planKind === 'trip'
+  const planRosterChooser = isTripPlan ? chooseTripRoster : choosePlanRoster
+  let planRosterSelection = null
+  if (typeof planRosterChooser === 'function' && !isSeasonalCapsule) {
+    planRosterSelection = await selectPlanRosterViaModel({
       pool: allPieces,
       slots,
       calendarSeason: slots[0]?.stylingContext?.calendarSeason || '',
       dateRange,
-      chooseRoster: chooseTripRoster,
-      shortlistRoster: shortlistTripRoster,
-      ...(Number(tripRosterPhotoLimit) > 0 ? { photoLimit: Number(tripRosterPhotoLimit) } : {}),
-      onDiagnostic,
+      chooseRoster: planRosterChooser,
+      constraints: { anchorIds, noRepeat: noRepeatCats },
+      ...(isTripPlan
+        ? { shortlistRoster: shortlistTripRoster, ...(Number(tripRosterPhotoLimit) > 0 ? { photoLimit: Number(tripRosterPhotoLimit) } : {}) }
+        : {
+            photos: false,
+            seasonGate: false,
+            fallbackGapText: '[plan roster: the stylist\'s garment selection could not dress every use case after one repair attempt — offering every eligible piece instead of her chosen set]',
+          }),
+      // Trip diagnostics keep their names; other plans count under planRoster*.
+      onDiagnostic: isTripPlan || typeof onDiagnostic !== 'function' ? onDiagnostic : field => onDiagnostic(String(field).replace(/^tripRoster/, 'planRoster')),
     })
   }
+  const tripRosterSelection = isTripPlan ? planRosterSelection : null
   const composePool = capsuleRosterSelection
     ? capsuleRosterSelection.roster
-    : tripRosterSelection
-    ? tripRosterSelection.roster
+    : planRosterSelection
+    ? planRosterSelection.roster
     : modelPlanPool({ allPieces, slots, constraints, question, mood, planKind })
   const applicableOwnerRules = [...new Set([
     ...(Array.isArray(ownerRules) ? ownerRules : []),
@@ -4896,8 +4934,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   // A layer allocation the wardrobe could not supply is disclosed, never
   // silently absorbed by another category (Step 5 criterion 1's graceful half).
   if (Array.isArray(capsuleRosterSelection?.coverageGaps)) coverageGaps.push(...capsuleRosterSelection.coverageGaps)
-  if (Array.isArray(tripRosterSelection?.coverageGaps)) coverageGaps.push(...tripRosterSelection.coverageGaps)
-  for (const [index, slot] of slots.entries()) {
+  if (Array.isArray(planRosterSelection?.coverageGaps)) coverageGaps.push(...planRosterSelection.coverageGaps)
+  // One slot's gates (unchanged), computed once per slot.
+  const gateSlot = slot => {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
     const weatherProfile = slot.stylingContext.weatherProfile
     const weatherLabel = slot.weatherLabel
@@ -4906,7 +4945,6 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // to the same demand.
     const slotExposure = resolveExposureContext(
       { activity: slot.activity, environment: slot.environment }, weatherProfile)
-    slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
     // The slot's structured occasion/register owns its ceiling. Descriptive
     // prose still informs ranking, but must not silently lower a casual slot
     // to lounge because a note says "comfort-first" (live capsule repro,
@@ -4940,7 +4978,17 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const suppressedPieces = gateResult.underlyingExcludedPieces
     const activeMovement = slotRequiresActiveMovement(slot)
     const operationalEase = slotRequiresOperationalEase(slot)
-    const workbenchSelection = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })
+    return { slotRequestText, weatherProfile, weatherLabel, slotExposure, ceilingRank, allowedPieces, suppressedPieces, activeMovement, operationalEase }
+  }
+  const slotGates = new Map(slots.map(slot => [slot.id, gateSlot(slot)]))
+  for (const [index, slot] of slots.entries()) {
+    const { slotRequestText, weatherProfile, weatherLabel, slotExposure, ceilingRank, allowedPieces, suppressedPieces, activeMovement, operationalEase } = slotGates.get(slot.id)
+    slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
+    // Her chosen roster reaches each slot whole on a plan that packs nothing: the per-slot limit is for a pool code
+    // assembled, and must not cut what she chose. The fallback (every eligible piece) keeps the limit, and a trip keeps
+    // its own composition path unchanged.
+    const stylistChoseRoster = !isTripPlan && planRosterSelection && planRosterSelection.source !== 'bench_fallback'
+    const workbenchSelection = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason, ...(stylistChoseRoster ? { limit: Math.max(PLAN_WORKBENCH_PIECE_LIMIT, allowedPieces.length) } : {}) })
     const shownPieces = workbenchSelection.pieces
     const workbenchCoverage = workbenchSelection.report
     const targetOutfits = workbenchCoverage.complete
@@ -5167,7 +5215,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   }))
   const statedPaletteResult = extractStatedPalette(question, allPieces)
   const capsuleRoster = isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET ? composePool : []
-  // The trip's own first-class packing set — see the header comment above selectTripRosterViaModel.
+  // The trip's own first-class packing set — see the header comment above selectPlanRosterViaModel.
   // Empty when no roster was selected this turn (chooseTripRoster absent, or planKind !== 'trip'),
   // which keeps every non-trip caller byte-identical.
   const tripRoster = planKind === 'trip' && tripRosterSelection ? composePool : []
@@ -5288,6 +5336,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       tripRosterFailureCodes: tripRosterSelection?.failures?.map(f => f.code) || [],
       packingRoster: tripRoster.length ? tripRoster : capsuleRoster,
       tripRequirementSlots,
+      // The plan roster's record for every plan kind (the trip fields above keep their persisted names): who chose
+      // it, her reasoning, each piece's job.
+      planRosterSource: planRosterSelection?.source || '',
+      planRosterJobs: planRosterSelection?.jobs || [],
+      planRosterReasoning: planRosterSelection?.packingReasoning || '',
+      planRosterFailureCodes: planRosterSelection?.failures?.map(f => f.code) || [],
+      planRosterIds: planRosterSelection ? composePool.map(piece => Number(piece.id)) : [],
       slotWeather,
       coverageGaps,
       heldOutfits: [],
@@ -5648,7 +5703,7 @@ const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
   /^no warm layer for cold weather$/,
   /^this outfit has no outer layer at all for sustained cold outdoor exposure(?: — .*)?$/,
   /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
-  /^assigned layer piece \d+ \(.+\) has evidence it cannot serve as a cold layer for .+ — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer\.$/,
+  /^assigned layer piece \d+ \(.+\) has evidence it cannot serve as a cold layer for .+ — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different (?:packed )?layer\.$/,
   // thread_1790989165853: a rejected assigned layer leaves the card with no layer, so the transit
   // check fires as well. It is the same missing layer, and a repair that supplies one fixes both.
   /^no adequate sleeve-bearing layer for cold-weather transit \(the indoor base may stay light, but removable coverage is required for getting there and back\)$/,
@@ -5799,7 +5854,9 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         unresolvedPieceIds.push(id)
         continue
       }
-      const verifiedCandidate = isTripPlan ? verifiedNonRosterPiecesById?.get(id) : null
+      // Any plan but a capsule: her chosen set is where looks start, not a limit on the wardrobe (a trip's addition is
+      // also packed, below).
+      const verifiedCandidate = !isEnforcedCapsule ? verifiedNonRosterPiecesById?.get(id) : null
       if (verifiedCandidate) {
         // A real, active piece the caller has already verified this turn (search_wardrobe/
         // view_pieces), just not part of the roster plan_outfit_set originally selected. Gate it
@@ -5813,7 +5870,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           rosterAdditionsById.set(id, verifiedCandidate)
           continue
         }
-        reasons.push(`piece ${id} is outside this trip's current packing roster and does not pass ${label}'s own gates (occasion/activity/register) — it cannot be added here`)
+        reasons.push(`piece ${id} is outside ${isTripPlan ? "this trip's current packing roster" : 'the pieces chosen for this plan'} and does not pass ${label}'s own gates (occasion/activity/register) — it cannot be added here`)
         unresolvedPieceIds.push(id)
         continue
       }
@@ -5911,7 +5968,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     if ((coldLayerRequired || coldLayerPermitted) && mode === 'assigned_packed_layer' && decisionLayerId !== null) {
       const id = decisionLayerId
       if (!gateAllowedIds.has(id)) {
-        reasons.push(`assigned layer piece ${id} is not eligible as a layer for ${label} — it must be in the current packing roster and pass this slot's own gates`)
+        reasons.push(`assigned layer piece ${id} is not eligible as a layer for ${label} — it must be in ${isTripPlan ? 'the current packing roster' : 'the pieces chosen for this plan'} and pass this slot's own gates`)
       } else {
         const layerPiece = planPiecesById.get(id)
         if (layerPiece) {
@@ -5949,11 +6006,11 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           // layer that is warmer than ideal is something to tell the wearer; it does not make the
           // outfit unwearable. The inadequacy check below remains a hard gate.
           if (outerwearLayerPositivelyInadequate(layerPiece)) {
-            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.`)
+            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different ${isTripPlan ? 'packed ' : ''}layer.`)
           } else {
             assignedLayers.push(layerPiece)
             if (layerFit.fit === 'substantial_overshoot') {
-              tooWarmLayerNotes.push({ type: 'Weather note', message: `the ${layerPiece.name || 'packed layer'} is warmer than these conditions call for; it is there to take off once you warm up` })
+              tooWarmLayerNotes.push({ type: 'Weather note', message: `the ${layerPiece.name || (isTripPlan ? 'packed layer' : 'layer')} is warmer than these conditions call for; it is there to take off once you warm up` })
             }
           }
         }
@@ -6110,7 +6167,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       const curatedSuitcaseIds = ['model', 'model_repaired'].includes(pendingPlan?.tripRosterSource)
         ? new Set((Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []).map(piece => Number(piece.id)))
         : new Set()
-      if (reuseMode === 'maximize' && !isEnforcedCapsule) {
+      if (reuseMode === 'maximize' && !isEnforcedCapsule && (isTripPlan || pendingPlan?.isSeasonalCapsule)) {
         const shoePair = outfitCategoryPairs(outfit).find(pair => pair.group === 'shoes' && !curatedSuitcaseIds.has(Number(pair.id)))
         if (shoePair) {
           const usedShoes = usedPieceIdsByCategory.get('shoes') || new Set()
@@ -6209,7 +6266,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
   // requirements -> surface real coverage gaps, the same contract propose_outfit's own follow-up
   // mutation already established. Never blocks: it only adds a disclosed line to the plan's own
   // coverageGaps, which the final plan_lines already surface honestly.
-  if (rosterAdditionsById.size) {
+  if (rosterAdditionsById.size && isTripPlan) {
     const existingRosterIds = idSetForPieces(Array.isArray(pendingPlan.tripRoster) ? pendingPlan.tripRoster : [])
     const newRosterPieces = [...rosterAdditionsById.values()].filter(piece => !existingRosterIds.has(Number(piece.id)))
     if (newRosterPieces.length) {
@@ -6473,6 +6530,7 @@ export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits =
     reuseMode,
     noRepeatCats,
     pieceBudget,
+    planKind: pendingPlan?.planKind || 'coordinated_plan',
     capsuleRoster: pendingPlan?.capsuleRoster || [],
     tripRoster: pendingPlan?.tripRoster || [],
     tripRequirementSlots: pendingPlan?.tripRequirementSlots || [],
@@ -6800,3 +6858,5 @@ export function normalizePlanSlots(rawSlots = [], {
     .filter(Boolean)
   return normalized
 }
+
+export const selectTripRosterViaModel = selectPlanRosterViaModel

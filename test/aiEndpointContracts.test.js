@@ -9738,3 +9738,20 @@ test('a swapped card takes the stylist\'s title or one suffix only, and the rout
   assert.doesNotMatch(provider, /For full_stylist use includes_outdoors/)
   assert.match(provider, /Judge setting from what the current message says the clothes are for, whatever the profile/)
 })
+
+test('the router runs on its own configurable model: 3.7 Flash by default when the stylist is on Gemini', async () => {
+  const { routerProviderOverride, ROUTER_MODEL_OVERRIDE, ROUTER_THINKING_LEVEL } = await import('../styling-engine/provider.js')
+  assert.equal(ROUTER_MODEL_OVERRIDE, 'gemini-3.7-flash')
+  assert.equal(ROUTER_THINKING_LEVEL, 'low')
+  assert.deepEqual(routerProviderOverride({ provider: 'gemini', model: 'gemini-3.5-flash-lite' }), { provider: 'gemini', model: 'gemini-3.7-flash' })
+  assert.deepEqual(routerProviderOverride({ provider: 'anthropic' }), { provider: 'anthropic' }, 'another provider keeps the stylist\'s own')
+  assert.equal(routerProviderOverride(null), null)
+})
+
+// 2026-10-29: the chat sent "America/Los_Angeles" as the wearer's time zone wherever they were.
+test('the chat sends the browser\'s own time zone, with Los Angeles only as the fallback', () => {
+  const src = fs.readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
+  assert.match(src, /Intl\.DateTimeFormat\(\)\.resolvedOptions\(\)\.timeZone \|\| 'America\/Los_Angeles'/)
+  assert.match(src, /const timezone = browserTimeZone\(\)/)
+  assert.doesNotMatch(src, /const timezone = 'America\/Los_Angeles'/)
+})

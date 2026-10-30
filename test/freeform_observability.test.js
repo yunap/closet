@@ -466,6 +466,61 @@ test('a vague "these shorts" reference resolves against the immediately precedin
   assert.deepEqual(recentReferentPieceIds('is this comfortable?', history, pieces), [])
 })
 
+// thread_1793233502022 msgs 5–9: one pair of trousers, three garment answers. Msg 7 called them
+// "pants" and resolved to a different garment ("black straight-leg knit pants", cotton ponte) that
+// the exchange never named; msg 9 named nothing and got photos of five other plan garments.
+test('a garment follow-up keeps the garment the conversation is about', async () => {
+  const { recentReferentPieceIds, routerSubjectPieceIds, garmentFactFollowUpSubjectIds, namedPieceIdsInQuestion, exactNamedPieceIdsFromQuestion } = await import('../routes/ai.js')
+  const pieces = [
+    { id: 996911, name: 'black straight-leg knit pants' },
+    { id: 996914, name: 'black wide-leg knit trousers' },
+    { id: 996928, name: 'grey heathered straight-leg knit trousers' },
+  ]
+  const history = [
+    { role: 'user', content: 'take a look at black wide-leg knit trousers, how do you see them?' },
+    { role: 'assistant', content: 'These are a substantial, heavy-weight merino knit. Because it is a denser knit wool, it has enough heft to fall straight down through the wide leg without clinging, so they don\'t read like basic sweatpants.' },
+  ]
+  // "pants" reaches the trousers the exchange named in full, not the one it nearly named.
+  assert.deepEqual(recentReferentPieceIds("these are more like St. John Women's Double Face Knit Pants than lounge pants", history, pieces), [996914])
+
+  // The router's subject counts only as an exact active name.
+  assert.deepEqual(routerSubjectPieceIds('black wide-leg knit trousers', pieces), [996914])
+  assert.deepEqual(routerSubjectPieceIds('Black Wide-Leg Knit Trousers', pieces), [996914])
+  assert.deepEqual(routerSubjectPieceIds('black knit trousers', pieces), [])
+  assert.deepEqual(routerSubjectPieceIds('', pieces), [])
+
+  // The previous garment answer's subject carries only to the message right after it.
+  const stored = { piece_ids: [996914], question: 'these are more like St. John pants' }
+  const afterThatAnswer = [...history, { role: 'user', content: 'these are more like St. John pants' }, { role: 'assistant', content: 'You are right.' }]
+  assert.deepEqual(garmentFactFollowUpSubjectIds(afterThatAnswer, stored), [996914])
+  assert.deepEqual(garmentFactFollowUpSubjectIds([...afterThatAnswer, { role: 'user', content: 'what should I wear tomorrow?' }, { role: 'assistant', content: 'A look.' }], stored), [])
+  assert.deepEqual(garmentFactFollowUpSubjectIds(afterThatAnswer, null), [])
+  assert.deepEqual(garmentFactFollowUpSubjectIds(afterThatAnswer, { piece_ids: [], question: 'these are more like St. John pants' }), [])
+
+  // Two names in one question are a comparison: no single subject, and the exact-name rule is unchanged.
+  const both = 'is the black wide-leg knit trousers warmer than the black straight-leg knit pants?'
+  assert.deepEqual(namedPieceIdsInQuestion(both, pieces).sort(), [996911, 996914])
+  assert.deepEqual(exactNamedPieceIdsFromQuestion(both, pieces), [])
+})
+
+test('the route resolves a garment answer\'s subject before falling back to every card piece, and stores it', () => {
+  const routeSrc = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  const start = routeSrc.indexOf('const resolveReferent = () => {')
+  assert.ok(start > 0)
+  const body = routeSrc.slice(start, routeSrc.indexOf('}', routeSrc.indexOf('return fromExchange', start)))
+  assert.ok(body.indexOf('routerSubjectPieceIds') < body.indexOf('recentReferentPieceIds'))
+  assert.match(body, /followUpSubjectIds/)
+  assert.match(routeSrc, /garment_fact_subject: \{ piece_ids: answeredSubjectIds, question: typedQuestion \}/)
+})
+
+test('garment_fact weighs the wearer\'s words and its own earlier replies against the evidence', async () => {
+  const { compactFreeformAnswerSystem } = await import('../routes/ai.js')
+  const system = compactFreeformAnswerSystem('garment_fact')
+  assert.match(system, /Previous assistant statements in the conversation are fallible prior claims/)
+  assert.match(system, /not a verdict to echo/)
+  assert.match(system, /deny having one that was/)
+})
+
 // Batched discovery acceptance case 1. The coverage arc failed twice on this: thread_1787127928718
 // discussed only the four visually sampled shoes, and thread_1787128659041 dropped deserving
 // candidates before visual refinement. A piece without a photograph must stay a candidate.

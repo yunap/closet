@@ -223,7 +223,7 @@ export function composerNameMismatchCorrection(parsed, mismatchesByIndex = new M
     for (const [index, findings] of requiredBaseByIndex) {
       for (const finding of findings) lines.push(`- "${label(index)}": ${finding.message}.`)
     }
-    sections.push(`In these outfits a garment that cannot be worn alone against skin has no top under it that can be:\n${lines.join('\n')}\nFor each, put a shown top that can be worn alone under it in \`base_top_id\`, and move that garment to the slot it is worn in over the base (\`middle_layer_id\` for a top).`)
+    sections.push(`In these outfits a garment that cannot be worn alone against skin has nothing under it that can be:\n${lines.join('\n')}\nFor each, put a shown top that can be worn alone under it in \`base_top_id\` (under a top, a shown dress that can be worn alone in \`dress_id\` works too), and move that garment to the slot it is worn in over the base (\`middle_layer_id\` for a top).`)
   }
   return `YOUR PREVIOUS ANSWER:\n${JSON.stringify(parsed)}\n\nCORRECTION NEEDED — ${sections.join('\n\n')}\nReturn the same outfits again. Keep every outfit you did not need to change exactly as it was.`
 }

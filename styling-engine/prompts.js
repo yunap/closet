@@ -4,9 +4,10 @@
 // Behaviour these prompts drive is documented in docs/freeform-rearchitecture-handoff.md.
 import { colorTaggerInstruction } from '../lib/colorTaxonomy.js'
 import { categoryOutfitStructurePromptRule, layerConstructionPromptRule, layerDirectionPromptRule, layerWearabilityFirstPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, requiredBaseLayerPromptRule } from './outfitValidation.js'
-import { SLEEVE_SHAPE_VALUES, FIT_ON_BODY_SCHEMA_DESCRIPTION, wardrobeCategoryGroup } from './attributes.js'
+import { SLEEVE_SHAPE_VALUES, FIT_ON_BODY_SCHEMA_DESCRIPTION, SEE_THROUGH_NECKLINE_INSTRUCTION, wardrobeCategoryGroup } from './attributes.js'
 import { OUTERWEAR_SUBTYPE_VALUES } from './outerwearSubtype.js'
 import { TOP_SUBTYPE_VALUES } from './topSubtype.js'
+import { UPPER_THIGH_LENGTH_DEFINITIONS } from './lengthCues.js'
 import { FIBER_VALUES, FIBER_FAMILIES, INSULATING_LAYER_SCHEMA_DESCRIPTION, INTERIOR_CONSTRUCTION_SCHEMA_DESCRIPTION } from './fiberTaxonomy.js'
 
 // thread_1789532397982/1789532668263/1789536455443 diagnosis (2026-09-16): every model-facing
@@ -40,14 +41,23 @@ export const EXPLORE_INSTRUCTION = 'EXPLORE. The outfits anyone would assemble f
 // thread_1792915678690 and thread_1792916742017 put the less obvious direction into it (textured
 // cream tops, then stripes, a print, collars, a turtleneck) while the default mode, allowed to repeat
 // a strong garment, chose fitted sleeveless tops (thread_1792917380852). Shared by roster and composer.
-export const EXPLORE_LAYER_BASE_SCOPE = 'In this mode that base is chosen for how the anchor is worn, not for the less obvious direction, and the same base may repeat across outfits; take the less obvious direction in the rest of the outfit.'
+// Owner ruling 2026-10-27 (thread_1793086091146, the sheer open-knit cowl tunic): the base must fit
+// first, and only then may it be a creative variable. "Not for the less obvious direction" kept a base
+// that fit from ever carrying the idea, and five cards came back dark; under a see-through anchor the
+// base is what shows. "May repeat" stays: without it, "no two variations" pushes a new base onto every card.
+export const EXPLORE_LAYER_BASE_SCOPE = 'In this mode that base must first fit under the anchor; once it does, it may carry the outfit\'s direction like any other garment, and the same base may repeat across outfits.'
 export const EXPLORE_LAYER_ANCHOR_LINE = `The anchor is worn over a top or a dress, so every outfit also has one under it. ${EXPLORE_LAYER_BASE_SCOPE}`
 
-// A top or dress that cannot be worn alone (needs_base) is a layer anchor too, worn over a top that can
-// be (evaluateRequiredBaseLayers). thread_1793051171608: the olive open-knit tunic got neither line.
-export const EXPLORE_DEPENDENT_ANCHOR_LINE = `The anchor cannot be worn alone against skin, so every outfit also has a top under it that can be. ${EXPLORE_LAYER_BASE_SCOPE}`
+// A top or dress that cannot be worn alone (needs_base) is a layer anchor too (evaluateRequiredBaseLayers).
+// thread_1793051171608: the olive open-knit tunic got neither line. Under a top that base is a top or a
+// dress (owner ruling 2026-10-25); thread_1793086091146 said "a top" only, and none of 22 dresses could
+// be shortlisted under the sheer tunic. Under a dress it is a top.
+export const EXPLORE_DEPENDENT_ANCHOR_LINE = `The anchor cannot be worn alone against skin, so every outfit also has a top or a dress under it that can be. ${EXPLORE_LAYER_BASE_SCOPE}`
+export const EXPLORE_DEPENDENT_DRESS_ANCHOR_LINE = `The anchor cannot be worn alone against skin, so every outfit also has a top under it that can be. ${EXPLORE_LAYER_BASE_SCOPE}`
 export function exploreLayerAnchorLine(piece) {
-  return wardrobeCategoryGroup(piece) === 'outerwear' ? EXPLORE_LAYER_ANCHOR_LINE : EXPLORE_DEPENDENT_ANCHOR_LINE
+  const group = wardrobeCategoryGroup(piece)
+  if (group === 'outerwear') return EXPLORE_LAYER_ANCHOR_LINE
+  return group === 'dress' ? EXPLORE_DEPENDENT_DRESS_ANCHOR_LINE : EXPLORE_DEPENDENT_ANCHOR_LINE
 }
 
 export const EXPRESSIVE_HIERARCHY_RULES = `Visual hierarchy and expressiveness:
@@ -1102,10 +1112,10 @@ would score closer to Anchor A. Judge fabric quality and finish, not texture cat
   "pattern_complexity": "solid|quiet|medium|loud",
   "reads_as": "short phrase: the dominant visual impression",
   "hem_finish": "Valid values depend on category — top -> straight_loose (standard flat, horizontal straight hem)|banded_elastic|ribbed|curved|shirttail (curved, longer at the sides/back than front)|high_low|asymmetric|other; bottom -> straight_loose|cuffed|raw|tapered|banded_elastic|slit|asymmetric|other. This is a construction/shape judgment only — do not use it to decide tuckability; see tuck_behavior for that, which is judged independently.",
-  "neckline": "V|scoop|crew|boat|mock|turtleneck|cowl|off-shoulder|square|wrap|halter|strapless|one-shoulder|collared|shawl|other|unknown",
+  "neckline": "V|scoop|crew|boat|mock|turtleneck|cowl|off-shoulder|square|wrap|halter|strapless|one-shoulder|collared|shawl|other|unknown — the FRONT neckline. ${SEE_THROUGH_NECKLINE_INSTRUCTION}",
   "sleeve_length": "sleeveless|cap|short|elbow|3/4|long|extra_long|unknown",
   "sleeve_shape": "${SLEEVE_SHAPE_VALUES.join('|')}|null (omit for sleeveless) — a functional sleeve-VOLUME classification, not a fashion-name label; see the Sleeve Shape guidance below for what each value means.",
-  "length_hits_at": "Valid values depend on category (and, for bottom, bottom_subtype) — pick from the matching list only: top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|mid_calf|ankle|full_length|floor_length|unknown; dress, or bottom when bottom_subtype is skirt -> mini|above_knee|knee|below_knee|midi|ankle|maxi|unknown; bottom when bottom_subtype is pants/culottes/overalls/other -> shorts|knee|mid_calf|ankle|full_length|floor_length|unknown; shoes -> open|below_ankle|ankle|high_top|mid_calf|knee|over_knee|unknown (open = fully open/minimal upper, e.g. a sandal or slide — not a coverage judgment, that lives in a separate field). Not applicable to accessory.",
+  "length_hits_at": "Valid values depend on category (and, for bottom, bottom_subtype) — pick from the matching list only: top -> cropped|waist|high_hip|hip|low_hip|mid_thigh|above_knee|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|above_knee|knee|mid_calf|ankle|full_length|floor_length|unknown; dress, or bottom when bottom_subtype is skirt -> mini|above_knee|knee|below_knee|midi|ankle|maxi|unknown; bottom when bottom_subtype is pants/culottes/overalls/other -> shorts|knee|mid_calf|ankle|full_length|floor_length|unknown; shoes -> open|below_ankle|ankle|high_top|mid_calf|knee|over_knee|unknown (open = fully open/minimal upper, e.g. a sandal or slide — not a coverage judgment, that lives in a separate field). ${UPPER_THIGH_LENGTH_DEFINITIONS} Not applicable to accessory.",
   "silhouette": "Valid values depend on category (and, for bottom, bottom_subtype) — not applicable to shoes, use shoe_type/toe_shape instead: top -> fitted|slim|straight|relaxed|boxy|drop-shoulder|oversized|peplum|wrap; dress -> fitted|sheath|shift|A-line|wrap|slip|column|fit-and-flare|empire|relaxed; outerwear -> fitted|straight|boxy|relaxed|oversized|structured; bottom when bottom_subtype is skirt -> a_line|pencil|full|slip|straight|pleated|wrap; bottom when bottom_subtype is pants/culottes/overalls/other -> straight_leg|wide_leg|bootcut|flare|tapered|barrel|relaxed.",
   "shoe_type": "mule|loafer|boot|sandal|pump|flat|sneaker|slip_on|other|unknown|null (shoes only; null/omit for non-shoes). Never use 'heel' here — heel_height already represents heel height. 'slip_on' is for a shoe with no closure (no laces, buckle, or zip) that is not itself a loafer, mule, or flat shape — e.g. a slip-on sneaker.",
   "toe_shape": "pointed|almond|round|square|open_toe|other|unknown|null (shoes only; null/omit for non-shoes)",

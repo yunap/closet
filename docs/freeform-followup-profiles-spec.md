@@ -117,6 +117,19 @@ wear-mechanics result. No identity or image enters the router. Both compact answ
 fiber composition. The absence of a stored viscose/modal fact is not recast as model disobedience;
 the defect was claiming that photographs could fill it.
 
+**Follow-up subject amendment — 2026-10-28.** `thread_1793233502022` asked three times about one
+pair of trousers (996914, merino knit). The second message called them "pants" and the referent
+resolver chose a different garment, "black straight-leg knit pants" (cotton ponte), which the
+exchange had never named; the answer described that fabric as theirs. The third message named
+nothing, so it fell back to all 13 plan garments and the photo budget ran out before the trousers;
+the answer then denied having a photo. When the question names no garment, the subject is now, in
+order: the router's `subject` if it is an exact active name, the garment the recent exchange names
+(pants/trousers/slacks treated as one word; a full name outranks a near one), then the previous
+garment answer's subject, which is stored as `garment_fact_subject` and applies only to the user's
+next message. A resolved subject narrows the records and photographs to that garment. A question
+naming two garments is a comparison and is never narrowed. The answer prompt now treats both its
+own earlier replies and the wearer's description as claims to weigh against the record and photos.
+
 ## Slice 5 — lightweight general styling conversation
 
 Examples:

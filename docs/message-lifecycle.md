@@ -247,6 +247,11 @@ Two guards sit on the compact exits:
   deleted or resting subject falls through to the full stylist rather than letting the compact model
   fill the gap.
 
+For `garment_fact`, a question that names no garment gets its subject from the router's exact
+`subject`, then the recent exchange, then the previous garment answer (`garment_fact_subject`);
+see [freeform-followup-profiles-spec.md](freeform-followup-profiles-spec.md), follow-up subject
+amendment.
+
 `isSavedPhotoWearMechanicsQuestion` can override the router's choice to `garment_fact` when the
 question is about how a garment sits and saved photos exist for the subject.
 

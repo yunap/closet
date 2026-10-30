@@ -7,7 +7,7 @@ import OpenAI from 'openai'
 import { GoogleGenAI } from '@google/genai'
 import { prompts } from './promptRuntime.js'
 import { STYLIST_TOOLS, executeTool, bumpFreeformDiagnostic, verifiedPieceIdSets, recordFreeformToolIteration, nextFreeformCallIndex } from './tools.js'
-import { updateAiTelemetryContext, logAiCall } from '../lib/aiCallTelemetry.js'
+import { updateAiTelemetryContext, logAiCall, withAiTelemetrySubflow } from '../lib/aiCallTelemetry.js'
 import { captureNormalizedProviderInput, captureWireProviderInput, captureProviderOutput, newProviderCaptureCallId } from '../lib/providerInputCapture.js'
 import { unexplainedLayeredTops, exposesComposerDeliberation, exposesRawStructuredPayload } from './rules.js'
 import { wardrobeCategoryGroup } from './attributes.js'
@@ -603,6 +603,18 @@ const STYLIST_MODEL_OVERRIDE = process.env.STYLIST_MODEL_OVERRIDE || 'gemini-3.5
 export const stylistProviderOverride = STYLIST_PROVIDER_OVERRIDE
   ? { provider: STYLIST_PROVIDER_OVERRIDE, model: STYLIST_MODEL_OVERRIDE }
   : null
+
+// The execution router's own model (owner, 2026-10-28). On Flash-Lite at low thinking
+// it skipped reasoning and sent requests for outfits to the words path; replays of the captured router requests gave
+// 3.7 Flash at low thinking cards 4 of 4 (≈ $0.0024 a call). It applies when the stylist runs on Gemini; set
+// ROUTER_MODEL_OVERRIDE to another Gemini model, or to an empty string to use the stylist's own model.
+export const ROUTER_MODEL_OVERRIDE = process.env.ROUTER_MODEL_OVERRIDE ?? 'gemini-3.7-flash'
+export const ROUTER_THINKING_LEVEL = process.env.ROUTER_THINKING_LEVEL || 'low'
+export function routerProviderOverride(stylistOverride = null) {
+  return stylistOverride?.provider === 'gemini' && ROUTER_MODEL_OVERRIDE
+    ? { provider: 'gemini', model: ROUTER_MODEL_OVERRIDE }
+    : stylistOverride
+}
 
 // resolveGeminiKey (real per-user BYOK resolution, plan Stage D) is imported from lib/apiKeys.js
 // above — it used to be a standalone `process.env.GEMINI_API_KEY` read here, kept only for the
@@ -1279,7 +1291,12 @@ function wireCaptured(meta, request) {
   return request
 }
 
-export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null, providerOverride = null, subflow = 'ask_stylist_with_usage', signal = null }) {
+// A caller that names its step (args.subflow) is logged under it; otherwise the turn's own step applies.
+export async function askStylistWithUsage(args = {}) {
+  return withAiTelemetrySubflow(args.subflow, () => askStylistWithUsageCall(args))
+}
+
+async function askStylistWithUsageCall({ system = prompts.STYLIST_SYSTEM, messages, maxTokens = 1200, model = null, providerOverride = null, subflow = 'ask_stylist_with_usage', signal = null }) {
   const plainSystem = systemToPlainText(system)
   const testResponse = takeTestAiResponse({ system: plainSystem, messages, maxTokens })
   if (testResponse != null) {
@@ -1346,7 +1363,14 @@ export async function askStylistWithUsage({ system = prompts.STYLIST_SYSTEM, mes
 // One provider call with a provider-enforced object schema. Use this for small deterministic
 // composition payloads where free-text narration is not a valid response and a corrective retry
 // would be wasteful. Anthropic is forced through one named tool; OpenAI uses strict json_schema.
-export async function askStylistStructuredWithUsage({
+// A call is logged, and captured, under the step it names: its subflow, else its schema name (trip_plan_composition,
+// capsule_roster_selection, …); with neither, the turn's own step applies.
+export async function askStylistStructuredWithUsage(args = {}) {
+  const step = args.subflow || (args.name && args.name !== 'structured_response' ? args.name : undefined)
+  return withAiTelemetrySubflow(step, () => askStylistStructuredWithUsageCall(step ? { ...args, subflow: step } : args))
+}
+
+async function askStylistStructuredWithUsageCall({
   system = prompts.STYLIST_SYSTEM,
   messages,
   schema,
@@ -1568,8 +1592,10 @@ export async function routeFreeformExecutionProfile({ question = '', currentDate
     // catch in routes/ai.js falls back to full_stylist anyway. 350 was sized for Anthropic's
     // forced tool_choice path, which never spends budget on prose; Gemini's plain-JSON path needs
     // real headroom on top of the ~150-token ceiling this schema's own output can reach.
-    maxTokens: 900,
-    providerOverride
+    // 2026-10-28: room for the router model's thinking at ROUTER_THINKING_LEVEL (the router runs on its own model).
+    maxTokens: 2000,
+    thinkingLevel: ROUTER_THINKING_LEVEL,
+    providerOverride: routerProviderOverride(providerOverride)
   })
   // thread_1788985997110: the router labeled a five-hour Santa Fe "outing" as walking even
   // though its own contract says place/outdoor duration do not establish activity. Activity
@@ -2342,6 +2368,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
 // the whole prefix matched), so providerToolLoopCacheReadTokens stays a combined system+message
 // total rather than being split further. See docs/deferred-conversational-cache-spec.md.
 export function recordToolLoopUsage(toolContext = {}, usage = {}, { cacheSite = null } = {}) {
+  usage = usage || {} // a test-mode reply carries no usage (null)
   bumpFreeformDiagnostic(toolContext, 'providerIterations')
   bumpFreeformDiagnostic(toolContext, 'providerInputTokens', Number(usage.inputTokens) || 0)
   bumpFreeformDiagnostic(toolContext, 'providerOutputTokens', Number(usage.outputTokens) || 0)

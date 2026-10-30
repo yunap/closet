@@ -77,6 +77,26 @@ Engineer notes:
   where it sat. Cost is estimated from OpenAI's reported usage at the published
   flare rates (`estimateOpenAIImageCostUsd`). See engine-behaviour-map.md,
   "The producers". The sheet stays on GPT-4o.
+  **Amended 2026-10-26 (length tag owns hem position):** owner ruling — a length
+  tag alone must be enough for a correct render (thread_1793066674849). Photo
+  captions now hand hem position to the recorded length when a top or outerwear
+  piece has one (`garmentReferencePlan`), and the construction line states the
+  length as a visible body cue (`styling-engine/lengthCues.js`). *Tried and removed
+  the same day:* a cheap vision check of each render's hem plus one targeted
+  "lengthen this garment" edit. The check read the owner's own worn photos (the
+  true length) as short on both Gemini Flash-Lite tiers, so it could not decide
+  when to edit; the edit itself moved the hem only about an inch.
+  **Same day, from a full capture of the request:** (1) on a see-through piece
+  (`semi_sheer`/`sheer`/`open_weave`, `pieceIsSeeThrough`) the construction line
+  states the recorded neckline as the *front* neckline instead of "exactly as in
+  the reference photo" — a scoop-neck tunic's V back showed through its front in
+  the hanger photo and every render drew a V-neck; the tagger is told the same
+  (`SEE_THROUGH_NECKLINE_INSTRUCTION`). (2) The fidelity checklist takes sleeves
+  from `sleeve_length` and skirt-vs-pants from `bottom_subtype` when recorded,
+  not from words in name/notes ("short-sleeve" in a note overrode an elbow tag;
+  "knee" in a pants note produced "must remain the listed skirt shape"). (3) Each
+  render prompt states that a recorded fact beats a disagreeing note
+  (`RENDER_NOTES_RULE`).
 - **Sheet render** (`createWholeWardrobeComparisonSheetImage`, `core.js:2289`):
   takes 2–5 normalized outfits (each ≥ 2 saved pieces, deduped, capped at 6
   pieces; ≤ 30 distinct pieces total), and lays them out as one preview sheet —
