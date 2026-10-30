@@ -5256,7 +5256,7 @@ export async function buildStylistConversationPayload(body) {
     `Current turn mode: ${conversationMode}.`,
     `Turn directive: ${conversationDirective}`,
     'FIT CONCERNS: when the user states a fit problem (baggy, loose waist, clingy, riding up), address it head-on in prose FIRST — belting, tucking, proportion balancing, silhouette pairing — then compose cards that implement the advice. Do not ignore the stated concern and just assemble an outfit.',
-    'INDOOR TRANSIT WEATHER: indoor describes a climate-controlled destination, not a weather escape hatch. In a multi-outfit plan, the outside forecast still governs the base outfit and transit. During extreme heat, build a breathable hot-weather base and use only an optional light layer for AC; never solve AC with a heavy main garment. Indoor suppresses direct-sun and outdoor-activity styling, not temperature itself.',
+    'INDOOR TRANSIT WEATHER: indoor describes a climate-controlled destination, not a weather escape hatch: the time spent getting there and back is outside, and the outside forecast is for that time. During extreme heat, build a breathable hot-weather base and use only an optional light layer for AC; never solve AC with a heavy main garment. Indoor suppresses direct-sun and outdoor-activity styling, not temperature itself.',
     freeformToolRoutingInstruction(conversationMode),
     // weatherFit removed (docs/search-propose-signal-inventory.md) — this instructed obedience to a
     // field that no longer exists. search_wardrobe results now carry a `thermal` fact line; judge

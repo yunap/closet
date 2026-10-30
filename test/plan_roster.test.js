@@ -181,7 +181,7 @@ test('one roster prompt for every plan: the trip\'s, with only its packing parag
   assert.doesNotMatch(system, /suitcase|5-4-3-2-1|travels well/i)
   assert.match(tripRosterSelectionSystemPrompt(), /suitcase/, 'the trip prompt keeps its packing contract')
   // The trip's lessons that are not about packing reach every plan (owner, 2026-10-28).
-  assert.match(system, /- Where the warmth comes from: a coat comes off indoors/)
+  assert.match(system, /- Where the warmth comes from: read the sleeves/)
   assert.match(system, /- What layers are for:/)
   assert.match(system, /INDEPENDENT WEARABILITY:/)
   assert.match(system, /FOOTWEAR THAT SUITS EACH JOB:/)

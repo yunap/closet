@@ -79,6 +79,12 @@ captures in `scratch/garment_read_runs/2026-10-30/guests_step2_37flash*`.
 - The reply named neither assigned coat and told her to "bring a light jacket" for the outing whose card carries the
   fleece coat; it again described the mornings as "making coffee, chatting over breakfast" (inferred, unflagged).
 
+**Owner rating (2026-10-30):** the morning looks are "okish"; the second (grey cowl top, grey straight-leg knit
+trousers) is better than the first (mauve knit top, sage wide-leg lounge pants) in how presentable, put together and
+interesting it is. Both sat in a slot whose stated register floor was `everyday`, and each contains one piece tagged
+`lounge` (the sage pants in the first, the cowl top in the second), so the tags alone do not separate them. The
+shortlisted striped wool cardigan was not used in either.
+
 Reading for steps 3–5: the honest temperature alone removed the cashmere from the mornings, so steps 3–4 are no
 longer driven by this case; what remains is whether the looks are interesting (owner's rating), the missing `dates`,
 and the reply not matching its cards.

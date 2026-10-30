@@ -5420,16 +5420,6 @@ test('workbench instructions carry applicable owner guidance without mislabellin
   assert.match(withRules.instructions, /"No flats for me\."/)
 })
 
-test('workbench instructions carry the professional-slot styling line unconditionally (spec 26 Part 6)', async () => {
-  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
-  const slots = normalizePlanSlots([{ label: 'City Day', occasion: 'city', activity: 'none', count: 1 }])
-  const workbench = await buildPlanSlotWorkbench(slots, { allPieces, question: 'city day' })
-  // 2026-09-15: the workbench carried the second copy of the retired fixed print count.
-  assert.match(workbench.instructions, /a bold print is a deliberate accent judged against the rest of the look, not capped at a fixed count/)
-  assert.doesNotMatch(workbench.instructions, /at most ONE bold print/i)
-  assert.match(workbench.instructions, /no statement wraps at work/)
-})
-
 test('model plan workbench exposes authoritative garment construction without special-case rules', async () => {
   const allPieces = [
     {
@@ -10206,4 +10196,19 @@ test('a trip look rejected only for missing shoes is sent back once and recovere
       assert.equal(toolContext.generatedOutfits.length, 1, 'a completion that reaches outside the candidates is not accepted; the look stays lost')
     }
   }
+})
+
+// Plan prompt audit 2026-10-30, item 10: a coordinated plan's count is a ceiling (owner, 2026-10-27), and its
+// composer may decline with slot_gaps — the slot requirement still said "Submit exactly".
+test('a coordinated plan slot asks for at most its count; other plans keep exactly', async () => {
+  db.prepare('DELETE FROM pieces').run()
+  insertPiece({ category: 'top', name: 'ceiling top', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'bottom', name: 'ceiling bottom', occasions: ['casual'], formality: 'everyday' })
+  insertPiece({ category: 'shoes', name: 'ceiling shoes', occasions: ['casual'], formality: 'everyday', heel_height: 'flat', walk_support: 'high' })
+  const allPieces = db.prepare("SELECT * FROM pieces WHERE status = 'active'").all().map(parsePiece)
+  const slots = normalizePlanSlots([{ label: 'Mornings', occasion: 'casual', activity: 'none', count: 2 }])
+  const plan = await buildPlanSlotWorkbench(slots, { allPieces, question: 'mornings with guests', planKind: 'coordinated_plan' })
+  assert.match(plan.slots[0].submission_requirements[0], /^Submit at most \d+ outfits? for this slot\.$/)
+  const other = await buildPlanSlotWorkbench(slots, { allPieces, question: 'mornings with guests' })
+  assert.match(other.slots[0].submission_requirements[0], /^Submit exactly \d+ outfits? for this slot\.$/)
 })

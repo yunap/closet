@@ -5212,12 +5212,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     acceptedSynthesisText
       ? `OWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for this roster and these use cases; respect each stated boundary: ${acceptedSynthesisText}`
       : '',
-    // Part 6 (spec 26): the spec-25 professional-context competence bullet
-    // is live in STYLIST_SYSTEM but demonstrably weak from tail position (the
-    // 07-16 office run: shawl on Tuesday, double botanical on Wednesday).
-    // Same delivery lesson as owner rules above — repeat it here, ~40k
-    // tokens closer to composition-time attention.
-    'For professional/work slots (office, client, presentation): quiet, structured pieces lead; a bold print is a deliberate accent judged against the rest of the look, not capped at a fixed count; accessory register matches the outfit; no statement wraps at work. Social slots (dinner, gallery, weekend) are where statement styling belongs.'
+    // Spec 26 Part 6 repeated spec 25's professional-context default here (the owner's 07-16 office run: shawl on
+    // Tuesday, double botanical on Wednesday). Removed from both prompts 2026-10-30 (plan prompt audit item 11): a
+    // personal preference shipped as everyone's default, against the 2026-08-07 per-user ruling.
   ].filter(Boolean).join(' ')
   let pendingSlots = slots.map((slot, index) => ({
     ...slot,
@@ -5259,7 +5256,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const allowed = (pendingSlot?.allowedPieces || []).filter(Boolean)
     const target = Math.max(0, Number(workbenchSlot.target_outfits) || 0)
     const requirements = [
-      `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
+      // A coordinated plan's count is a ceiling (owner, 2026-10-27; spec §14): its composer may return fewer, with a
+      // slot_gaps reason. This line still said "exactly" (audit 2026-10-30, item 10). Trips and capsules keep it.
+      planKind === 'coordinated_plan'
+        ? `Submit at most ${target} outfit${target === 1 ? '' : 's'} for this slot.`
+        : `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
       categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowMiddleLayer: planKind === 'trip' })
     ]
     // Only project the sleeve-layering guidance (the neutral statement; the geometry verdict is log-only)

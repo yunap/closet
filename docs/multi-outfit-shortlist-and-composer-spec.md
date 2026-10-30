@@ -346,7 +346,7 @@ Roster prompt, reworded for other plans:
 - the intro;
 - the request paragraph (THE REQUEST, the person's own words, replaces HOW THE TRAVELLER PACKS);
 - the outfit count as a ceiling;
-- the "Where the warmth comes from" and "What layers are for" bullets, under WHAT A DAY ASKS OF A GARMENT;
+- the "Where the warmth comes from" and "What layers are for" bullets, under WHAT A DAY ASKS OF A GARMENT (2026-10-30: the "a coat comes off indoors" sentence removed from the plan version, engine map item 90);
 - needs-base;
 - shoes;
 - LAYERING / OUTERWEAR;
