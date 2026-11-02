@@ -2083,6 +2083,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
   let composerError = null
   let composerErrorIsTruncation = false
   let composerErrorIsTimeout = false
+  let composerErrorIsBilling = false
   let composerUsage = null
   const composerMaxTokens = structuredResponseMaxTokens(Math.max(4, outfitCount.maxOutfits))
   try {
@@ -2107,6 +2108,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
     composerError = err.message
     composerErrorIsTruncation = Boolean(err.isTruncation)
     composerErrorIsTimeout = Boolean(err.isTimeout)
+    composerErrorIsBilling = Boolean(err.isBilling)
   }
   let nameCheck = null
   if (!composerError) {
@@ -2236,6 +2238,7 @@ async function composeSelectedPieceVisualWardrobeOutfits({
       composerError,
       composerErrorIsTruncation,
       composerErrorIsTimeout,
+      composerErrorIsBilling,
       composerMaxTokens,
       composerUsage: composerUsage ? {
         ...composerUsage,
@@ -2890,6 +2893,7 @@ export async function generateOutfitsForPieceInternal({
       aiReturnedCount: visualCriticDebug?.aiReturnedCount ?? structuredOutfits.length,
       composerError: visualCriticDebug?.composerError ?? null,
       composerErrorIsTimeout: visualCriticDebug?.composerErrorIsTimeout ?? false,
+      composerErrorIsBilling: visualCriticDebug?.composerErrorIsBilling ?? false,
     }
   }
 }

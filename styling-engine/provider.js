@@ -735,6 +735,19 @@ function geminiStopReasonFromStatus(status) {
   return (status === 'incomplete' || status === 'budget_exceeded') ? 'MAX_TOKENS' : null
 }
 
+// HTTP 402 is a refusal on billing grounds, not a styling failure. It has come and gone on the
+// same key within minutes, so it is not always permanent. Gemini's 402 can arrive with an empty body, which the SDK reports as "402 API error
+// occurred: {httpMeta...}" (thread_1793604578459, 2026-11-01). That text is replaced; a body that
+// did say something is kept.
+export function markGeminiBillingFailure(err) {
+  if (err?.status !== 402) return err
+  err.isBilling = true
+  if (/API error occurred/.test(err.message)) {
+    err.message = 'Gemini refused the request: payment required (HTTP 402, no detail in the response). Check billing for this API key.'
+  }
+  return err
+}
+
 // 'failed'/'cancelled' mean the platform gave up on the interaction — any steps/output_text
 // present are not a real answer and must not be read as one. Without this check they fell
 // through to the normal success path (logAiCall(success: true) unconditionally) and could be
@@ -1324,6 +1337,7 @@ async function askStylistWithUsageCall({ system = prompts.STYLIST_SYSTEM, messag
       }), { signal })
       assertGeminiInteractionUsable(interaction, { model: target.model })
     } catch (err) {
+      markGeminiBillingFailure(err)
       await logAiCall({ provider: 'gemini', model: target.model, callKind: 'text', success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false })
       throw err
     }
@@ -1432,6 +1446,7 @@ async function askStylistStructuredWithUsageCall({
       }), { signal })
       assertGeminiInteractionUsable(interaction, { model: target.model })
     } catch (err) {
+      markGeminiBillingFailure(err)
       await logAiCall({ provider: 'gemini', model: target.model, callKind: 'structured', success: false, errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false })
       throw err
     }
@@ -2029,6 +2044,7 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
     captureProviderOutput({ provider: 'gemini', model, subflow: 'stylist_tool_loop', iterationIndex, callId: captureCallId, stopReason: interaction?.status ?? null, output: { status: interaction?.status ?? null, steps: interaction?.steps ?? null, output_text: interaction?.output_text ?? null } })
     assertGeminiInteractionUsable(interaction, { model })
   } catch (err) {
+    markGeminiBillingFailure(err)
     await logAiCall({
       provider: 'gemini', model, callKind, success: false,
       errorMessage: err?.message || String(err), latencyMs: Date.now() - startedAt, isMock: false,
