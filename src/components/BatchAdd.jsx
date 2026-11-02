@@ -52,7 +52,7 @@ const REVIEW_CONSTRUCTION_CONFIG = {
     showNeckline: true,
     showSleeve: true,
     silhouetteOptions: ['fitted','slim','straight','relaxed','boxy','drop-shoulder','oversized','peplum','wrap'],
-    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','tunic','unknown'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','above_knee','unknown'],
     hemOptions: ['straight_loose', 'banded_elastic', 'ribbed', 'curved', 'shirttail', 'high_low', 'asymmetric', 'other'],
   },
   bottom: {
@@ -70,7 +70,7 @@ const REVIEW_CONSTRUCTION_CONFIG = {
     showNeckline: true,
     showSleeve: true,
     silhouetteOptions: ['fitted','straight','boxy','relaxed','oversized','structured'],
-    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','knee','mid_calf','ankle','full_length','floor_length','unknown'],
+    lengthOptions: ['cropped','waist','high_hip','hip','low_hip','mid_thigh','above_knee','knee','mid_calf','ankle','full_length','floor_length','unknown'],
   },
   shoes: {
     // No silhouette — shoe_type/toe_shape replace it.

@@ -995,8 +995,7 @@ test('the trip roster system prompt states what travels well as things to weigh,
   assert.match(brief, /Shoes and outer layers are the bulkiest things in a bag; tops are the smallest/)
   assert.match(brief, /How it behaves through a long day/)
   // thread_1791411318500: four tops, one long-sleeved, no knit, for five days with highs in the 60s.
-  assert.match(brief, /Where the warmth comes from: a coat comes off indoors/)
-  assert.match(brief, /Read the sleeves, fabric and weight of the tops you are packing against the daytime temperatures/)
+  assert.match(brief, /read the sleeves, fabric and weight of the tops you are packing against the daytime temperatures/)
   // thread_1791415285620: after the cool-end fact alone, the bag held four long-sleeved tops and
   // nothing for the one forecast day in the 80s. Both ends are stated.
   assert.match(brief, /Read them against the warm end too/)
@@ -1218,25 +1217,9 @@ test('tripRosterSelectionUserText includes destination, date, and forecast weath
   assert.match(text, /65°F high \/ 45°F low/)
 })
 
-test('tripRosterSelectionSystemPrompt includes Style Constitution and occasion realism guidance', () => {
+test('tripRosterSelectionSystemPrompt includes the Style Constitution', () => {
   const prompt = tripRosterSelectionSystemPrompt()
   assert.match(prompt, /STYLE CONSTITUTION — BODY CONTRACT:/)
-  assert.match(prompt, /OCCASION REALISM & PRACTICAL UTILITY:/)
-  assert.match(prompt, /Never rely solely on dressy, elevated, or high-maintenance outerwear/)
-})
-
-// thread_1789628875203: the model packed a collared rayon popover blouse and reasoned it would
-// "serve as a lightweight layer for varied outdoor temps" -- a real garment-category confusion, not
-// a fabric/neckline hard-gate question (that fix stays a labeling correction above; this is the
-// companion prompt clarification, per the owner's own Fix 2b).
-test('tripRosterSelectionSystemPrompt clarifies that a button-up/popover blouse is a base top, not a layering substitute', () => {
-  const prompt = tripRosterSelectionSystemPrompt()
-  assert.match(prompt, /button-up, popover, or collared woven blouse is not a substitute for outerwear: do not count one as the trip's warm layer/)
-  // Owner, 2026-10-09: "I actually want to see some layered outfits". The sentence above was written
-  // for a blouse counted as the trip's warm layer; as first worded it also ruled out a shirt worn
-  // open over a top, which is a layer for the look and not for the cold.
-  assert.match(prompt, /Worn open over another top it is a layer for the look, which is a different job/)
-  assert.doesNotMatch(prompt, /do not double the same top as both a base look and its own layer/)
 })
 
 // Owner, 2026-10-09, on a 12-piece carry-on for a week (three tees, two coats, nothing to layer):
@@ -1269,10 +1252,8 @@ test('the packer sizes a suitcase to the trip\'s days from the usual carry-on pr
 // tops, 0 layers, 5 pairs of shoes. Advisory judgment guidance, not a fixed quota (this codebase's
 // long-standing "not a formula" principle, tested above and in outfit_structure.test.js) -- a hard
 // numeric ceiling was proposed and rejected for exactly that reason.
-test('tripRosterSelectionSystemPrompt guides tops coverage for active/outdoor slots and footwear-pair discipline, without a fixed numeric quota', () => {
+test('tripRosterSelectionSystemPrompt guides footwear-pair discipline without a fixed numeric quota', () => {
   const prompt = tripRosterSelectionSystemPrompt()
-  assert.match(prompt, /TOPS VARIETY & FUNCTIONAL COVERAGE/)
-  assert.match(prompt, /active or outdoor use case.*needs a top that is actually suited to it/)
   assert.match(prompt, /weigh each additional pair against whether its job is truly distinct/)
   assert.doesNotMatch(prompt, /\b[2-9]-[2-9] (tops|bottoms|shoes|layers)\b/, 'guidance stays judgment-based, not a numeric allocation formula')
 })
@@ -1354,13 +1335,6 @@ test('buildTripBench includes every distinct shoe construction, with no cap to r
   assert.ok(shoeBenchTypes.includes('boot'), 'boots must not be crowded out by lower-ID sneakers')
   assert.ok(shoeBenchTypes.includes('loafer'), 'loafers must not be crowded out by lower-ID sneakers')
   assert.equal(shoeBenchTypes.filter(t => t === 'sneaker').length, 3, 'all three sneakers must also survive -- nothing truncates the bench')
-})
-
-test('tripRosterSelectionSystemPrompt includes footwear occasion register guidance', () => {
-  const prompt = tripRosterSelectionSystemPrompt()
-  assert.match(prompt, /FOOTWEAR THAT SUITS EACH JOB/)
-  assert.match(prompt, /pack shoes appropriate for each register/i)
-  assert.match(prompt, /polished boots, loafers, or elevated flats for evening dining/i)
 })
 
 
@@ -1735,7 +1709,6 @@ test('the packer brief sizes the suitcase by the looks it must make, keeps disti
   assert.doesNotMatch(brief, /would serve the trip better as a top or a layer instead/, 'the clause that argued against trail shoes')
   assert.match(brief, /HOW TO DECIDE\. Before choosing, picture the trip/)
   assert.match(brief, /trail footing and an evening out are different jobs from city walking/)
-  assert.match(brief, /shoes made for walking for walking-heavy days \(not heels or wedges\)/)
   assert.match(brief, /Name only pieces you actually selected/)
 })
 

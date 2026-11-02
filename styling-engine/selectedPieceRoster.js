@@ -86,19 +86,25 @@ const CATALOG_CONVENTIONS = SPARSE_CATALOG_CONVENTIONS.split(' view_pieces truth
 // that worked under it and five cards to fill. The shortlist now judges that pair fit first too.
 // In Explore it comes after the Explore block, so "not for the expected ones" does not override it,
 // and it carries the Explore base scope.
-const LAYER_PAIR_FIT_FIRST = 'Wearability comes first for that pair: from the anchor\'s photograph and recorded construction and each candidate\'s recorded construction, ask whether the candidate can sit inside the anchor at the sleeves, the armholes and the body, and how it will look where the anchor leaves it showing. Shortlist only candidates that pass; colour, texture and the outfit\'s idea are judged after that.'
+// 2026-10-27 (thread_1793090407904, outside review): "shortlist only candidates that pass" asked this step to
+// verify a fit it cannot see, since it gets the anchor's photograph and only the candidates' recorded facts. It also
+// contradicted "a garment whose facts leave you unsure is worth seeing". This step now leaves out only the
+// clearly incompatible and brings the plausible; the composer decides fit on both photographs (its layering_check).
+const LAYER_PAIR_FIT_FIRST = 'Wearability comes first for that pair, before colour, texture or the outfit\'s idea. You see the anchor\'s photograph but only each candidate\'s recorded construction, so you cannot settle fit here: leave out a candidate whose recorded construction clearly cannot sit inside the anchor, or clearly adds bulk under it, at the sleeves, the armholes or the body, and bring every plausible one. The next step decides fit on the photographs of both, including how the candidate will look where the anchor leaves it showing.'
 export const ROSTER_LAYER_ANCHOR_BLOCK = `The anchor is worn over a top or a dress, so every outfit needs one under it, and your shortlist must bring real alternatives for it. ${LAYER_PAIR_FIT_FIRST}`
 // A top or dress that cannot be worn alone (pieceWornOverABase). thread_1793051171608: the olive
-// open-knit tunic, filed top, got no layer rule and every card wore it alone.
-export const ROSTER_DEPENDENT_ANCHOR_BLOCK = `The anchor cannot be worn alone against skin, so every outfit needs a top under it that can be, and your shortlist must bring real alternatives for it. ${LAYER_PAIR_FIT_FIRST}`
+// open-knit tunic, filed top, got no layer rule and every card wore it alone. Under a top the base is a
+// top or a dress (owner ruling 2026-10-25; thread_1793086091146 shortlisted no dress); under a dress, a top.
+export const ROSTER_DEPENDENT_ANCHOR_BLOCK = `The anchor cannot be worn alone against skin, so every outfit needs a top or a dress under it that can be, and your shortlist must bring real alternatives for it. ${LAYER_PAIR_FIT_FIRST}`
+export const ROSTER_DEPENDENT_DRESS_ANCHOR_BLOCK = `The anchor cannot be worn alone against skin, so every outfit needs a top under it that can be, and your shortlist must bring real alternatives for it. ${LAYER_PAIR_FIT_FIRST}`
 
 // `layerAnchor` is the selected garment; the block is added only when it is worn over something.
 export function selectedPieceRosterSystemPrompt(max = SELECTED_PIECE_ROSTER_MAX, { explore = false, outfitCount = null, layerAnchor = null } = {}) {
   const anchorBlock = !layerAnchor || !pieceWornOverABase(layerAnchor) ? ''
-    : (wardrobeCategoryGroup(layerAnchor) === 'outerwear' ? ROSTER_LAYER_ANCHOR_BLOCK : ROSTER_DEPENDENT_ANCHOR_BLOCK)
+    : ({ outerwear: ROSTER_LAYER_ANCHOR_BLOCK, dress: ROSTER_DEPENDENT_DRESS_ANCHOR_BLOCK }[wardrobeCategoryGroup(layerAnchor)] || ROSTER_DEPENDENT_ANCHOR_BLOCK)
   const layerBlock = anchorBlock ? `\n\n${anchorBlock}${explore ? ` ${EXPLORE_LAYER_BASE_SCOPE}` : ''}` : ''
   const exploreBlock = explore
-    ? `\n\nYou are choosing for ${outfitCount || 'several'} outfits, each taking its own direction. ${EXPLORE_INSTRUCTION} Shortlist for those outfits, not for the expected ones.`
+    ? `\n\nYou are choosing for ${outfitCount ? `up to ${outfitCount}` : 'several'} outfits, each taking its own direction. ${EXPLORE_INSTRUCTION} Shortlist for those outfits, not for the expected ones.`
     : ''
   return `You are a personal stylist choosing which garments from a client's own wardrobe you want to look at before styling one garment of theirs, the anchor. You see a photograph of the anchor and a catalog of every garment in the wardrobe that is eligible for this request and can share an outfit with it. In the next step you will compose outfits around the anchor, looking at photographs of exactly the garments you choose here and of nothing else, so a garment you leave out cannot be used.
 
@@ -112,7 +118,7 @@ Answer with \`selection_note\` first: one or two sentences on the directions you
 export function selectedPieceRosterUserText({ anchorPiece, anchorTruth = '', requestLines = [], catalog }) {
   return [
     `Anchor: ID ${anchorPiece.id} ${anchorPiece.name}`,
-    anchorTruth ? `Anchor garment truth:\n${anchorTruth}` : '',
+    anchorTruth ? `Anchor garment facts:\n${anchorTruth}` : '',
     '',
     ...requestLines.filter(Boolean),
     '',

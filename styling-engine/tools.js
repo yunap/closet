@@ -1399,11 +1399,30 @@ export const STYLIST_TOOLS = [
         },
         slots: {
           type: "array",
-          description: "The plan's use-case slots, in wearing order. Estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination; one-off use cases usually get count 1. A capsule shows a representative rotation, never every possible combination: the total card cap is min(piece_budget, 12). Keep compact/travel capsules around 6-8 cards and larger seasonal capsules around 8-12 cards.",
+          // Owner, 2026-10-30 (plan prompt audit): a recurring at-home use case gets a few looks to choose from. This
+          // replaces the 2026-10-27 one-look-per-day sentence, which no run followed (three mornings got two looks, three times).
+          description: "The plan's use-case slots, in wearing order. How many looks a slot gets follows from plan_kind. A trip packs a suitcase: estimate recurring instances (e.g. 3 winery days) and set count so a few distinct looks rotate through recombination. A seasonal capsule shows a representative rotation, never every possible combination: the total card cap is min(piece_budget, 12); keep compact/travel capsules around 6-8 cards and larger seasonal capsules around 8-12 cards. A coordinated_plan packs nothing: a use case that recurs over several days gets a few distinct looks to choose from (count up to 3), not one per day. One-off use cases get count 1.",
           items: {
             type: "object",
             properties: {
               label: { type: "string", description: "Short user-facing slot label (e.g. 'Winery Days', 'Dinner Out', 'Coastal Day')." },
+              // Owner, 2026-10-27 (thread_1793165996825): "show me these outfits" after a written plan was recomposed
+              // from scratch into five different outfits. When the looks are already decided, they travel with the slot.
+              looks: {
+                type: "array",
+                maxItems: 3,
+                description: "Only when this slot's looks are already decided — for example the user asks to see outfits you described earlier in this conversation. One entry per look, with its exact piece IDs (search or view the pieces first if you do not have their IDs). When every slot carries its looks, they are validated and shown as given and nothing is recomposed. Leave out to have the looks composed.",
+                items: {
+                  type: "object",
+                  properties: {
+                    piece_ids: { type: "array", items: { type: "integer" } },
+                    title: { type: "string" },
+                    reason: { type: "string" },
+                    styling_instructions: { type: "string" },
+                  },
+                  required: ["piece_ids"],
+                },
+              },
               // Owner ruling 2026-07-30: evening is dressier than a restaurant. An
               // ordinary restaurant dinner reads smart casual, or maybe city. This
               // description previously said to map dinner and evening-restaurant use
@@ -1415,7 +1434,10 @@ export const STYLIST_TOOLS = [
               // want. Unratified scaffolding from PR #58, not a ruling.
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. An ordinary restaurant dinner or a night out that is not dressy is 'smart casual' (or 'city'); reserve 'evening' for genuinely dressier night-out use cases — a dinner date, wine bar, theater, cocktails." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
-              environment: { type: "string", enum: ["indoor", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries, museums) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. A museum or gallery visited while away on a trip is still 'indoor', and its activity is 'walking': the wearer walks the streets to it and between places, so the shoes are chosen for that. Omit when unsure; outdoor is the default." },
+              environment: { type: "string", enum: ["indoor", "home", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/home/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries, museums) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. Use 'home' when the slot is spent in the home the person is living or staying in; say in time_outside whether it includes any time outside. A museum or gallery visited while away on a trip is still 'indoor', and its activity is 'walking': the wearer walks the streets to it and between places, so the shoes are chosen for that. Omit when unsure; outdoor is the default." },
+              // 2026-10-30 (docs/plan-prompt-audit-2026-10-30.md, ruling 5): "cooking, then perhaps a neighborhood walk"
+              // could only be planned as outdoor walking. Required, so it is never silently assumed.
+              time_outside: { type: "string", enum: ["none", "brief", "to_and_from"], description: "How much of this use case is spent outside. 'none': not worn outside at all. 'brief': mostly indoors or at home, with short or occasional time outside, possibly at no set time (stepping out for coffee, a short walk with guests); the outdoor temperature is given for that time only, and the slot's activity is still its main use (a short walk within it does not make it 'walking'). 'to_and_from': getting to and from the place, as for a restaurant, an office or a museum. For an outdoor use case, which is worn outside throughout, use 'to_and_from'." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
               user_weather: USER_WEATHER_SCHEMA,
               weather_estimate: WEATHER_ESTIMATE_SCHEMA,
@@ -1459,14 +1481,14 @@ export const STYLIST_TOOLS = [
               best_for: { type: "string", description: "The specific use case this slot covers (defaults to the label)." },
               plan_note: { type: "string", description: "Optional one-sentence composer guidance for this slot." }
             },
-            required: ["label", "occasion", "activity"]
+            required: ["label", "occasion", "activity", "time_outside"]
           }
         },
         constraints: {
           type: "object",
           description: "Shared rules across the whole set. Set these from the objective: packing wants reuse maximized; an at-home work week wants looks diversified (repeats are the failure there, not the win).",
           properties: {
-            reuse: { type: "string", enum: ["maximize", "diversify", "none"], description: "The reuse dial. For a trip, follow how the traveller packs: 'maximize' when they pack light and re-wear (recombine a few pieces — fewer to carry), 'diversify' when they want something different most days. 'diversify' for at-home multi-day plans (fresh looks each day). 'none' or omit for no cross-slot preference." },
+            reuse: { type: "string", enum: ["maximize", "diversify", "none"], description: "The reuse dial. For a trip, follow how the traveller packs: 'maximize' when they pack light and re-wear (recombine a few pieces — fewer to carry), 'diversify' when they want something different most days. 'diversify' for at-home multi-day plans (fresh looks each day). 'none' or omit for no cross-slot preference. 'maximize' is packing light, so it applies only to a trip or a capsule and is ignored on any other plan." },
             no_repeat: { type: "array", items: { type: "string" }, description: "Category groups whose pieces must NOT repeat across the set — e.g. ['tops'] for a work week so no shirt is worn twice. Groups: tops, bottoms, dresses, outerwear (or 'layers'), shoes, accessories. Do not set this for a seasonal capsule or a trip: recombination is the point of a capsule, and a trip's looks are examples made from one suitcase, where a top is worn on more than one day. How different the days should be belongs in packing_approach. It is discarded for both unless the person explicitly asked for no repeats." },
             allow_repeat: { type: "array", items: { type: "string" }, description: "Category groups explicitly allowed to repeat even when diversifying — e.g. ['shoes'] since the same shoes across a week is normal. Overrides no_repeat for that group." },
             shared_anchor_ids: { type: "array", items: { type: "integer" }, description: "Wardrobe piece IDs to pin across the set — e.g. styling several outfits around one new piece. Anchors recur in every slot they fit and are exempt from no_repeat." },
@@ -1661,6 +1683,37 @@ function logAgentToolResult(name, result) {
   if (result?.failures) summary.failures = result.failures
   if (result?.error) summary.error = result.error
   console.log(`[Agent Tool Result] ${name}`, JSON.stringify(summary, null, 2))
+}
+
+// True when a location named on a plan call is the wearer's own home (the stored home location, or the request's own
+// location, which is the home fallback). Compared as normalized place identities, so "Walnut Creek, California" and
+// "walnut creek ca" match.
+export function isWearerHomeLocation(value = '', toolContext = {}) {
+  const named = normalizedWeatherLocationIdentity(value)
+  if (!named) return false
+  let stored = ''
+  try { stored = db.prepare("SELECT value FROM app_meta WHERE key = 'home_location'").get()?.value || '' } catch { stored = '' }
+  return [stored, toolContext?.homeLocation, toolContext?.location]
+    .map(entry => normalizedWeatherLocationIdentity(entry || ''))
+    .some(home => home && home === named)
+}
+
+// One-shot composition only (trip and coordinated plan): a cold_layer_decision on a slot where no layer is required or
+// permitted has exactly one correct form, so it is corrected before validation rather than costing the card. The
+// tool-loop submit_plan_outfits case keeps rejecting it, since it can resubmit (thread_1788584505940).
+function correctUnpermittedColdLayerDecisions(pendingPlan = {}, submittedOutfits = []) {
+  const slotById = new Map((pendingPlan.slots || []).map(slot => [slot.id, slot]))
+  const corrected = []
+  const outfits = (Array.isArray(submittedOutfits) ? submittedOutfits : []).map(outfit => {
+    const decision = outfit?.cold_layer_decision
+    if (!decision || typeof decision !== 'object') return outfit
+    if (decision.mode === 'not_required' && decision.assigned_layer_piece_id == null) return outfit
+    const slot = slotById.get(String(outfit?.slot_id || ''))
+    if (!slot || slotColdLayerRequired(slot) || slotColdLayerPermitted(slot)) return outfit
+    corrected.push({ slot_id: outfit.slot_id, title: outfit.title || '', original_cold_layer_decision: decision })
+    return { ...outfit, cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } }
+  })
+  return { outfits, corrected }
 }
 
 export async function executeTool(name, args, toolContext = {}) {
@@ -3734,10 +3787,21 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // fallbackLocation deliberately includes toolContext.location's home-location fallback for
         // weather resolution below, but that same fallback is always truthy, so passing it here made
         // resolvePlanKind read every ordinary at-home plan_outfit_set call as travel.
-        const explicitPlanLocation = looksLikeTimezoneIdentifier(String(args?.location || '').trim())
+        // The wearer's own home is not a destination either, even when the stylist names it on the call
+        // (2026-10-27, guests-at-home replay: plan_kind 'coordinated_plan' with location "Walnut Creek, CA",
+        // the home location, was forced to a trip and packed a suitcase for hosting at home).
+        const namedPlanLocation = String(args?.location || '').trim()
+        const explicitPlanLocation = looksLikeTimezoneIdentifier(namedPlanLocation) || isWearerHomeLocation(namedPlanLocation, toolContext)
           ? ''
-          : String(args?.location || '').trim()
+          : namedPlanLocation
         const planKind = resolvePlanKind(args?.plan_kind, toolContext.question || '', { location: explicitPlanLocation })
+        // Looks the stylist already decided (the slot's `looks`): honoured on a coordinated plan when every slot carries
+        // them — no shortlist and no composition; they go straight to submit_plan_outfits' validation below.
+        const argSlotsForLooks = Array.isArray(args?.slots) ? args.slots : []
+        const providedLooksBySlotLabel = planKind === 'coordinated_plan' && argSlotsForLooks.length && argSlotsForLooks.every(slot =>
+          Array.isArray(slot?.looks) && slot.looks.some(look => Array.isArray(look?.piece_ids) && look.piece_ids.length))
+          ? new Map(argSlotsForLooks.map(slot => [String(slot?.label || '').trim(), slot.looks.filter(look => Array.isArray(look?.piece_ids) && look.piece_ids.length)]))
+          : null
         // Directly observable so "did the trip roster architecture engage this turn" is a query,
         // not an inference from a live thread's persisted state after the fact (thread_1788484052964
         // took reconstructing this from scratch to even notice it never fired).
@@ -3868,6 +3932,9 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           // selection. Garment-scoped guidance is selected again inside the bounded compose pool.
           pieces: [],
         })
+        // The shortlist reads its owner guidance from here (chooseTripRosterWithProvider); nothing set it before
+        // 2026-10-30, so no plan or trip shortlist ever saw the owner's rules — only the composer did.
+        toolContext.tripRosterOwnerRules = ownerRules
         const workbench = await buildPlanSlotWorkbench(planSlots, {
           constraints: planConstraints,
           allPieces: planPieces,
@@ -3897,6 +3964,11 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             ? toolContext.shortlistTripRoster
             : null,
           tripRosterPhotoLimit: toolContext.tripRosterPhotoLimit || 0,
+          // docs/multi-outfit-shortlist-and-composer-spec.md: the stylist chooses the roster for a plan that packs
+          // nothing, through the same step as a trip. Not when she already gave the looks; absent for tests and other callers.
+          choosePlanRoster: typeof toolContext.choosePlanRoster === 'function' && !providedLooksBySlotLabel
+            ? toolContext.choosePlanRoster
+            : null,
           onDiagnostic: field => bumpFreeformDiagnostic(toolContext, field)
         })
         setFreeformCapsuleRosterFailureCodes(toolContext, workbench?.pendingPlan?.capsuleRosterFailureCodes)
@@ -4259,18 +4331,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           // turn and should keep learning from the rejection message — this correction is scoped to
           // the one-shot path that cannot. Updated for docs/trip-cold-layer-decision-contract-and-
           // repair-spec.md's enum-style cold_layer_decision, replacing the old array field.
-          const slotById = new Map(pendingPlan.slots.map(slot => [slot.id, slot]))
-          const correctedColdLayerDecisions = []
-          const sanitizedOutfits = submittedOutfits.map(outfit => {
-            const decision = outfit?.cold_layer_decision
-            if (!decision || typeof decision !== 'object') return outfit
-            const isAlreadyNotRequired = decision.mode === 'not_required' && decision.assigned_layer_piece_id == null
-            if (isAlreadyNotRequired) return outfit
-            const slot = slotById.get(String(outfit?.slot_id || ''))
-            if (!slot || slotColdLayerRequired(slot) || slotColdLayerPermitted(slot)) return outfit
-            correctedColdLayerDecisions.push({ slot_id: outfit.slot_id, title: outfit.title || '', original_cold_layer_decision: decision })
-            return { ...outfit, cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } }
-          })
+          const { outfits: sanitizedOutfits, corrected: correctedColdLayerDecisions } = correctUnpermittedColdLayerDecisions(pendingPlan, submittedOutfits)
           // Hard invariant (docs/trip-composition-parity-spec.md §7): the atomic call changes who
           // composes and what evidence they see, never what counts as a valid trip outfit. These are
           // the exact same functions the ordinary tool-loop submit_plan_outfits case below calls —
@@ -4506,6 +4567,65 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             })
           }
         }
+        // docs/multi-outfit-shortlist-and-composer-spec.md §4: a coordinated plan's first set is composed in one call
+        // with a photo of every shortlisted garment, and the result goes through submit_plan_outfits itself — the same
+        // validation, assembly and disclosure as a tool-loop submission (acceptance unchanged). A slot she declines is
+        // lowered by one per decline and disclosed with her reason (owner ruling 2026-10-27: the count is a ceiling).
+        // If the call fails, the plan falls through to the tool loop below with the same shortlisted working sets.
+        if (providedLooksBySlotLabel && !isPartialReplan) {
+          const pendingPlan = { ...workbench.pendingPlan, mode: 'model' }
+          toolContext.pendingPlan = pendingPlan
+          const outfits = []
+          for (const slot of pendingPlan.slots || []) {
+            const looks = providedLooksBySlotLabel.get(String(slot.label || '').trim()) || []
+            // Her decision sets the count: no slot is asked for more looks than she described.
+            slot.targetOutfits = looks.length
+            for (const look of looks) {
+              outfits.push({
+                slot_id: slot.id,
+                piece_ids: look.piece_ids.map(Number).filter(Boolean),
+                title: String(look.title || ''),
+                reason: String(look.reason || ''),
+                styling_instructions: String(look.styling_instructions || ''),
+                cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null },
+              })
+            }
+          }
+          bumpFreeformDiagnostic(toolContext, 'planProvidedLooks', outfits.length)
+          const { outfits: corrected } = correctUnpermittedColdLayerDecisions(pendingPlan, outfits)
+          return await executeToolInternal('submit_plan_outfits', { outfits: corrected }, toolContext)
+        }
+        if (planKind === 'coordinated_plan' && !isPartialReplan && typeof toolContext.composeCoordinatedPlanOnce === 'function' && !toolContext.coordinatedPlanCompositionAttempted) {
+          toolContext.coordinatedPlanCompositionAttempted = true
+          toolContext.pendingPlan = { ...workbench.pendingPlan, mode: 'model' }
+          bumpFreeformDiagnostic(toolContext, 'coordinatedPlanCompositionCalls')
+          let composed = null
+          try {
+            composed = await toolContext.composeCoordinatedPlanOnce({
+              status: workbench.status,
+              instructions: workbench.instructions,
+              piece_catalog: workbench.piece_catalog,
+              slots: workbench.slots,
+              constraints: workbench.constraints
+            })
+          } catch (err) {
+            console.warn('Coordinated plan composition failed; the tool loop composes instead:', err?.message || err)
+            composed = null
+          }
+          if (composed && Array.isArray(composed.outfits) && composed.outfits.length) {
+            const pendingPlan = toolContext.pendingPlan
+            for (const gap of Array.isArray(composed.slotGaps) ? composed.slotGaps : []) {
+              const slot = (pendingPlan.slots || []).find(entry => String(entry.id) === String(gap?.slot_id || ''))
+              const reason = String(gap?.gap_reason || '').trim()
+              if (!slot) continue
+              slot.targetOutfits = Math.max(0, (Number(slot.targetOutfits) || 0) - 1)
+              if (reason) pendingPlan.coverageGaps = [...(pendingPlan.coverageGaps || []), `[coverage gap: "${slot.label || 'this use case'}" — ${reason}]`]
+            }
+            const { outfits } = correctUnpermittedColdLayerDecisions(pendingPlan, composed.outfits)
+            return await executeToolInternal('submit_plan_outfits', { outfits }, toolContext)
+          }
+          bumpFreeformDiagnostic(toolContext, 'coordinatedPlanCompositionFallbacks')
+        }
         if (isPartialReplan) {
           const merged = mergePendingPlanForReplan(priorPendingPlan, workbench.pendingPlan, {
             explicitConstraintsProvided,
@@ -4552,10 +4672,10 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // (outfitSetPlanner.js, a pure module with no DB access) can now accept a genuinely gate-eligible
         // non-roster piece as a packing-roster addition instead of a hard rejection, but it needs the
         // piece resolved as active first — that DB lookup belongs here, the one place in this call that
-        // has it. One batched query, only for the trip-plan case, only for IDs not already known to the
-        // roster/pendingPlan.
+        // has it. One batched query, only for IDs not already known to the roster/pendingPlan. Every plan
+        // kind: a plan that packs nothing starts from the stylist's chosen set without being limited to it.
         let verifiedNonRosterPiecesById = new Map()
-        if (pendingPlan.planKind === 'trip') {
+        {
           const knownIds = pendingPlan.piecesById instanceof Map ? pendingPlan.piecesById : new Map()
           const candidateIds = [...new Set(
             submittedOutfits.flatMap(outfit => Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : [])

@@ -1025,6 +1025,17 @@ export function hasSleevelessConstruction(p) {
 
 // Canonical structured construction fact. Only explicit "yes" means the garment cannot be worn
 // alone against skin; unset and explicit "no" both preserve the historical independent default.
+// A garment you can see through: in a photo its back can show through its front. thread_1793066674849: the olive
+// open-knit tunic (front neckline scoop) has a deep V back that shows through the front in its hanger photo; the tagger
+// wrote "V-neckline" in its notes and every render drew a V-neck.
+export const SEE_THROUGH_OPACITY = new Set(['semi_sheer', 'sheer', 'open_weave'])
+// Told to the tagger with the neckline field, so it stops reading a back neckline through the fabric as the front one.
+export const SEE_THROUGH_NECKLINE_INSTRUCTION = 'On a see-through garment (semi-sheer, sheer or open-weave), the back neckline can show through the front in a photo; that shape is not the neckline, so judge the front edge itself.'
+
+export function pieceIsSeeThrough(piece = {}) {
+  return SEE_THROUGH_OPACITY.has(String(piece.opacity || '').trim())
+}
+
 export function pieceRequiresBaseLayer(piece = {}) {
   return String(piece?.needs_base || '').toLowerCase().trim() === 'yes'
 }

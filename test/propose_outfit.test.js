@@ -238,3 +238,16 @@ test('a top worn over a base layer is not misread as the base layer', () => {
   assert.equal(result.verdict, 'compatible')
   assert.equal(result.pairs[0].direction, 'top_over_dress')
 })
+
+// Owner ruling 2026-10-25 (thread_1793086091146): a top that cannot be worn alone may be worn over a
+// dress; a dress that cannot be worn alone still needs a top under it.
+test('required base: a dress can be the base under a dependent top, not under a dependent dress', () => {
+  const sheerTop = { id: 1, category: 'top', needs_base: 'yes', opacity: 'open_weave' }
+  const dress = { id: 2, category: 'dress', opacity: 'opaque', fit_on_body: 'skims' }
+  assert.equal(evaluateRequiredBaseLayers([sheerTop, dress]).verdict, 'compatible')
+  assert.equal(evaluateRequiredBaseLayers([{ ...sheerTop, role: 'layer_top' }, { ...dress, role: 'dress' }], { roleAware: true }).verdict, 'compatible')
+  const sheerDress = { id: 3, category: 'dress', needs_base: 'yes', opacity: 'sheer' }
+  assert.equal(evaluateRequiredBaseLayers([sheerDress, dress]).verdict, 'incompatible')
+  assert.equal(evaluateBaseLayerCandidate(dress).verdict, 'incompatible', 'without dressAllowed the old contract holds')
+  assert.equal(evaluateBaseLayerCandidate(dress, { dressAllowed: true }).verdict, 'compatible')
+})

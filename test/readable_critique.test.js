@@ -29,7 +29,7 @@ test('final renders use worn and hanger evidence with distinct authority', () =>
     worn_photo: 'cardigan-worn.jpg',
   })
   assert.deepEqual(refs.map(ref => ref.kind), ['worn', 'hanger'])
-  assert.match(refs[0].label, /how this garment hangs, where its hem falls, and how it sits on a body/)
+  assert.match(refs[0].label, /how this garment sits on her body — where its hem lands, how it hangs, how its sleeves fall/)
   assert.match(refs[1].label, /construction, color, print scale, texture, and garment shape/)
 })
 
@@ -50,7 +50,7 @@ test('a worn photo is sent at lower resolution than its hanger photo', () => {
   assert.ok(worn.maxPx < hanger.maxPx, 'the worn photo must be downscaled relative to the hanger photo')
   assert.equal(hanger.maxPx, 768, 'the hanger photo must keep full resolution for print scale and construction')
   assert.match(worn.label, /intentionally low resolution/)
-  assert.match(worn.label, /face, hair, expression, or body proportions/)
+  assert.match(worn.label, /Do not copy this photo's face, hair, or expression/)
 })
 
 test('hanger-only evidence discloses that fit and drape are unconfirmed', () => {
@@ -75,10 +75,11 @@ test('comparison previews cap references and prefer worn evidence', () => {
 })
 
 // A worn photo necessarily shows her face and body, which is what makes it authoritative for fit
-// — but that same content makes it a plausible identity source if nothing says otherwise. This
-// disclaimer is what stops the model from treating the worn photo as her likeness reference,
-// which the dedicated identity calibration photos alone are meant to be.
-test('a worn photo\'s label disclaims identity use, not just garment fit', () => {
+// — but that same content makes it a plausible identity source if nothing says otherwise. The
+// disclaimer covers face, hair and expression only. Owner ruling 2026-10-26: body proportions are
+// NOT disclaimed — the worn photo is her, and it is the evidence for where a hem lands on her body
+// (thread_1793058184605: a mid-thigh tunic rendered cropped at the waist while it was disclaimed).
+test('a worn photo\'s label disclaims face/hair/expression but keeps her body proportions', () => {
   const refs = garmentReferencePlan({
     name: 'silk cardigan',
     category: 'top',
@@ -86,8 +87,12 @@ test('a worn photo\'s label disclaims identity use, not just garment fit', () =>
     worn_photo: 'cardigan-worn.jpg',
   })
   const worn = refs.find(ref => ref.kind === 'worn')
-  assert.match(worn.label, /Do not use this photo's face, hair, expression, or body proportions as an identity or likeness reference/)
-  assert.match(worn.label, /identity\/proportion calibration photos/)
+  assert.match(worn.label, /Do not copy this photo's face, hair, or expression/)
+  assert.doesNotMatch(worn.label, /body proportions/)
+  assert.match(worn.label, /where its hem lands/)
+  assert.match(worn.label, /render it at those same proportions on her/)
+  const hanger = refs.find(ref => ref.kind === 'hanger')
+  assert.match(hanger.label, /the worn photo, not this one, shows where it lands on her body/)
 })
 
 const diagnosticRead = {
@@ -231,7 +236,7 @@ test('generated outfit image prompt treats garment truth as authoritative over c
   })
 
   assert.match(prompt, /Structured garment fields and reference images are authoritative/)
-  assert.match(prompt, /preserve its oversized silhouette; keep its hip length; show its complete design hem; render its fit as hangs straight/)
+  assert.match(prompt, /preserve its oversized silhouette; keep its hip length \(worn untucked, the hem ends at the widest part of the hips\); show its complete design hem; render its fit as hangs straight/)
   assert.match(prompt, /wear it fully outside the bottom waistband, with the complete hem visible and no part tucked in/)
   assert.match(prompt, /Non-authoritative styling intent: Tuck the shirt/)
   assert.match(prompt, /Final render check: the visible outfit must satisfy every authoritative garment-construction direction/)
@@ -398,4 +403,136 @@ test('critique request ranks linked garment truth above generated card rationale
   assert.match(coreSource, /structured owned-garment truth and the current attached images outrank card titles, reasons/)
   assert.match(coreSource, /before recommending any physical styling action that involves multiple garments/)
   assert.match(coreSource, /capability on one garment cannot override a prohibition or construction constraint on another/)
+})
+
+// thread_1793058184605: render prompts carried buildPieceText cut at 500–900 characters. A long
+// tunic's owner note on where its hem lands sat past the cut, while tagger prose ("AI auto-use
+// trust", a wrong "high hip" guess) went out. Renders now carry the shared fact line plus
+// source-labelled notes, never truncated, and — owner ruling 2026-10-26, renders only — the free
+// notes field when it was saved through the app.
+const longTunic = {
+  id: 9001,
+  name: 'olive open-knit tunic sweater top',
+  category: 'top',
+  length_hits_at: 'mid_thigh',
+  hem_finish: 'ribbed',
+  worn_photo: 'tunic-worn.jpg',
+  manual_overrides: JSON.stringify(['notes']),
+  style_profile_json: JSON.stringify({
+    style_notes: { best_use: 'x'.repeat(600), risk: 'y'.repeat(600) },
+    garment_intelligence: { real_wear_notes: { placement: 'ribbed hem likely sits at high hip' } },
+    _confidence: { fit_on_body: 'low' },
+  }),
+  fit_on_body: 'hangs_straight',
+  notes: 'A relaxed tunic; the hem falls well below the skirt waistband and ends at mid-thigh.',
+}
+
+test('render prompts carry an app-saved note in full and no tagger prose', async () => {
+  const { renderGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const line = renderGarmentEvidenceLine(longTunic)
+  assert.match(line, /length mid_thigh/)
+  assert.match(line, /notes saved in the app \(author not recorded\): A relaxed tunic; the hem falls well below the skirt waistband and ends at mid-thigh\./)
+  assert.doesNotMatch(line, /high hip|xxxx|yyyy|AI auto-use trust/)
+  const prompt = wholeWardrobeImagePrompt({ outfit: {}, pieces: [longTunic] })
+  assert.match(prompt, /ends at mid-thigh\./)
+  assert.match(prompt, /Garment facts are recorded values only/)
+})
+
+test('render prompts leave out a notes field the app did not record as saved', async () => {
+  const { renderGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const line = renderGarmentEvidenceLine({ ...longTunic, manual_overrides: '[]' })
+  assert.doesNotMatch(line, /mid-thigh\./)
+  assert.doesNotMatch(line, /GARMENT NOTES/)
+})
+
+test('render notes drop text the retired Save button appended from chat', async () => {
+  const { renderGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
+  const { _clearRuleProvenanceCacheForTests } = await import('../styling-engine/ruleProvenance.js')
+  const reply = 'Try it with the cream wide-leg trousers for a softer column.'
+  db.prepare('INSERT INTO chat_threads (id, payload) VALUES (?, ?)').run('thread_saved_reply', JSON.stringify({ messages: [{ role: 'assistant', text: reply }], savedIndices: [0] }))
+  _clearRuleProvenanceCacheForTests()
+  try {
+    const line = renderGarmentEvidenceLine({ ...longTunic, notes: `${longTunic.notes}\n\n${reply}` })
+    assert.match(line, /ends at mid-thigh\./)
+    assert.doesNotMatch(line, /cream wide-leg trousers/)
+  } finally {
+    db.prepare('DELETE FROM chat_threads WHERE id = ?').run('thread_saved_reply')
+    _clearRuleProvenanceCacheForTests()
+  }
+})
+
+test('a low-confidence field asks for a worn photo only when the piece has none', async () => {
+  const { buildWardrobePieceTruthText } = await import('../src/utils/wardrobeAiContext.js')
+  assert.match(buildWardrobePieceTruthText(longTunic), /fit: \[low confidence\] hangs_straight/)
+  assert.match(buildWardrobePieceTruthText({ ...longTunic, worn_photo: null }), /fit: \[low confidence - add worn photo\] hangs_straight/)
+})
+
+// thread_1793053056487 (owner ruling 2026-10-26): a length tag alone must be enough for a correct
+// render. Tops and outerwear state where the hem lands as a visible cue; above_knee is the lower
+// thigh, clearly below the fingertips, between mid_thigh and knee.
+test('render construction states top and outerwear lengths as visible body cues', () => {
+  const prompt = wholeWardrobeImagePrompt({ outfit: {}, pieces: [
+    { id: 1, name: 'olive tunic', category: 'top', length_hits_at: 'above_knee' },
+    { id: 2, name: 'long cardigan', category: 'outerwear', length_hits_at: 'mid_thigh' },
+    { id: 3, name: 'cream midi skirt', category: 'bottom', bottom_subtype: 'skirt', length_hits_at: 'midi' },
+  ] })
+  assert.match(prompt, /olive tunic: keep its above knee length \(worn untucked, the hem ends on the lower thigh, clearly below the fingertips when the arms hang relaxed, a few inches above the knee\)/)
+  assert.match(prompt, /long cardigan: keep its mid thigh length \(the hem ends at mid-thigh, about level with the fingertips when the arms hang relaxed\)/)
+  assert.match(prompt, /cream midi skirt: keep its midi length\./)
+})
+
+test('the tagger is offered above_knee for tops and outerwear, with both thigh values defined', async () => {
+  const { TAG_PIECE_PROMPT } = buildPrompts()
+  assert.match(TAG_PIECE_PROMPT, /top -> cropped\|waist\|high_hip\|hip\|low_hip\|mid_thigh\|above_knee\|unknown;/)
+  assert.match(TAG_PIECE_PROMPT, /outerwear -> cropped\|waist\|high_hip\|hip\|low_hip\|mid_thigh\|above_knee\|knee\|/)
+  assert.match(TAG_PIECE_PROMPT, /above_knee = the hem ends on the lower thigh, clearly below the fingertips/)
+})
+
+// thread_1793066674849 (owner ruling 2026-10-26: tags decide). Photo captions hand hem position to the recorded length.
+test('photo captions hand hem position to the recorded length when a top has one', () => {
+  const refs = garmentReferencePlan({ name: 'olive tunic', category: 'top', length_hits_at: 'above_knee', photo: 'h.jpg', worn_photo: 'w.jpg' })
+  assert.match(refs.find(r => r.kind === 'worn').label, /Where its hem lands is decided by its recorded length \(above knee: the hem ends on the lower thigh/)
+  assert.doesNotMatch(refs.find(r => r.kind === 'worn').label, /render it at those same proportions/)
+  assert.match(refs.find(r => r.kind === 'hanger').label, /where it lands on her body is decided by its recorded length \(above knee/)
+})
+
+// Same thread: a scoop-neck open-knit tunic with a V back showed the V through its front in the hanger photo, and
+// every render drew a V-neck while the construction line said "scoop … exactly as in the reference photo".
+test('a see-through garment states its recorded front neckline instead of deferring to the photo', () => {
+  const prompt = wholeWardrobeImagePrompt({ outfit: {}, pieces: [
+    { id: 1, name: 'olive open-knit tunic', category: 'top', neckline: 'scoop', opacity: 'open_weave' },
+    { id: 2, name: 'white tee', category: 'top', neckline: 'crew', opacity: 'opaque' },
+  ] })
+  assert.match(prompt, /olive open-knit tunic: its front neckline is scoop; the garment is see-through, so a back neckline can show through the front in the photos — draw the scoop front neckline/)
+  assert.doesNotMatch(prompt, /scoop neckline\/collar exactly as in the reference photo/)
+  assert.match(prompt, /white tee: keep its crew neckline\/collar exactly as in the reference photo/)
+})
+
+test('checklist sleeves and bottom shape come from tags, not words in notes', () => {
+  const prompt = wholeWardrobeImagePrompt({ outfit: {}, pieces: [
+    { id: 1, name: 'olive tunic', category: 'top', sleeve_length: 'elbow', notes: 'a relaxed short-sleeve tunic that layers over a fitted tank', manual_overrides: '["notes"]' },
+    { id: 2, name: 'gray slim pants', category: 'bottom', bottom_subtype: 'pants', notes: 'hang straight from the knee down', manual_overrides: '["notes"]' },
+  ] })
+  assert.match(prompt, /1\. olive tunic: must keep its elbow-length sleeves\./)
+  assert.doesNotMatch(prompt, /must remain a short-sleeve top|sleeveless\/tank shaped/)
+  assert.match(prompt, /2\. gray slim pants: must remain the listed pant\/jean silhouette\./)
+  assert.doesNotMatch(prompt, /gray slim pants: must remain the listed skirt/)
+})
+
+test('render prompts say a recorded fact beats a disagreeing note', () => {
+  const prompt = wholeWardrobeImagePrompt({ outfit: {}, pieces: [{ id: 1, name: 'olive tunic', category: 'top' }] })
+  assert.match(prompt, /Where a garment note disagrees with a recorded garment fact \(length, neckline, sleeves, fit, opacity\), the recorded fact wins\./)
+})
+
+test('the tagger is told neckline is the front edge, even on see-through garments', () => {
+  const { TAG_PIECE_PROMPT } = buildPrompts()
+  assert.match(TAG_PIECE_PROMPT, /"neckline": "V\|scoop[^"]*unknown — the FRONT neckline\. On a see-through garment/)
+})
+
+test('anchorGarmentEvidence: fact line, then source-labelled notes; no tagger prose fields', async () => {
+  const { anchorGarmentEvidence } = await import('../styling-engine/garmentEvidenceLine.js')
+  const text = anchorGarmentEvidence({ id: 7, name: 'sheer tunic', category: 'top', reads_as: 'airy net tunic', tried_and_rejected: '["over the bulky boat-neck"]', style_profile_json: '{"best_use":"monochrome texture"}' })
+  assert.match(text, /^ID 7: sheer tunic; top;/)
+  assert.match(text, /\nGARMENT NOTES \(source-labelled; not recorded facts\): REJECTED: over the bulky boat-neck; tagger impression \(not owner-verified\): airy net tunic$/)
+  assert.doesNotMatch(text, /monochrome texture|best use/)
 })

@@ -103,7 +103,7 @@ The `/ask` compact facts carry the same 5 owner rules in `styling_rules_learned`
 - **Fact line:** compact recorded physical facts only.
 - **Garment notes, selective:** only what the app has saved about the garment beyond its tags — a description edited in the app, the owner's stored rules (`RULES (authoritative)`, same exclusions as above), and `REJECTED` pairings. Delivered where garments are chosen among; a garment with none gets no entry.
 - **Tagger notes:** only the unedited impression (the read that left the discovery catalog), labelled "not owner-verified", on `/ask` `view_pieces` for inspected pieces. **Tagger pairing cautions are not part of change 1**: `/ask` never carried them, so adding them would be a separate model-guidance change, not factual parity.
-- **`notes` field:** not carried.
+- **`notes` field:** not carried. *Exception, owner ruling 2026-10-26: outfit image renders carry it when `manual_overrides` records it as saved in the app, labelled "author not recorded" (`renderGarmentNotesText`; see engine-behaviour-map.md, "One more loss on the better path"). The chat paths above are unchanged.*
 
 ## 3 · Whole-garment field audit (before adopting any B1 superset)
 

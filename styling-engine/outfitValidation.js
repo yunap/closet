@@ -119,7 +119,9 @@ function baseLayerFinding(code, message, severity, evidence = {}) {
 // under a roomy jacket, but it cannot serve as the close, smooth coverage layer required by a
 // sheer/open dependent garment. Missing historical tags stay unknown rather than becoming false
 // facts; each flow decides whether sight can resolve that uncertainty.
-export function evaluateBaseLayerCandidate(piece = {}) {
+// `dressAllowed`: the dependent is a top, so a dress may be its base (owner ruling 2026-10-25: a layer
+// garment needs a top or a dress under it; thread_1793086091146). A dependent dress still needs a top.
+export function evaluateBaseLayerCandidate(piece = {}, { dressAllowed = false } = {}) {
   const pieceId = Number(piece?.id) || null
   const label = piece?.name || (pieceId ? `piece ${pieceId}` : 'this garment')
   const categoryGroup = wardrobeCategoryGroup(piece)
@@ -128,10 +130,10 @@ export function evaluateBaseLayerCandidate(piece = {}) {
   const requiresBase = pieceRequiresBaseLayer(piece)
   const findings = []
 
-  if (categoryGroup !== 'top') {
+  if (categoryGroup !== 'top' && !(dressAllowed && categoryGroup === 'dress')) {
     findings.push(baseLayerFinding(
       'base_layer_candidate_not_top',
-      `${label} is not a top and cannot fill the required base-layer slot`,
+      `${label} is not a ${dressAllowed ? 'top or a dress' : 'top'} and cannot fill the required base-layer slot`,
       'error',
       { pieceId, categoryGroup },
     ))
@@ -193,7 +195,7 @@ export function evaluateBaseLayerCandidate(piece = {}) {
 }
 
 // Shared dependent-to-base contract. With explicit roles, the base beneath a dependent top is the
-// primary_top; a top beneath a dependent dress is the additional layer_top. Category-only plan
+// primary_top or the dress; a top beneath a dependent dress is the additional layer_top. Category-only plan
 // submissions use the same facts without pretending to know a visual direction that roles did not
 // express. Visual colour/neckline/texture/proportion judgment remains outside this verdict.
 export function evaluateRequiredBaseLayers(pieces = [], { roleAware = false } = {}) {
@@ -207,15 +209,19 @@ export function evaluateRequiredBaseLayers(pieces = [], { roleAware = false } = 
     const dependentGroup = wardrobeCategoryGroup(dependent)
     const candidates = normalizedPieces.filter(candidate => {
       if (candidate === dependent || Number(candidate?.id) === Number(dependent?.id)) return false
-      if (wardrobeCategoryGroup(candidate) !== 'top') return false
-      if (!roleAware) return true
-      if (dependentGroup === 'dress') return candidate.role === 'layer_top'
-      return candidate.role === 'primary_top'
+      const candidateGroup = wardrobeCategoryGroup(candidate)
+      if (dependentGroup === 'dress') {
+        if (candidateGroup !== 'top') return false
+        return !roleAware || candidate.role === 'layer_top'
+      }
+      if (candidateGroup === 'dress') return !roleAware || candidate.role === 'dress'
+      if (candidateGroup !== 'top') return false
+      return !roleAware || candidate.role === 'primary_top'
     })
     const evaluated = candidates.map(candidate => ({
       dependent,
       candidate,
-      result: evaluateBaseLayerCandidate(candidate),
+      result: evaluateBaseLayerCandidate(candidate, { dressAllowed: dependentGroup === 'top' }),
     }))
     pairs.push(...evaluated)
 

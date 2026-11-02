@@ -9,6 +9,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPrompts, DEFAULT_CONSTITUTION, CONSTITUTION_LAYER_KEYS, PHYSICAL_WEARABILITY_REALISM_RULES, STYLIST_COMPETENCE_CONTRACT } from '../styling-engine/prompts.js'
 import { LEGACY_PROFILE, LEGACY_CONSTITUTION } from '../styling-engine/constitutionSeed.js'
+import { UPPER_THIGH_LENGTH_DEFINITIONS } from '../styling-engine/lengthCues.js'
+import { SEE_THROUGH_NECKLINE_INSTRUCTION } from '../styling-engine/attributes.js'
 import { layerConstructionPromptRule, layerDirectionPromptRule, layerWearabilityFirstPromptRule, NEUTRAL_SLEEVE_LAYERING_STATEMENT, requiredBaseLayerPromptRule, LAYERED_LOOK_STAGES_FACT } from '../styling-engine/outfitValidation.js'
 
 const SLOT_JSON_SHAPE = `JSON shape:
@@ -346,6 +348,17 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       expected = expected.replace("      \"real_wear_notes\": {\n        \"fit\": \"visible placement/strain only; do not claim comfort from still image\",\n        \"drape\": \"\",\n        \"scale\": \"garment volume/visual territory only; no body shape comments\",\n        \"placement\": \"\",\n        \"maintenance\": \"only specify exceptional physical care burdens (e.g. dry clean only, wrinkles easily, pills easily). leave empty or omit for standard machine-washable items.\"\n      },", "      \"real_wear_notes\": {\n        \"_rule\": \"OMIT any key below rather than sending an empty string, and omit the whole object if none apply. Each value is at most 8-12 words. Measured 2026-09-02: this block was filled 4.9 keys out of 5 on average, including on garments whose own instructions said to leave a key out \u2014 the empty-string placeholders were reading as slots that had to be answered.\",\n        \"fit\": \"visible fit/strain/placement only; do not claim comfort from a still image; 8-12 words\",\n        \"drape\": \"how the fabric falls or hangs; 8-12 words; OMIT if not visually meaningful\",\n        \"placement\": \"where key garment features sit on the body; 8-12 words; OMIT if it repeats fit\",\n        \"scale\": \"garment volume/visual territory only; no body shape comments; 8-12 words\",\n        \"maintenance\": \"an exceptional, VISIBLE care burden only (dry clean only, wrinkles easily, pills easily); 8-12 words; OMIT for ordinary machine-washable items\"\n      },")
       expected = expected.replace("  \"_confidence\": {\n", "  \"_confidence\": {\n" + "    \"_rule\": \"OMIT entries for fields that do not apply to this garment's category \u2014 a coat has no heel_height, jewelry_type or waistband_type, and rating them is pure bookkeeping. Rate only what you were actually asked to produce above.\"," + "\n")
     }
+    // 2026-10-26: top length 'tunic' renamed to 'mid_thigh' (thread_1793058184605). 'tunic' named a
+    // garment type, not a place on the body, and a tunic-tagged knit rendered cropped at the waist.
+    // Same day: 'above_knee' added for tops and outerwear (lower thigh, between mid_thigh and knee),
+    // with the two thigh values defined for the tagger from lengthCues.js.
+    if (key === 'TAG_PIECE_PROMPT') {
+      expected = expected.replace('top -> cropped|waist|high_hip|hip|low_hip|tunic|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|knee|', 'top -> cropped|waist|high_hip|hip|low_hip|mid_thigh|above_knee|unknown; outerwear -> cropped|waist|high_hip|hip|low_hip|mid_thigh|above_knee|knee|')
+      expected = expected.replace('that lives in a separate field). Not applicable to accessory.', `that lives in a separate field). ${UPPER_THIGH_LENGTH_DEFINITIONS} Not applicable to accessory.`)
+      // Same day (thread_1793066674849): neckline means the front edge; a see-through garment's back neckline can show
+      // through the front in a photo (a scoop-neck tunic with a V back was tagged and rendered as a V-neck).
+      expected = expected.replace('shawl|other|unknown",', `shawl|other|unknown — the FRONT neckline. ${SEE_THROUGH_NECKLINE_INSTRUCTION}",`)
+    }
     // 2026-08-21: the composer proposes from isolated per-garment photos and was observed
     // rationalizing a two-print pairing ("shares a warm palette", "reads quieter because the
     // ground is dark") instead of actually comparing the two photos. Strengthens pattern
@@ -613,6 +626,8 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     // their own copies.
     expected = expected.replace('- Pattern discipline is separate and stays strict: at most one loud print per outfit, grounded by quiet supporting pieces. This counts every piece in the outfit, not just the top and bottom — a loud shoe or a loud accessory (bag, scarf, jewelry) is a second loud print exactly like a second loud garment, and blows the same budget.', '- Prints and patterns are judged by eye, case by case — there is no fixed print count. Look at every patterned piece in the outfit together, shoes and accessories included: prints can coexist when scale, palette and hierarchy are controlled, and they fail when they compete for the same attention. When a print needs grounding, quieter pieces around it do that job.').replace('compete for the same visual slot exactly like two loud prints — pick one per placement', 'compete for the same visual slot — pick one per placement')
     if (key === 'STYLIST_SYSTEM') expected = expected.replace('- This rule applies to the WHOLE outfit, including shoes and accessories — not just top/bottom. A loud printed shoe or a loud printed bag/scarf next to an already-loud garment is the same violation as two loud garments (e.g. a bold botanical top + floral mules, or a graphic dress + a paisley shawl). Check every piece\'s pattern before finalizing, footwear and accessories included.', '- Judge prints across the WHOLE outfit, including shoes and accessories — a printed shoe, bag or scarf is part of the pattern relationship, not an exception to it. Look at the photographs together and decide case by case whether the prints support or compete (a bold botanical top with floral mules, or a graphic dress with a paisley shawl, can clash or can work); there is no fixed print count.')
+    // 2026-10-30 (plan prompt audit item 11): the professional-context default is removed from the shared prompt.
+    if (key === 'STYLIST_SYSTEM') expected = expected.replace(/  \* Professional-Context Competence:[^\n]*\n/, '')
     if (key === 'WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM') expected = expected.replace('- Pattern discipline: at most one loud/busy print or heavy texture per outfit, grounded by solid supporting pieces. Before you pair', '- Pattern judgment: prints, patterns and heavy textures are judged by eye, case by case — there is no fixed count per outfit. Before you pair').replace('that is the sign to stop and swap one of them for a solid piece instead — do not use that reasoning to keep the pairing.', 'that is the sign to look at the photographs again: keep the pairing only if the prints visibly work together, and change one piece if they compete — do not use that reasoning in place of looking.')
     // 2026-09-15 (owner ruling): the composer was told its roster was "already filtered for validity — compose freely", which reads as
     // "eligible piece = adequate outfit". It now states what the gates actually guarantee.
@@ -683,6 +698,14 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
       ).replace(
         'around those calls, not as a hand-written piece list. Use \'generate_outfits\'',
         'around those calls, not as a hand-written piece list. When the user is instead thinking with you — exploring directions, asking how you see a piece or what could go with it — answer in words (declare want:\'text\'): name the directions, what each would do for the piece and which of their garments it would draw on, and offer to build any of them as cards. Build cards once they ask to see one. When they ask for examples, more options or something else, propose outfits not already shown in this thread unless they ask to see one again, and let examples of directions you have just discussed build those directions. Use \'generate_outfits\''
+      )
+    }
+    // 2026-11-01 (owner: "if the complaint is general it should be saved"; thread_1793389062299): a
+    // general dislike raised against one card was only swapped, never stored.
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected.replace(
+        'the same way you would judge any other candidate.\n',
+        'the same way you would judge any other candidate. When the issue is stated generally — about a kind of garment or combination, not only this piece ("I don\'t like cardigans over long sleeves") — it is also a standing preference: save it with \'store_user_correction\' in her own words as well as making the swap.\n'
       )
     }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)

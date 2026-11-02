@@ -23,9 +23,9 @@
 // constraints.no_repeat / allow_repeat (per category group), and
 // constraints.shared_anchor_ids (soft-pinned across slots and exempt from
 // no_repeat). The plan report is objective-driven: a piece_budget leads with
-// the roster + combination count, a diversified / no_repeat plan leads with the
-// repeat schedule, everything else keeps the packing-reuse headline (see
-// buildPlanReport).
+// the roster + combination count; a trip that is diversified or has a no_repeat
+// rule leads with the repeat schedule, any other trip with the packing-reuse
+// headline; a plan that packs nothing reports no reuse (see buildPlanReport).
 
 import { normalizedWeatherLocationIdentity, resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate, serializeResolvedWeatherContext, wetExposureFromPrecipitation, COLD_F, weatherHasCoolEnd, HOT_F, COOL_LOW_F, resolveExposureWindowHourly, resolveExposureWindowAcrossDays, resolveDaypartHourlyEvidence } from './weather.js'
 import { outerwearCapabilityDisplay } from './outerwearCapability.js'
@@ -188,10 +188,10 @@ function collectPieceRoster(outfits = []) {
 
 // Objective-driven plan report (build step 5). The report sections are chosen
 // by what the set is FOR, not hardcoded to packing: a capsule (piece_budget)
-// leads with the roster + how many outfits it yields; a diversified plan or one
+// leads with the roster + how many outfits it yields; a diversified trip or one
 // with a no_repeat rule leads with the repeat schedule (its success is "nothing
-// repeats"); everything else keeps the packing-reuse headline. Returns the
-// report lines to append to the shared plan lines.
+// repeats"); any other trip keeps the packing-reuse headline; a plan that packs
+// nothing reports no reuse. Returns the report lines to append to the shared plan lines.
 // WHAT TO PACK, as its own section — the roster is authoritative, cards are examples drawn from it
 // (docs/README.md: trip roster architecture). Deliberately NOT card annotations: a shared jacket
 // does not get a "remember to add jacket" note pasted onto every card that omits it, which is the
@@ -219,7 +219,8 @@ function buildPlanReport(pieceReuse, tripOutfits = [], {
   capsuleRoster = [],
   capsuleCapacity = 0,
   statedPalette = [],
-  tripRoster = []
+  tripRoster = [],
+  planKind = 'trip'
 } = {}) {
   const outfitCount = tripOutfits.length
   const lines = []
@@ -250,6 +251,9 @@ function buildPlanReport(pieceReuse, tripOutfits = [], {
     }
     return lines
   }
+  // A plan that packs nothing reports no reuse: at home every day has its own look (owner, 2026-10-27), and the
+  // repeat line was copied into the reply as a "Repeat Schedule" (thread_1793264604857, owner 2026-10-29).
+  if (planKind !== 'trip') return lines
   if (reuseMode === 'diversify' || noRepeatCats.size) {
     if (!pieceReuse.repeated.length) {
       lines.push(`Every look is distinct — no piece repeats across the ${outfitCount} ${outfitCount === 1 ? 'outfit' : 'outfits'}.`)
@@ -811,12 +815,12 @@ function buildCoverageGapLines(coverageGaps = []) {
   return (Array.isArray(coverageGaps) ? coverageGaps : []).filter(Boolean)
 }
 
-function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [], tripRoster = [], tripRequirementSlots = [] } = {}) {
+function attachTripPlanMetadata(outfits = [], { source = 'trip_precompose', composedBy = 'engine', slotWeather = [], reuseMode = '', noRepeatCats = new Set(), pieceBudget = 0, capsuleRoster = [], capsuleCapacity = 0, capsuleSlots = [], isWinterCapsule = false, statedPalette = [], coverageGaps = [], tripRoster = [], tripRequirementSlots = [], planKind = 'trip' } = {}) {
   const tripOutfits = outfits.filter(outfit => outfit?.source === source)
   if (!tripOutfits.length) return outfits
   const durationLabel = source === 'plan_outfit_set' ? 'Plan length' : 'Trip length'
   const pieceReuse = describeTripPieceReuse(tripOutfits)
-  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity, statedPalette, tripRoster })
+  const reportLines = buildPlanReport(pieceReuse, tripOutfits, { reuseMode, noRepeatCats, pieceBudget, capsuleRoster, capsuleCapacity, statedPalette, tripRoster, planKind })
   const weatherLine = buildWeatherLine(slotWeather)
   const gapLines = buildCoverageGapLines(coverageGaps)
   // WHAT TO PACK, structured for the client the same way capsulePlanContext already is — same
@@ -1293,6 +1297,10 @@ function isGenericSeasonText(season = '') {
 // becomes physical weather here; `season`/`mood` only feed the at-home
 // no-location heuristic fallback, which resolveWeatherForRequest itself
 // keeps as a deliberate, unchanged no-op (spec §6.1).
+const TIME_OUTSIDE_VALUES = new Set(['none', 'brief', 'to_and_from'])
+// The hours someone might step out on a day mostly indoors, when no time is set: the waking day, not the overnight low.
+const BRIEF_TIME_OUTSIDE_WINDOW = { start_local: '08:00', end_local: '23:00' }
+
 export async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, location = '', fetchImpl, seasonIsCalendarOnly = false } = {}) {
   const moodText = mood || question
   // Fall back to `undefined` (not '') when no date is known: resolveWeatherForRequest
@@ -1317,6 +1325,38 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   // live Nice Dinners slot (evening occasion, indoor) inherited the day's full 95°F/55°F envelope as
   // its transit temperature instead of the actual ~55-65°F evening window as a direct result.
   const isIndoorSlot = slot.statedWeather === 'indoor'
+  // How much of an indoor or home use case is spent outside (time_outside, 2026-10-30; the set-aside
+  // docs/primary-environment-outdoor-time-spec.md design). 'none': nothing is looked up and the room's own
+  // temperature is said to be unknown — "Mornings at Home" had been labelled "indoor; transit: mornings 48–63°F" and
+  // the shortlist chose sweaters "to keep warm" (thread_1793331990443). Stated or estimated weather is not used either:
+  // a slot inherits the plan's, which is the outside forecast. 'brief': the outdoor reading is kept, for the time
+  // outside only, over the waking day unless the slot has its own time; the look itself is not dressed for it
+  // ("cooking, then perhaps a neighborhood walk" was planned as outdoor walking: thread_1793347659171).
+  const timeOutside = isIndoorSlot ? (slot.timeOutside || (slot.atHome === true ? 'none' : '')) : ''
+  if (timeOutside === 'none') {
+    return {
+      profile: {
+        isHot: false, isCold: false, isColdSevere: false, isExtremeHeat: false, isIndoor: true,
+        weatherSource: 'not_applicable',
+        resolvedWeatherContext: { status: 'not_applicable', overallSource: '' },
+      },
+      label: slot.atHome === true
+        ? 'at home, no travel or time outdoors; the indoor temperature was not stated'
+        : 'indoors, no time outside; the indoor temperature was not stated',
+      timeSensitivity: { status: 'not_material' }
+    }
+  }
+  if (timeOutside === 'brief') {
+    const reading = await resolveSlotWeather(
+      { ...slot, timeOutside: 'to_and_from', ...(slot.timeWindow ? {} : { timeWindow: BRIEF_TIME_OUTSIDE_WINDOW }) },
+      { mood, question, dateRange, location, fetchImpl, seasonIsCalendarOnly },
+    )
+    const outdoors = String(reading.label || '').replace(/^indoor; transit: /, '')
+    return {
+      ...reading,
+      label: `${slot.atHome === true ? 'mostly at home' : 'mostly indoors'}, the indoor temperature was not stated; time outside: brief${slot.timeWindow ? '' : ', no set time'} — outdoors ${outdoors}`,
+    }
+  }
   // 2026-10-02 (live thread_1790929985430): a trip activity with no day of its own inherits the
   // trip's FIRST day as a stand-in (normalizePlanSlots, dateInherited). Slicing that one day
   // dressed a week of evenings for one flat, rainy evening. Such a slot now takes its time-of-day
@@ -1683,7 +1723,6 @@ function outfitDressId(outfit = {}) {
 // the soft-report behavior instead.
 export const MIN_ENFORCED_CAPSULE_BUDGET = 6
 const PLAN_WORKBENCH_PIECE_LIMIT = 40
-
 // `taupe` and `oatmeal` were added 2026-07-30. They were missing, which was
 // harmless while the neutral test was "does ANY colour match" — one recognised
 // neutral carried the piece. It stopped being harmless when the test became
@@ -4233,9 +4272,11 @@ function pieceHasGenuineOutdoorAffinity(piece) {
 // requested use case — no cap, no ranking, no truncation. Each piece is annotated with which of the
 // trip's own slots it is gate-eligible for (slotLabelsById), a recorded fact the model reads directly
 // rather than a hidden reason it was never shown a piece at all.
-function buildTripBench(pool = [], { slots = [], calendarSeason = '', tripHasHotWeather = false } = {}) {
+function buildTripBench(pool = [], { slots = [], calendarSeason = '', tripHasHotWeather = false, seasonGate = true } = {}) {
   const normalizedSlots = Array.isArray(slots) ? slots.filter(Boolean) : []
-  const seasonEligiblePool = tripSeasonEligiblePool(pool, calendarSeason, { tripHasHotWeather })
+  // A coordinated plan states the season to the stylist instead of gating by it (owner, 2026-09-12 ruling kept
+  // 2026-10-27); a trip keeps its season eligibility.
+  const seasonEligiblePool = seasonGate ? tripSeasonEligiblePool(pool, calendarSeason, { tripHasHotWeather }) : pool
   const eligible = capsulePiecesEligibleForAnySlot(seasonEligiblePool, normalizedSlots, {})
     .filter(piece => CAPSULE_COMPOSABLE_GROUPS.has(wardrobeCategoryGroup(piece)))
   const slotLabelsById = new Map()
@@ -4557,6 +4598,8 @@ export function serializeTripRequirementSlot(slot = {}) {
     planNote: slot.planNote || '',
     statedWeather: slot.statedWeather || '',
     environment: slot.environment || '',
+    ...(slot.atHome === true ? { atHome: true } : {}),
+    ...(slot.timeOutside ? { timeOutside: slot.timeOutside } : {}),
     register: slot.register || '',
     occasion: slot.stylingContext?.occasion || slot.occasion || '',
     activity: slot.stylingContext?.activity || slot.activity || '',
@@ -4581,6 +4624,8 @@ export function restoreTripRequirementSlot(persisted = {}) {
     planNote: persisted.planNote,
     statedWeather: persisted.statedWeather,
     environment: persisted.environment,
+    ...(persisted.atHome === true ? { atHome: true } : {}),
+    ...(persisted.timeOutside ? { timeOutside: persisted.timeOutside } : {}),
     register: persisted.register,
     occasion: persisted.occasion,
     activity: persisted.activity,
@@ -4630,7 +4675,8 @@ export const GEMINI_TRIP_ROSTER_PHOTO_LIMIT = 300
 // true sends photos again (whole bench on Gemini, model shortlist elsewhere).
 export const TRIP_ROSTER_PHOTOS_ENABLED = false
 
-export async function selectTripRosterViaModel({
+// plan_outfit_set's roster selection, written first for trips; the trip name stays as an alias for its callers.
+export async function selectPlanRosterViaModel({
   pool = [],
   slots = [],
   calendarSeason = '',
@@ -4639,6 +4685,10 @@ export async function selectTripRosterViaModel({
   shortlistRoster = null,
   photoLimit = TRIP_ROSTER_PHOTO_LIMIT,
   photos = TRIP_ROSTER_PHOTOS_ENABLED,
+  seasonGate = true,
+  // The plan's shared rules: the pieces the looks are built around, and the categories that may not repeat.
+  constraints = {},
+  fallbackGapText = '[trip roster: the model\'s packing selection could not satisfy the trip\'s structural requirements after one repair attempt — offering the full coverage-guaranteed candidate set instead of a curated packing list]',
   onDiagnostic = null,
 } = {}) {
   const bump = field => { if (typeof onDiagnostic === 'function') onDiagnostic(field) }
@@ -4654,8 +4704,20 @@ export async function selectTripRosterViaModel({
   // trip reaches HOT_F, alongside the fall ones the typical-day reading keeps; which to pack is the
   // packer's call, told by the weather sentence which days are warm.
   const tripHasHotWeather = slots.some(slot => Boolean(slot?.weatherProfile?.isHot) || weatherProfileReachesHot(slot?.weatherProfile))
-  const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason, tripHasHotWeather })
+  const { bench, slotLabelsById } = buildTripBench(pool, { slots, calendarSeason, tripHasHotWeather, seasonGate })
   const benchById = pieceMapForPieces(bench)
+  const anchorIds = [...(constraints?.anchorIds || [])].map(Number).filter(Boolean)
+  const rosterConstraints = { anchorIds, noRepeat: [...(constraints?.noRepeat || [])] }
+  // A piece the looks are built around has to be in the selection; one the gates left off the bench cannot be.
+  const rosterFailuresFor = (roster, candidates) => {
+    const rosterIds = idSetForPieces(roster)
+    const candidateIds = idSetForPieces(candidates)
+    const missingAnchors = anchorIds.filter(id => candidateIds.has(id) && !rosterIds.has(id))
+    return [
+      ...validateTripRoster(roster, { slots, pool: candidates }).failures,
+      ...missingAnchors.map(id => ({ code: 'anchor_missing', message: `${benchById.get(id)?.name || `piece ${id}`} (ID ${id}) is a piece these looks are built around, and the selection leaves it out` })),
+    ]
+  }
 
   if (typeof chooseRoster !== 'function') {
     return { roster: bench, source: 'bench_fallback', failures: [], bench, coverageGaps: ['[trip roster: no model roster call available — offering the full coverage-guaranteed candidate set instead of a curated packing list]'] }
@@ -4738,18 +4800,18 @@ export async function selectTripRosterViaModel({
   }
 
   bump('tripRosterModelCalls')
-  const first = await attemptChoose({ bench: choiceBench, withPhotos, slots, dateRange, attempt: 1, failures: [], slotLabelsById })
-  let failures = first.contractFailures.length ? first.contractFailures : validateTripRoster(first.roster, { slots, pool: choiceBench }).failures
+  const first = await attemptChoose({ bench: choiceBench, withPhotos, slots, dateRange, attempt: 1, failures: [], slotLabelsById, constraints: rosterConstraints })
+  let failures = first.contractFailures.length ? first.contractFailures : rosterFailuresFor(first.roster, choiceBench)
   if (!failures.length) {
     return { roster: first.roster, source: 'model', jobs: first.jobs, packingReasoning: first.packingReasoning, failures: [], bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
   }
 
   bump('tripRosterModelRepairs')
   const second = await attemptChoose({
-    bench: choiceBench, withPhotos, slots, dateRange, attempt: 2, failures, slotLabelsById,
+    bench: choiceBench, withPhotos, slots, dateRange, attempt: 2, failures, slotLabelsById, constraints: rosterConstraints,
     previousRosterIds: first.roster.map(piece => Number(piece.id)),
   })
-  const secondFailures = second.contractFailures.length ? second.contractFailures : validateTripRoster(second.roster, { slots, pool: choiceBench }).failures
+  const secondFailures = second.contractFailures.length ? second.contractFailures : rosterFailuresFor(second.roster, choiceBench)
   if (!secondFailures.length) {
     return { roster: second.roster, source: 'model_repaired', jobs: second.jobs, packingReasoning: second.packingReasoning, failures: [], bench, photoBench: withPhotos ? choiceBench : [], shortlistSource, coverageGaps: [] }
   }
@@ -4769,13 +4831,16 @@ export async function selectTripRosterViaModel({
     source: 'bench_fallback',
     failures: secondFailures,
     bench,
-    coverageGaps: ['[trip roster: the model\'s packing selection could not satisfy the trip\'s structural requirements after one repair attempt — offering the full coverage-guaranteed candidate set instead of a curated packing list]'],
+    coverageGaps: [fallbackGapText],
   }
 }
 
-export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, shortlistTripRoster = null, tripRosterPhotoLimit = 0, onDiagnostic = null } = {}) {
-  const { reuse: reuseMode, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
+export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, allPieces = [], dateRange = {}, mood = '', question = '', location = '', fetchImpl, ownerRules = [], planKind = '', chooseCapsuleRoster = null, chooseTripRoster = null, shortlistTripRoster = null, tripRosterPhotoLimit = 0, choosePlanRoster = null, onDiagnostic = null } = {}) {
+  const { reuse: requestedReuse, noRepeat: noRepeatCats, allowRepeat, anchorIds, pieceBudget } = normalizePlanConstraints(constraints)
   const isSeasonalCapsule = planKind === 'seasonal_capsule'
+  // reuse:'maximize' is packing light: fewer pieces to carry, at most three pairs of shoes (spec 24). Only a trip packs
+  // and only a capsule rotates; any other plan gives every day its own look (owner, 2026-10-27), so it never takes it.
+  const reuseMode = requestedReuse === 'maximize' && planKind !== 'trip' && !isSeasonalCapsule ? '' : requestedReuse
   const droppedSlotLabels = Array.isArray(slots?.droppedSlotLabels) ? slots.droppedSlotLabels : []
   slots = await Promise.all(slots.map(async slot => {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
@@ -4833,31 +4898,44 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       ownerRules
     })
   }
-  // Trip packing roster (docs/README.md: trip roster architecture; selectTripRosterViaModel above).
-  // Same stage-2 shape as the capsule roster immediately above — model picks, engine validates
-  // structurally — deliberately NOT the same call: no budget, no palette, no register reserve, and
-  // the bench is ranked by cross-use-case reuse rather than capsule versatility.
-  let tripRosterSelection = null
-  if (typeof chooseTripRoster === 'function' && planKind === 'trip') {
-    // A trip roster is chosen ONCE for the whole trip, not per slot -- the first slot's already-
-    // resolved calendarSeason stands in for the whole trip (docs/trip-roster-season-eligibility-
-    // spec.md §5: a documented simplification, not solved here, for the rare trip whose slots span
-    // a season boundary).
-    tripRosterSelection = await selectTripRosterViaModel({
+  // The plan roster (docs/multi-outfit-shortlist-and-composer-spec.md, owner 2026-10-27): plan_outfit_set's one
+  // garment-selection step, for every plan that is not a budgeted capsule. The stylist chooses from every gate-eligible
+  // piece, each labelled with the use cases it can serve; the engine checks the roster can dress every use case, asks
+  // for one repair, and on failure offers every eligible piece, disclosed. Model picks, engine validates structurally —
+  // the capsule roster's shape without its budget, palette or register reserve. A trip is the packing variant: its
+  // chooser packs a suitcase, its bench drops out-of-season pieces (docs/trip-roster-season-eligibility-spec.md), and a
+  // large bench may be shortlisted first. Any other plan packs nothing, and the season is stated to her instead of
+  // gated (owner ruling 2026-09-12).
+  // Chosen ONCE for the whole plan, not per slot -- the first slot's already-resolved calendarSeason stands in for the
+  // whole plan (trip-roster-season-eligibility-spec §5: a documented simplification for slots spanning a season
+  // boundary).
+  const isTripPlan = planKind === 'trip'
+  const planRosterChooser = isTripPlan ? chooseTripRoster : choosePlanRoster
+  let planRosterSelection = null
+  if (typeof planRosterChooser === 'function' && !isSeasonalCapsule) {
+    planRosterSelection = await selectPlanRosterViaModel({
       pool: allPieces,
       slots,
       calendarSeason: slots[0]?.stylingContext?.calendarSeason || '',
       dateRange,
-      chooseRoster: chooseTripRoster,
-      shortlistRoster: shortlistTripRoster,
-      ...(Number(tripRosterPhotoLimit) > 0 ? { photoLimit: Number(tripRosterPhotoLimit) } : {}),
-      onDiagnostic,
+      chooseRoster: planRosterChooser,
+      constraints: { anchorIds, noRepeat: noRepeatCats },
+      ...(isTripPlan
+        ? { shortlistRoster: shortlistTripRoster, ...(Number(tripRosterPhotoLimit) > 0 ? { photoLimit: Number(tripRosterPhotoLimit) } : {}) }
+        : {
+            photos: false,
+            seasonGate: false,
+            fallbackGapText: '[plan roster: the stylist\'s garment selection could not dress every use case after one repair attempt — offering every eligible piece instead of her chosen set]',
+          }),
+      // Trip diagnostics keep their names; other plans count under planRoster*.
+      onDiagnostic: isTripPlan || typeof onDiagnostic !== 'function' ? onDiagnostic : field => onDiagnostic(String(field).replace(/^tripRoster/, 'planRoster')),
     })
   }
+  const tripRosterSelection = isTripPlan ? planRosterSelection : null
   const composePool = capsuleRosterSelection
     ? capsuleRosterSelection.roster
-    : tripRosterSelection
-    ? tripRosterSelection.roster
+    : planRosterSelection
+    ? planRosterSelection.roster
     : modelPlanPool({ allPieces, slots, constraints, question, mood, planKind })
   const applicableOwnerRules = [...new Set([
     ...(Array.isArray(ownerRules) ? ownerRules : []),
@@ -4896,8 +4974,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   // A layer allocation the wardrobe could not supply is disclosed, never
   // silently absorbed by another category (Step 5 criterion 1's graceful half).
   if (Array.isArray(capsuleRosterSelection?.coverageGaps)) coverageGaps.push(...capsuleRosterSelection.coverageGaps)
-  if (Array.isArray(tripRosterSelection?.coverageGaps)) coverageGaps.push(...tripRosterSelection.coverageGaps)
-  for (const [index, slot] of slots.entries()) {
+  if (Array.isArray(planRosterSelection?.coverageGaps)) coverageGaps.push(...planRosterSelection.coverageGaps)
+  // One slot's gates (unchanged), computed once per slot.
+  const gateSlot = slot => {
     const slotRequestText = [slot.label, slot.bestFor, slot.coverage, slot.planNote].filter(Boolean).join('. ') || question
     const weatherProfile = slot.stylingContext.weatherProfile
     const weatherLabel = slot.weatherLabel
@@ -4906,7 +4985,6 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     // to the same demand.
     const slotExposure = resolveExposureContext(
       { activity: slot.activity, environment: slot.environment }, weatherProfile)
-    slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
     // The slot's structured occasion/register owns its ceiling. Descriptive
     // prose still informs ranking, but must not silently lower a casual slot
     // to lounge because a note says "comfort-first" (live capsule repro,
@@ -4940,7 +5018,17 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const suppressedPieces = gateResult.underlyingExcludedPieces
     const activeMovement = slotRequiresActiveMovement(slot)
     const operationalEase = slotRequiresOperationalEase(slot)
-    const workbenchSelection = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason })
+    return { slotRequestText, weatherProfile, weatherLabel, slotExposure, ceilingRank, allowedPieces, suppressedPieces, activeMovement, operationalEase }
+  }
+  const slotGates = new Map(slots.map(slot => [slot.id, gateSlot(slot)]))
+  for (const [index, slot] of slots.entries()) {
+    const { slotRequestText, weatherProfile, weatherLabel, slotExposure, ceilingRank, allowedPieces, suppressedPieces, activeMovement, operationalEase } = slotGates.get(slot.id)
+    slotWeather.push({ label: slot.label, weather: weatherLabel, order: index })
+    // Her chosen roster reaches each slot whole on a plan that packs nothing: the per-slot limit is for a pool code
+    // assembled, and must not cut what she chose. The fallback (every eligible piece) keeps the limit, and a trip keeps
+    // its own composition path unchanged.
+    const stylistChoseRoster = !isTripPlan && planRosterSelection && planRosterSelection.source !== 'bench_fallback'
+    const workbenchSelection = selectPlanWorkbenchPieces(allowedPieces, slot, { anchorIds, weatherProfile, activeMovement, operationalEase, exposure: slotExposure, calendarSeason: slot.stylingContext.calendarSeason, ...(stylistChoseRoster ? { limit: Math.max(PLAN_WORKBENCH_PIECE_LIMIT, allowedPieces.length) } : {}) })
     const shownPieces = workbenchSelection.pieces
     const workbenchCoverage = workbenchSelection.report
     const targetOutfits = workbenchCoverage.complete
@@ -4978,7 +5066,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // decided this slot calls for — a derived styling judgment the model was then instructed to
       // obey. The exposure window is the fact underneath it, and the model can size a layer from a
       // temperature range on its own (docs/model-facing-signal-inventory.md).
-      exposure_conditions: slotExposureConditions(slotExposure),
+      exposure_conditions: slot.timeOutside === 'brief'
+        ? slotExposureConditions(slotExposure).replace('indoor destination, outdoor transit', 'mostly indoors, brief time outside')
+        : slotExposureConditions(slotExposure),
       // The daypart range is measured on ONE day. For an activity with no day of its own that day
       // is the trip's first, a stand-in (engine map, 2026-10-02 amendment: "still first-day-only…
       // resolveSlotTimeSensitivity"), and showing it beside a week's weather_used told the
@@ -5146,12 +5236,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     acceptedSynthesisText
       ? `OWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for this roster and these use cases; respect each stated boundary: ${acceptedSynthesisText}`
       : '',
-    // Part 6 (spec 26): the spec-25 professional-context competence bullet
-    // is live in STYLIST_SYSTEM but demonstrably weak from tail position (the
-    // 07-16 office run: shawl on Tuesday, double botanical on Wednesday).
-    // Same delivery lesson as owner rules above — repeat it here, ~40k
-    // tokens closer to composition-time attention.
-    'For professional/work slots (office, client, presentation): quiet, structured pieces lead; a bold print is a deliberate accent judged against the rest of the look, not capped at a fixed count; accessory register matches the outfit; no statement wraps at work. Social slots (dinner, gallery, weekend) are where statement styling belongs.'
+    // Spec 26 Part 6 repeated spec 25's professional-context default here (the owner's 07-16 office run: shawl on
+    // Tuesday, double botanical on Wednesday). Removed from both prompts 2026-10-30 (plan prompt audit item 11): a
+    // personal preference shipped as everyone's default, against the 2026-08-07 per-user ruling.
   ].filter(Boolean).join(' ')
   let pendingSlots = slots.map((slot, index) => ({
     ...slot,
@@ -5167,7 +5254,7 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
   }))
   const statedPaletteResult = extractStatedPalette(question, allPieces)
   const capsuleRoster = isSeasonalCapsule && pieceBudget >= MIN_ENFORCED_CAPSULE_BUDGET ? composePool : []
-  // The trip's own first-class packing set — see the header comment above selectTripRosterViaModel.
+  // The trip's own first-class packing set — see the header comment above selectPlanRosterViaModel.
   // Empty when no roster was selected this turn (chooseTripRoster absent, or planKind !== 'trip'),
   // which keeps every non-trip caller byte-identical.
   const tripRoster = planKind === 'trip' && tripRosterSelection ? composePool : []
@@ -5193,7 +5280,11 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
     const allowed = (pendingSlot?.allowedPieces || []).filter(Boolean)
     const target = Math.max(0, Number(workbenchSlot.target_outfits) || 0)
     const requirements = [
-      `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
+      // A coordinated plan's count is a ceiling (owner, 2026-10-27; spec §14): its composer may return fewer, with a
+      // slot_gaps reason. This line still said "exactly" (audit 2026-10-30, item 10). Trips and capsules keep it.
+      planKind === 'coordinated_plan'
+        ? `Submit at most ${target} outfit${target === 1 ? '' : 's'} for this slot.`
+        : `Submit exactly ${target} outfit${target === 1 ? '' : 's'} for this slot.`,
       categoryOutfitStructurePromptRule({ strictSingleTop: true, maxOuterwear: 1, allowMiddleLayer: planKind === 'trip' })
     ]
     // Only project the sleeve-layering guidance (the neutral statement; the geometry verdict is log-only)
@@ -5288,6 +5379,13 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       tripRosterFailureCodes: tripRosterSelection?.failures?.map(f => f.code) || [],
       packingRoster: tripRoster.length ? tripRoster : capsuleRoster,
       tripRequirementSlots,
+      // The plan roster's record for every plan kind (the trip fields above keep their persisted names): who chose
+      // it, her reasoning, each piece's job.
+      planRosterSource: planRosterSelection?.source || '',
+      planRosterJobs: planRosterSelection?.jobs || [],
+      planRosterReasoning: planRosterSelection?.packingReasoning || '',
+      planRosterFailureCodes: planRosterSelection?.failures?.map(f => f.code) || [],
+      planRosterIds: planRosterSelection ? composePool.map(piece => Number(piece.id)) : [],
       slotWeather,
       coverageGaps,
       heldOutfits: [],
@@ -5648,7 +5746,7 @@ const COLD_LAYER_ONLY_FAILURE_PATTERNS = [
   /^no warm layer for cold weather$/,
   /^this outfit has no outer layer at all for sustained cold outdoor exposure(?: — .*)?$/,
   /^cold_layer_decision claims core_is_warm_enough for .+ but piece_ids does not contain a qualifying layer or heavy-fabric main — the claim is false\.$/,
-  /^assigned layer piece \d+ \(.+\) has evidence it cannot serve as a cold layer for .+ — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer\.$/,
+  /^assigned layer piece \d+ \(.+\) has evidence it cannot serve as a cold layer for .+ — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different (?:packed )?layer\.$/,
   // thread_1790989165853: a rejected assigned layer leaves the card with no layer, so the transit
   // check fires as well. It is the same missing layer, and a repair that supplies one fixes both.
   /^no adequate sleeve-bearing layer for cold-weather transit \(the indoor base may stay light, but removable coverage is required for getting there and back\)$/,
@@ -5799,7 +5897,9 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
         unresolvedPieceIds.push(id)
         continue
       }
-      const verifiedCandidate = isTripPlan ? verifiedNonRosterPiecesById?.get(id) : null
+      // Any plan but a capsule: her chosen set is where looks start, not a limit on the wardrobe (a trip's addition is
+      // also packed, below).
+      const verifiedCandidate = !isEnforcedCapsule ? verifiedNonRosterPiecesById?.get(id) : null
       if (verifiedCandidate) {
         // A real, active piece the caller has already verified this turn (search_wardrobe/
         // view_pieces), just not part of the roster plan_outfit_set originally selected. Gate it
@@ -5813,7 +5913,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           rosterAdditionsById.set(id, verifiedCandidate)
           continue
         }
-        reasons.push(`piece ${id} is outside this trip's current packing roster and does not pass ${label}'s own gates (occasion/activity/register) — it cannot be added here`)
+        reasons.push(`piece ${id} is outside ${isTripPlan ? "this trip's current packing roster" : 'the pieces chosen for this plan'} and does not pass ${label}'s own gates (occasion/activity/register) — it cannot be added here`)
         unresolvedPieceIds.push(id)
         continue
       }
@@ -5911,7 +6011,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
     if ((coldLayerRequired || coldLayerPermitted) && mode === 'assigned_packed_layer' && decisionLayerId !== null) {
       const id = decisionLayerId
       if (!gateAllowedIds.has(id)) {
-        reasons.push(`assigned layer piece ${id} is not eligible as a layer for ${label} — it must be in the current packing roster and pass this slot's own gates`)
+        reasons.push(`assigned layer piece ${id} is not eligible as a layer for ${label} — it must be in ${isTripPlan ? 'the current packing roster' : 'the pieces chosen for this plan'} and pass this slot's own gates`)
       } else {
         const layerPiece = planPiecesById.get(id)
         if (layerPiece) {
@@ -5949,11 +6049,11 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
           // layer that is warmer than ideal is something to tell the wearer; it does not make the
           // outfit unwearable. The inadequacy check below remains a hard gate.
           if (outerwearLayerPositivelyInadequate(layerPiece)) {
-            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different packed layer.`)
+            reasons.push(`assigned layer piece ${id} (${layerPiece.name || id}) has evidence it cannot serve as a cold layer for ${label} — its own tagged fabric weight, thermal verdict, and construction contradict the cold-layer claim; choose a different ${isTripPlan ? 'packed ' : ''}layer.`)
           } else {
             assignedLayers.push(layerPiece)
             if (layerFit.fit === 'substantial_overshoot') {
-              tooWarmLayerNotes.push({ type: 'Weather note', message: `the ${layerPiece.name || 'packed layer'} is warmer than these conditions call for; it is there to take off once you warm up` })
+              tooWarmLayerNotes.push({ type: 'Weather note', message: `the ${layerPiece.name || (isTripPlan ? 'packed layer' : 'layer')} is warmer than these conditions call for; it is there to take off once you warm up` })
             }
           }
         }
@@ -6110,7 +6210,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
       const curatedSuitcaseIds = ['model', 'model_repaired'].includes(pendingPlan?.tripRosterSource)
         ? new Set((Array.isArray(pendingPlan?.tripRoster) ? pendingPlan.tripRoster : []).map(piece => Number(piece.id)))
         : new Set()
-      if (reuseMode === 'maximize' && !isEnforcedCapsule) {
+      if (reuseMode === 'maximize' && !isEnforcedCapsule && (isTripPlan || pendingPlan?.isSeasonalCapsule)) {
         const shoePair = outfitCategoryPairs(outfit).find(pair => pair.group === 'shoes' && !curatedSuitcaseIds.has(Number(pair.id)))
         if (shoePair) {
           const usedShoes = usedPieceIdsByCategory.get('shoes') || new Set()
@@ -6209,7 +6309,7 @@ export function validateSubmittedPlanOutfits(pendingPlan = {}, submissions = [],
   // requirements -> surface real coverage gaps, the same contract propose_outfit's own follow-up
   // mutation already established. Never blocks: it only adds a disclosed line to the plan's own
   // coverageGaps, which the final plan_lines already surface honestly.
-  if (rosterAdditionsById.size) {
+  if (rosterAdditionsById.size && isTripPlan) {
     const existingRosterIds = idSetForPieces(Array.isArray(pendingPlan.tripRoster) ? pendingPlan.tripRoster : [])
     const newRosterPieces = [...rosterAdditionsById.values()].filter(piece => !existingRosterIds.has(Number(piece.id)))
     if (newRosterPieces.length) {
@@ -6473,6 +6573,7 @@ export function assembleSubmittedPlanOutfits(pendingPlan = {}, acceptedOutfits =
     reuseMode,
     noRepeatCats,
     pieceBudget,
+    planKind: pendingPlan?.planKind || 'coordinated_plan',
     capsuleRoster: pendingPlan?.capsuleRoster || [],
     tripRoster: pendingPlan?.tripRoster || [],
     tripRequirementSlots: pendingPlan?.tripRequirementSlots || [],
@@ -6645,7 +6746,11 @@ export function normalizePlanSlots(rawSlots = [], {
       // fallback to infer it from — that field is removed from the tool
       // schema entirely (§3.1); a model that wants indoor/outdoor/coastal
       // sets `environment` directly.
-      const explicitEnvironment = normalizePlanEnvironment(slot?.environment)
+      // 'home' (2026-10-30, thread_1793331990443): the whole slot is spent in the home the person is
+      // living or staying in. It is an indoor slot in every other respect; resolveSlotWeather reads
+      // atHome to give it no outside weather, because there is no way there and back.
+      const atHome = String(slot?.environment || '').trim().toLowerCase() === 'home'
+      const explicitEnvironment = atHome ? 'indoor' : normalizePlanEnvironment(slot?.environment)
       const proseEnvironment = explicitEnvironment ? '' : normalizePlanSlotEnvironment({ label, bestFor, coverage, planNote, location })
       const declaredDeclaredEnvironment = explicitEnvironment
       // Owner ruling 2026-07-30: the slot's own label wins over a declared
@@ -6732,6 +6837,14 @@ export function normalizePlanSlots(rawSlots = [], {
           : '',
         location,
         environment,
+        ...(atHome ? { atHome: true } : {}),
+        // Indoor and home slots only: a home slot is 'none' unless it says 'brief'; an indoor venue defaults to getting
+        // there and back. Structured; no keyword reader sets or reads it.
+        ...(() => {
+          const declared = TIME_OUTSIDE_VALUES.has(String(slot?.time_outside || '').trim()) ? String(slot.time_outside).trim() : ''
+          if (atHome) return { timeOutside: declared === 'brief' ? 'brief' : 'none' }
+          return environment === 'indoor' ? { timeOutside: declared || 'to_and_from' } : {}
+        })(),
         date: resolvedSlotDate,
         // True when the slot named no day of its own and resolvedSlotDate is only the trip's first
         // day standing in for it. resolveSlotWeather reads this to slice the slot's time of day
@@ -6800,3 +6913,5 @@ export function normalizePlanSlots(rawSlots = [], {
     .filter(Boolean)
   return normalized
 }
+
+export const selectTripRosterViaModel = selectPlanRosterViaModel

@@ -45,9 +45,12 @@ export const STRUCTURAL_FIELD_UNSET = new Set(['none', 'unknown', 'n/a'])
 function trustedFieldText(piece, field, label, value) {
   if (!value) return null
   if (STRUCTURAL_FIELD_UNSET.has(String(value).trim().toLowerCase())) return null
-  return getFieldConfidence(piece, field) === 'low'
-    ? `${label}: [low confidence - add worn photo] ${value}`
-    : `${label}: ${value}`
+  // "add worn photo" only when there is none: a piece with a worn photo was told it lacked one
+  // (thread_1793060865450), which tells the model the worn evidence it was given does not exist.
+  if (getFieldConfidence(piece, field) !== 'low') return `${label}: ${value}`
+  return piece.worn_photo
+    ? `${label}: [low confidence] ${value}`
+    : `${label}: [low confidence - add worn photo] ${value}`
 }
 
 export function pieceGarmentIntelligence(piece = {}) {

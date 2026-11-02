@@ -566,9 +566,19 @@ const shouldUseOutfitCritiqueFollowup = (text = '', memory = null) => (
 
 const createResultId = (prefix = 'result') => `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e6)}`
 
+// The wearer's own time zone, from the browser; "today", "tonight" and "Friday" are read in it. It was fixed to Los
+// Angeles (2026-10-29), which put a wearer anywhere else on the wrong day. Los Angeles stays the fallback.
+const browserTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles'
+  } catch {
+    return 'America/Los_Angeles'
+  }
+}
+
 const currentChatDateContext = () => {
   const now = new Date()
-  const timezone = 'America/Los_Angeles'
+  const timezone = browserTimeZone()
   return {
     currentDate: now.toISOString(),
     currentDateLabel: new Intl.DateTimeFormat('en-US', {
@@ -5101,10 +5111,13 @@ export default function StylistChat({
       })
     }
 
+    // "Try again" on a failed piece-outfit turn takes that turn's place: the error bubble is dropped and the
+    // request it answered is reused, so the retry does not add a second piece card and request (owner, 2026-10-27).
+    const replacingFailedTurn = Boolean(overrides.replaceFailedTurn && !forceNewFromExisting && messages[messages.length - 1]?.isError)
     const nextMessages = forceNewFromExisting ? [
       { role: 'assistant', text: 'Hi! I\'m your personal stylist. I know your full wardrobe — ask me anything. You can also upload a photo of an outfit for feedback.' },
       userMessage
-    ] : [...messages, userMessage]
+    ] : replacingFailedTurn ? messages.slice(0, -1) : [...messages, userMessage]
 
     // overrides.forceNewRequest ("Retry with Sonnet"/error-retry): the whole point of a retry is
     // that the attempt being retried away from never happened. Suppressing generatedContext/
@@ -5492,6 +5505,14 @@ export default function StylistChat({
         const res = await fetch('/api/ai/generate-outfits-for-piece', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pieceId: pieceToSend.id, occasion: effectiveGenerateOccasion, season: effectiveGenerateSeason, mission: effectiveGenerateMission, mood: effectiveGenerateMood, question: q || (effectiveIncludeMissingPieces ? 'Generate ideal outfit directions for this piece, using my wardrobe when possible and missing-piece ideas when needed.' : 'Generate outfit ideas for this piece.'), includeMissingPieces: effectiveIncludeMissingPieces, idealOnly: effectiveIdealOnlyMode, history: historySnapshot, activity: effectiveGenerateActivity, ...(effectiveGenerateExplore ? { explore: true } : {}) }) })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Something went wrong — try again')
+        // A composer that timed out or returned nothing comes back as an ordinary 200 reply whose only text is the
+        // failure, under "I would skip", with rating chips and no way to retry (thread_1793144336653, 2026-10-27).
+        // It is a failed turn: shown as the error bubble, with a retry of this same piece request.
+        if (data.debug?.compositionSkipped === 'composer_failed') {
+          throw Object.assign(new Error(data.debug.composerErrorIsTimeout
+            ? "The stylist didn't answer in time, so no outfits came back."
+            : "The stylist couldn't put outfits together this time."), { userFacing: true })
+        }
         replyText = data.feedback || 'Something went wrong.'
         replyStructuredOutfits = data.structuredOutfits || null
         replyDebug = data.debug || null
@@ -5957,11 +5978,18 @@ export default function StylistChat({
       }
 
     } catch (err) {
-      const errText = `Error: ${err.message}`
+      const errText = err.userFacing ? err.message : `Error: ${err.message}`
       // isError was previously never set here despite the renderer checking m.isError — every
       // failed turn silently rendered as a plain bubble instead of the styled error state, and
       // nothing could key a retry action off it (plan: quizzical-foraging-boot, Stage F).
-      const errMsg = { role: 'assistant', text: errText, isError: true, retryInput: q }
+      // A failed piece-outfit turn retries the same request (same piece, pickers and model) in this thread.
+      const retryPieceRequest = pieceToSend && shouldGenerateOutfits ? {
+        piece: { id: pieceToSend.id, name: pieceToSend.name, photo: pieceToSend.photo || null, worn_photo: pieceToSend.worn_photo || null },
+        generateOccasion: effectiveGenerateOccasion, generateSeason: effectiveGenerateSeason, generateMission: effectiveGenerateMission,
+        generateMood: effectiveGenerateMood, generateActivity: effectiveGenerateActivity, generateExplore: effectiveGenerateExplore,
+        includeMissingPieces: effectiveIncludeMissingPieces, idealOnlyMode: effectiveIdealOnlyMode,
+      } : null
+      const errMsg = { role: 'assistant', text: errText, isError: true, retryInput: q, ...(retryPieceRequest ? { retryPieceRequest } : {}) }
       const updatedMessages = [...nextMessages, errMsg]
       const updatedChatHistory = [...nextChatHistory, { role: 'assistant', content: errText }]
 
@@ -6536,7 +6564,17 @@ export default function StylistChat({
                       <div style={{ fontSize: 13, lineHeight: 1.45, flex: 1 }}>
                         {m.text}
                       </div>
-                      {m.retryInput && (
+                      {m.retryInput && m.retryPieceRequest && i === messages.length - 1 && (
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => send({ input: m.retryInput, ...m.retryPieceRequest, generateOutfitMode: true, editorialVisualMode: false, continueThread: true, forceNewRequest: true, replaceFailedTurn: true })}
+                          style={{ fontSize: 12, padding: '5px 10px', borderRadius: 8, border: '1px solid rgba(219, 68, 85, 0.35)', background: 'transparent', color: 'var(--text)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          Try again
+                        </button>
+                      )}
+                      {m.retryInput && !m.retryPieceRequest && (
                         <button
                           type="button"
                           onClick={() => send({ input: m.retryInput, providerOverride: 'sonnet', forceNewRequest: true })}

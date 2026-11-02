@@ -256,8 +256,18 @@ This unblocked item 4 below — skirts and pants now do have different `length_h
 Previously one flat shared enum across every category. Now genuinely per-category, and per-
 `bottom_subtype` for bottoms:
 
-- **top**: `cropped | waist | high_hip | hip | low_hip | tunic | unknown`
-- **outerwear**: `cropped | waist | high_hip | hip | low_hip | mid_thigh | knee | mid_calf | ankle | full_length | floor_length | unknown` — `full_length`/`floor_length` added 2026-08-14 so outerwear length concepts that used to live (lossily) in `silhouette`'s dropped `longline` value have a real home; a piece whose old `silhouette` was `longline` had that word opportunistically preserved into `length_hits_at` by the migration if the piece didn't already have a `length_hits_at` value set
+- **top**: `cropped | waist | high_hip | hip | low_hip | mid_thigh | above_knee | unknown` — `tunic` renamed to
+  `mid_thigh` 2026-10-26 (thread_1793058184605): every other value names a place on the body, `tunic`
+  named a garment type, and the image model rendered a tunic-tagged open-knit top cropped at the
+  waist because nothing said where a tunic ends. Same value outerwear already used. Existing rows are
+  renamed in place by the per-category remap in `db.js`. `above_knee` added the same day for tops and
+  outerwear: the lower thigh, between `mid_thigh` and `knee` (the same name dresses and skirts use). The
+  tagger gets both thigh values defined, and renders state every top/outerwear length as a visible body
+  cue — both from `styling-engine/lengthCues.js`, so the tag and the picture mean the same place. Owner
+  ruling: a length tag alone must be enough for a correct render; no worn photo or note is required.
+  Also fixed then: the `db.js` remap's outerwear list never gained `full_length`/`floor_length`, so a
+  tagged long coat had its length blanked on the next startup (0 such pieces existed on 2026-10-26).
+- **outerwear**: `cropped | waist | high_hip | hip | low_hip | mid_thigh | above_knee | knee | mid_calf | ankle | full_length | floor_length | unknown` — `full_length`/`floor_length` added 2026-08-14 so outerwear length concepts that used to live (lossily) in `silhouette`'s dropped `longline` value have a real home; a piece whose old `silhouette` was `longline` had that word opportunistically preserved into `length_hits_at` by the migration if the piece didn't already have a `length_hits_at` value set
 - **dress**, or **bottom** when `bottom_subtype = skirt`: `mini | above_knee | knee | below_knee | midi | ankle | maxi | unknown`
 - **bottom** when `bottom_subtype` is `pants | culottes | overalls | other`: `shorts | knee | mid_calf | ankle | full_length | floor_length | unknown`
 - **shoes**: `open | below_ankle | ankle | high_top | mid_calf | knee | over_knee | unknown` — this

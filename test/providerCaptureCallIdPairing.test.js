@@ -102,6 +102,24 @@ test('a structured call made inside a request is stamped with that request\'s th
     assert.equal(record.turnToken, 'turn-42')
     assert.equal(record.requestPath, '/api/ai/ask')
     assert.equal(record.schemaName, 'trip_plan_composition')
-    assert.equal(record.subflow, 'structured_response')
+    // 2026-10-29: a call that names no step is labelled with its schema name, in the captures and the call log.
+    assert.equal(record.subflow, 'trip_plan_composition')
   }
+})
+
+// 2026-10-29: the call log filed a plan's garment selection under "stylist_tool_loop", the step of the turn that called
+// it. A call that names its step is logged under it, and the turn's step is put back for the calls that follow.
+test('a call made inside a tool is logged under its own step, and the turn\'s step is restored after it', async () => {
+  const { runWithAiTelemetryContext, updateAiTelemetryContext, getAiTelemetryContext, withAiTelemetrySubflow } = await import('../lib/aiCallTelemetry.js')
+  const seen = []
+  await runWithAiTelemetryContext({ originalUrl: '/api/ai/ask', sessionId: 'thread_43' }, async () => {
+    updateAiTelemetryContext({ subflow: 'stylist_tool_loop' })
+    await withAiTelemetrySubflow('plan_roster_selection', async () => { seen.push(getAiTelemetryContext().subflow) })
+    seen.push(getAiTelemetryContext().subflow)
+    await withAiTelemetrySubflow('', async () => { seen.push(getAiTelemetryContext().subflow) })
+    await withAiTelemetrySubflow('coordinated_plan_composition', async () => { throw new Error('provider failed') }).catch(() => {})
+    seen.push(getAiTelemetryContext().subflow)
+  })
+  assert.deepEqual(seen, ['plan_roster_selection', 'stylist_tool_loop', 'stylist_tool_loop', 'stylist_tool_loop'])
+  assert.equal(await withAiTelemetrySubflow('outside_a_request', async () => 'ran'), 'ran', 'outside a request it just runs the call')
 })

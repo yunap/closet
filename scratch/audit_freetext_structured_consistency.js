@@ -103,7 +103,7 @@ for (const c of fitCandidates) {
 // needs a human read even more than the other two checks. Kept as a candidate list, not a verdict.
 const LENGTH_WORDS = {
   cropped: /\bcropped?\b/i,
-  tunic: /\btunic\b/i,
+  mid_thigh: /\btunic\b|\bmid[- ]thigh\b/i,
   midi: /\bmidi\b/i,
   maxi: /\bmaxi\b/i,
   mini: /\bmini\b/i,

@@ -195,12 +195,29 @@ const WEEKDAY_PATTERN = Object.keys(WEEKDAYS).join('|')
 // weekday statement, since a wrong extracted date is worse than none. No year inference beyond "the
 // next occurrence of this month/day from `currentDate`", matching how a person actually means a
 // bare "October 12th" mentioned in September or "on Saturday" for an upcoming trip.
-export function extractStatedTripDateRange(text = '', { currentDate = new Date() } = {}) {
+// The user's own calendar date. The client sends `currentDate` as a UTC instant; at 10:48 pm on a Tuesday in
+// California it is already Wednesday in UTC, and "this coming Wednesday" became the next week's (live
+// thread_1793165996825: a Wednesday-to-Saturday stay planned for November 4). Read in the user's time zone when given.
+function localCalendarDay(now, timeZone = '') {
+  if (timeZone) {
+    try {
+      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric' })
+        .formatToParts(now).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]))
+      if (parts.year && parts.month && parts.day) return new Date(Date.UTC(parts.year, parts.month - 1, parts.day))
+    } catch {
+      // An unknown zone falls back to UTC, as before.
+    }
+  }
+  return trimDateComponent(now)
+}
+
+export function extractStatedTripDateRange(text = '', { currentDate = new Date(), timeZone = '' } = {}) {
   const normalized = String(text || '').toLowerCase()
   const now = currentDate instanceof Date && !Number.isNaN(currentDate.getTime()) ? currentDate : new Date()
-  const today = trimDateComponent(now)
+  const today = localCalendarDay(now, timeZone)
 
   let startDate = null
+  let statedEndDate = null
   const dateMatch = normalized.match(new RegExp(`\\b(${MONTH_NAME_PATTERN})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`))
   if (dateMatch) {
     const month = MONTH_NAMES[dateMatch[1]]
@@ -218,6 +235,20 @@ export function extractStatedTripDateRange(text = '', { currentDate = new Date()
       startDate = trimDateComponent(new Date(Date.UTC(year, month, day)))
     }
   } else {
+    // A stated span wins over a single day named elsewhere (live thread_1793326366522: "from today through Sunday …
+    // the restaurant with them on Saturday" was read as Saturday alone, and every day of the stay got Saturday's
+    // forecast). "today/tomorrow/<weekday> through|to|until <weekday>", the end the next such weekday on or after the start.
+    const spanMatch = normalized.match(new RegExp(`\\b(today|tonight|tomorrow|${WEEKDAY_PATTERN})\\s*(?:through|thru|to|until|till|-|–|—)\\s*(${WEEKDAY_PATTERN})\\b`))
+    if (spanMatch) {
+      const first = spanMatch[1]
+      const firstOffset = first === 'today' || first === 'tonight' ? 0
+        : first === 'tomorrow' ? 1
+        : ((WEEKDAYS[first] - today.getUTCDay() + 7) % 7) || (/\btoday\b/.test(normalized) ? 0 : 7)
+      startDate = new Date(today.getTime() + firstOffset * 86400000)
+      statedEndDate = new Date(startDate.getTime() + ((WEEKDAYS[spanMatch[2]] - startDate.getUTCDay() + 7) % 7) * 86400000)
+    }
+  }
+  if (!startDate && !dateMatch) {
     // Relative weekday / weekend matching: "on Saturday", "this weekend", "coming Friday", etc.
     const weekendMatch = normalized.match(/\b(?:this|next|upcoming|coming)\s+weekend\b/)
     const weekdayMatch = normalized.match(new RegExp(`\\b(?:on|this|next|upcoming|coming)\\s+(${WEEKDAY_PATTERN})\\b`))
@@ -229,6 +260,12 @@ export function extractStatedTripDateRange(text = '', { currentDate = new Date()
         daysAhead = 7
       }
       startDate = new Date(today.getTime() + daysAhead * 86400000)
+      // "Wednesday through Saturday", "Wed to Sat", "Wednesday–Saturday": the stated last day ends the range.
+      if (weekdayMatch) {
+        const after = normalized.slice(normalized.indexOf(weekdayMatch[0]) + weekdayMatch[0].length)
+        const endMatch = after.match(new RegExp(`^\\s*(?:through|thru|to|until|till|-|–|—)\\s*(${WEEKDAY_PATTERN})\\b`))
+        if (endMatch) statedEndDate = new Date(startDate.getTime() + ((WEEKDAYS[endMatch[1]] - targetDay + 7) % 7) * 86400000)
+      }
     }
   }
   if (!startDate) return null
@@ -236,7 +273,7 @@ export function extractStatedTripDateRange(text = '', { currentDate = new Date()
   const durationMatch = normalized.match(/\bfor\s+(a|one|\d+)\s+(day|days|night|nights|week|weeks)\b/) ||
     normalized.match(/\b(?:trip|stay|visit)\s+(?:will\s+take|takes|is|lasting|of)\s+(a|one|\d+)\s+(day|days|night|nights|week|weeks)\b/) ||
     normalized.match(/\b(a|one|\d+)\s+(day|days|night|nights|week|weeks)\s+(?:trip|stay|visit)\b/)
-  let durationDays = 1
+  let durationDays = statedEndDate ? Math.round((statedEndDate.getTime() - startDate.getTime()) / 86400000) + 1 : 1
   if (durationMatch) {
     const countRaw = durationMatch[1]
     const count = countRaw === 'a' || countRaw === 'one' ? 1 : Number(countRaw)
@@ -257,7 +294,7 @@ export function extractStatedTripDateRange(text = '', { currentDate = new Date()
     // boundary (styling-engine/tools.js) reads this flag to decide whether the model's own end date
     // is additional detail worth keeping (no duration stated) or a fact already settled by the user
     // (duration stated).
-    hasExplicitDuration: Boolean(durationMatch),
+    hasExplicitDuration: Boolean(durationMatch || statedEndDate),
     source: 'user_stated',
   }
 }

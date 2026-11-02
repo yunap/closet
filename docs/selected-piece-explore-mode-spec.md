@@ -432,3 +432,116 @@ correction call names all five cards; a correction that puts 990357 under the tu
 **Not verified.** Whether the new lines alone stop her wearing the tunic alone, and how well she
 chooses the base in a correction. That needs one paid turn on 996779.
 
+
+## 12 · A base that fits may carry the direction; a dress may be the base; the anchor as facts (2026-10-27)
+
+**The run.** `thread_1793086091146`: Explore on the black open-knit cowl tunic (996917, filed `top`,
+`needs_base: yes`, `opacity: open_weave`, `weight: ultralight`; Gemini 3.5 Flash-Lite). Five near-identical dark
+looks, four on the same base. The roster carried a white top, a cream trench, brown and herringbone
+coats and a rust vest; it carried no dress, and none of the 22 in the catalog could have been used.
+The owner rated the boat-neck base (996913, medium weight, sleeves) too bulky under the thin crochet.
+A second model, reading the wire capture, named the base as the creative variable under a
+see-through garment and the tagger's "best use … depth to monochromatic outfits" as steering.
+
+**Owner ruling (2026-10-27).** "The base still needs to be appropriate, ie physically fit underneath
+the top layer, before it can be any kind of a creative variable." This refines §10: fit is the
+precondition, not the whole job. The §8 ruling ("a top or a dress under it") stands, and the §11
+wording had narrowed it to a top.
+
+**Change.**
+- `EXPLORE_LAYER_BASE_SCOPE` (`styling-engine/prompts.js`, both steps): *"In this mode that base must
+  first fit under the anchor; once it does, it may carry the outfit's direction like any other
+  garment, and the same base may repeat across outfits."* "Not for the less obvious direction" is gone.
+  "May repeat" stays, because without it Explore's "no two variations" pushes a new base onto every card (§10).
+  No per-garment exception: the same sentence serves every layer anchor.
+- A dress may be the base under a `needs_base` top. This is in the shortlist (`ROSTER_DEPENDENT_ANCHOR_BLOCK`), the
+  composer (`EXPLORE_DEPENDENT_ANCHOR_LINE`, `categoryConstraintForSelectedPiece`), the correction note
+  (`composerSlots.js`), the shared check (`evaluateRequiredBaseLayers` / `evaluateBaseLayerCandidate`
+  `dressAllowed`, same opacity and close-fit rules) and the supply contract (`candidateSet.js`).
+  A `needs_base` dress still needs a top (`ROSTER_DEPENDENT_DRESS_ANCHOR_BLOCK`,
+  `EXPLORE_DEPENDENT_DRESS_ANCHOR_LINE`).
+- The anchor block on both calls is `anchorGarmentEvidence` (`styling-engine/garmentEvidenceLine.js`),
+  not `buildPieceText`. It contains the shared fact line, then the saved-record notes (RULES, REJECTED, an edited description)
+  and the tagger impression, source-labelled. The tagger's best use, best outfit role, style risk,
+  AI trust and style lanes no longer reach these two calls, as the 2026-09-15 ruling already required
+  for every other model line. The composer's "around its actual role, risks, and confidence-aware
+  garment truth" now reads "from its photograph and its recorded facts".
+
+**Not changed.** Bulk is not a gate. Whether a base is too bulky stays her judgment from the photos and
+the recorded weight (sleeve-thickness ruling, 2026-10-21). Other `Selected garment truth` blocks
+(`routes/ai.js` ideal-additions path, `styling-engine/core.js`) still use `buildPieceText`. The
+selected-piece composer sends no notes block for support pieces.
+
+**Verified offline.** Tests: the scope wording; a dress under a dependent top passes the shared check
+(roles on and off) while a dependent dress over a dress does not; five tunic-over-dress cards ship with
+no correction call; both calls carry the fact line and no tagger prose; `anchorGarmentEvidence` unit
+test. `node --test test/`: 2,611 of 2,611 pass. A replay of this thread on a database copy, with the
+provider stubbed and the thread's recorded weather and date, rebuilt both requests. The catalog is the same
+253 garments, with 1 roster photo and 28 composer photos as captured. Only the intended lines differ:
+the base sentence, "a top or a dress", and the anchor block. The captured five cards still ship. With
+246 and 996787 added to the pick, two tunic-over-dress cards ship.
+
+**Not verified.** Whether she now shortlists dresses and puts the direction into a fitting base. That
+needs one paid Explore turn on 996917.
+
+## 13 · The shortlist brings the plausible; both calls name the season (2026-10-27, outside review)
+
+**The evidence.** Live Explore turn `thread_1793090407904` (996917, Flash-Lite, the §12 code), its
+complete wire capture, and Gemini 3.7 Flash runs and crossed replays on the same request:
+`scratch/captures/explore_996917_model_comparison/` (README, captures, shortlist and outfit sheets). Flash-Lite's 20-piece shortlist held one
+clearly workable base (208); three of its five cards used sleeved medium-to-heavy knits. An outside
+reviewer named the shortlist contract as the first thing to correct whichever model wins:
+- the step sees the anchor's photograph and only the candidates' recorded facts, yet was told to
+  "shortlist only candidates that pass" a fit test it cannot see;
+- the same prompt says "a garment whose facts leave you unsure is worth seeing".
+
+The reviewer also asked whether the actual temperature reaches composition. It does not, deliberately,
+under the 2026-10-19 ruling: the pickers mean style and season, not outdoor weather. But both calls
+read the literal `Season: current season` and were never told it was fall.
+
+**Change.**
+- `LAYER_PAIR_FIT_FIRST` (`styling-engine/selectedPieceRoster.js`): wearability still comes before
+  colour, texture or idea. The step now leaves out a candidate whose recorded construction clearly
+  cannot sit inside the anchor, or clearly adds bulk under it, at the sleeves, the armholes or the
+  body, and brings every plausible one. "The next step decides fit on the photographs of both." That
+  is the composer's `layering_check`. The §9 reason for the rule (cream tops shortlisted by idea with
+  no fit test) still holds: the rule still comes first and still excludes the clear misfits.
+- `seasonPromptLabel` (`lib/seasonContext.js`): where the request is "current season", the shortlist
+  and the composer read `Season: fall (the current season)`, from `stylingContext.calendarSeason`. A
+  named season passes through unchanged. Temperatures are not added.
+
+**Not changed.** The composer's response schema still requires exactly five outfits, so it cannot
+decline a weak base and its doubts go into `watchFor`. Whether Explore may return fewer is an owner
+decision. The model choice is also open. In the crossed test (§ comparison README), 3.7 Flash's
+shortlist brought the bulky picks to one in five with either composer, while the 3.7 Flash composer
+brought more colour.
+
+**Verified offline.** Two tests added in `test/selected_piece_explore.test.js` (the fit wording, the season line
+in both calls and the label function); `node --test test/` passes. A rebuild of
+`thread_1793090407904` on a database copy, with the provider stubbed and the thread's recorded weather
+and date, produced the same catalog, 1 roster photo and 21 composer photos as captured. Only three lines differ:
+the fit rule, and the season line in each call.
+
+**Not verified.** Whether the new wording changes what either model shortlists. That needs a paid turn.
+
+## 14 · The count is a ceiling: no filling with outfits she would not recommend (2026-10-27, owner ruling)
+
+**The failure.** The selected-piece composer's schema required exactly five Explore outfits, and three to four by default. In `thread_1793090407904`, Flash-Lite had one clearly workable base under the sheer tunic. It still had to produce five cards, so it filled them with sleeved knits it described as "without excessive bulk". In replays, its doubts went into `watchFor` ("watch sleeve volume where the turtleneck's ruched sleeves meet…"), and the card shipped anyway. The outside review asked whether the composer ever rejects a combination. It could not.
+
+**Owner ruling.** "If the model can't produce the outfits it considers good it should not fill the count in with bad ones."
+
+**Change.**
+- `SELECTED_PIECE_OUTFIT_COUNT` is now 1–4 and `SELECTED_PIECE_EXPLORE_OUTFIT_COUNT` is now 1–5 (`routes/ai.js`). The provider-enforced schema (`composerOutfitSlotsSchema`) follows them.
+- The composer's request line reads: *"Compose up to N complete outfits using only shown saved wardrobe pieces. Return only outfits you would recommend: if fewer than N meet that, return fewer and say in "skip" what kept the others out. Never fill the count with an outfit you would not recommend."*
+- The Explore shortlist says "You are choosing for up to 5 outfits".
+- Nothing downstream pads the count. `composerOutfitCountCheck` reports a short answer as within the request, and no correction call runs for a short answer.
+
+**Not changed.**
+- One card stays the floor. A turn with no outfit at all has no path in the app yet, so a model that finds nothing good must still return one.
+- The whole-wardrobe composer (`requestedLimit`, exact count) and the trip composer (already 1–N with `slot_gaps`) are untouched.
+
+**Verified offline.**
+- Tests: the count constants, the request wording, the "up to" shortlist line, and two good outfits shipping as two with no correction (`test/selected_piece_explore.test.js`). `node --test test/` passes.
+- Rebuild of `thread_1793090407904`: only the count line, the shortlist's "up to 5", and the §13 lines differ from the capture.
+
+**Not verified.** Whether either model actually returns fewer cards when it has fewer good ones. That needs a paid turn.
