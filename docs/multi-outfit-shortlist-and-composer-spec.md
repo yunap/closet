@@ -391,3 +391,7 @@ Owner: it does not belong in an at-home plan. `buildPlanReport` now writes no re
 "Every look is distinct", "Packing reuse") for any plan kind but a trip; trips keep their lines as before (the
 2026-10-28 change that sent other plans the repeat line is undone). Offline: the thread's captured plan call, roster
 and composed looks rebuilt on a DB copy return plan lines with no reuse line. Pinned in `test/plan_roster.test.js`.
+
+## 12 · The plan roster is a choice set again (2026-10-30)
+
+§11 reused the trip's roster call and dropped its packing paragraphs, and with them its only sizing; the plan wording asked for the garments the looks need, so the roster shrank to one look's worth (`thread_1793389062299`: 11 pieces for three mornings). §10's intent — the composer chooses from photos, so it needs alternatives — is restored as wording, not as per-part quotas: the plan roster prompt now asks for more than one candidate for each part a look needs and states the 60-photo limit. Engine map item 94.

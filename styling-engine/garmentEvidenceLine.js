@@ -53,7 +53,10 @@ export function garmentEvidenceFields(piece = {}) {
   }
   const fields = []
   const add = (key, v) => { if (Array.isArray(v) ? v.length : v) fields.push([key, v]) }
-  add('category', `${group}${group === 'bottom' && clean(piece.bottom_subtype) ? ` (${piece.bottom_subtype})` : ''}`)
+  // The recorded type beside the category, for every group that has one. Tops and outerwear were left out when their types
+  // arrived after this line (2026-10-19): 23 sweaters reached every model as "top" and both cardigans as "outerwear".
+  const subtype = clean(piece[{ bottom: 'bottom_subtype', top: 'top_subtype', outerwear: 'outerwear_subtype' }[group]])
+  add('category', `${group}${subtype ? ` (${subtype})` : ''}`)
   add('fabric', value('fabric_category'))
   // normalizeFiberContent drops 'unknown', so the recorded list is read for it directly: a partly unknown record keeps it.
   const recordedFibres = parsedList(piece.fiber_content)

@@ -1434,7 +1434,10 @@ export const STYLIST_TOOLS = [
               // want. Unratified scaffolding from PR #58, not a ruling.
               occasion: { type: "string", enum: OCCASION_VALUES, description: "This slot's occasion. An ordinary restaurant dinner or a night out that is not dressy is 'smart casual' (or 'city'); reserve 'evening' for genuinely dressier night-out use cases — a dinner date, wine bar, theater, cocktails." },
               activity: { type: "string", enum: ACTIVITY_VALUES, description: "Physical-demand axis for this slot — drives footwear rules. Use 'walking' for all-day city/sightseeing slots; 'none' for dinners unless the user says otherwise." },
-              environment: { type: "string", enum: ["indoor", "home", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/home/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries, museums) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. Use 'home' when the whole slot is spent inside the home the person is living or staying in, with no travel and no time outdoors: no outside weather is given for it, and you dress for the room and what happens in it. A museum or gallery visited while away on a trip is still 'indoor', and its activity is 'walking': the wearer walks the streets to it and between places, so the shoes are chosen for that. Omit when unsure; outdoor is the default." },
+              environment: { type: "string", enum: ["indoor", "home", "outdoor", "beach_coastal"], description: "The slot's physical setting — the ONLY field for indoor/home/outdoor/beach_coastal (never weather text). Use 'beach_coastal' for beach, pool, seaside, or coastal-outing slots; it drives sand/water/wind handling. Use 'indoor' for climate-controlled slots (offices, restaurants, galleries, museums) — the outside temperature still governs transit and cold-weather coverage, while the indoor base may stay light. Use 'home' when the slot is spent in the home the person is living or staying in; say in time_outside whether it includes any time outside. A museum or gallery visited while away on a trip is still 'indoor', and its activity is 'walking': the wearer walks the streets to it and between places, so the shoes are chosen for that. Omit when unsure; outdoor is the default." },
+              // 2026-10-30 (docs/plan-prompt-audit-2026-10-30.md, ruling 5): "cooking, then perhaps a neighborhood walk"
+              // could only be planned as outdoor walking. Required, so it is never silently assumed.
+              time_outside: { type: "string", enum: ["none", "brief", "to_and_from"], description: "How much of this use case is spent outside. 'none': not worn outside at all. 'brief': mostly indoors or at home, with short or occasional time outside, possibly at no set time (stepping out for coffee, a short walk with guests); the outdoor temperature is given for that time only, and the slot's activity is still its main use (a short walk within it does not make it 'walking'). 'to_and_from': getting to and from the place, as for a restaurant, an office or a museum. For an outdoor use case, which is worn outside throughout, use 'to_and_from'." },
               count: { type: "integer", minimum: 1, maximum: 3, description: "Distinct outfits to compose for this slot. Default 1." },
               user_weather: USER_WEATHER_SCHEMA,
               weather_estimate: WEATHER_ESTIMATE_SCHEMA,
@@ -1478,7 +1481,7 @@ export const STYLIST_TOOLS = [
               best_for: { type: "string", description: "The specific use case this slot covers (defaults to the label)." },
               plan_note: { type: "string", description: "Optional one-sentence composer guidance for this slot." }
             },
-            required: ["label", "occasion", "activity"]
+            required: ["label", "occasion", "activity", "time_outside"]
           }
         },
         constraints: {

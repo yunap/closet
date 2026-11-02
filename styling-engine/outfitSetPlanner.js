@@ -1297,6 +1297,10 @@ function isGenericSeasonText(season = '') {
 // becomes physical weather here; `season`/`mood` only feed the at-home
 // no-location heuristic fallback, which resolveWeatherForRequest itself
 // keeps as a deliberate, unchanged no-op (spec §6.1).
+const TIME_OUTSIDE_VALUES = new Set(['none', 'brief', 'to_and_from'])
+// The hours someone might step out on a day mostly indoors, when no time is set: the waking day, not the overnight low.
+const BRIEF_TIME_OUTSIDE_WINDOW = { start_local: '08:00', end_local: '23:00' }
+
 export async function resolveSlotWeather(slot = {}, { mood = '', question = '', dateRange = {}, location = '', fetchImpl, seasonIsCalendarOnly = false } = {}) {
   const moodText = mood || question
   // Fall back to `undefined` (not '') when no date is known: resolveWeatherForRequest
@@ -1321,20 +1325,36 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
   // live Nice Dinners slot (evening occasion, indoor) inherited the day's full 95°F/55°F envelope as
   // its transit temperature instead of the actual ~55-65°F evening window as a direct result.
   const isIndoorSlot = slot.statedWeather === 'indoor'
-  // A slot spent at home has no way there and back (2026-10-30, thread_1793331990443): "Mornings at
-  // Home" was labelled "indoor; transit: mornings 48–63°F", the shortlist read the outdoor low as the
-  // morning's temperature and chose sweaters "to keep warm". Nothing is looked up; the room's own
-  // temperature is unknown and is said to be. Stated or estimated weather is not used either: a slot
-  // inherits the plan's, which is the outside forecast ("it'll be 45 this weekend").
-  if (slot.atHome === true) {
+  // How much of an indoor or home use case is spent outside (time_outside, 2026-10-30; the set-aside
+  // docs/primary-environment-outdoor-time-spec.md design). 'none': nothing is looked up and the room's own
+  // temperature is said to be unknown — "Mornings at Home" had been labelled "indoor; transit: mornings 48–63°F" and
+  // the shortlist chose sweaters "to keep warm" (thread_1793331990443). Stated or estimated weather is not used either:
+  // a slot inherits the plan's, which is the outside forecast. 'brief': the outdoor reading is kept, for the time
+  // outside only, over the waking day unless the slot has its own time; the look itself is not dressed for it
+  // ("cooking, then perhaps a neighborhood walk" was planned as outdoor walking: thread_1793347659171).
+  const timeOutside = isIndoorSlot ? (slot.timeOutside || (slot.atHome === true ? 'none' : '')) : ''
+  if (timeOutside === 'none') {
     return {
       profile: {
         isHot: false, isCold: false, isColdSevere: false, isExtremeHeat: false, isIndoor: true,
         weatherSource: 'not_applicable',
         resolvedWeatherContext: { status: 'not_applicable', overallSource: '' },
       },
-      label: 'at home, no travel or time outdoors; the indoor temperature was not stated',
+      label: slot.atHome === true
+        ? 'at home, no travel or time outdoors; the indoor temperature was not stated'
+        : 'indoors, no time outside; the indoor temperature was not stated',
       timeSensitivity: { status: 'not_material' }
+    }
+  }
+  if (timeOutside === 'brief') {
+    const reading = await resolveSlotWeather(
+      { ...slot, timeOutside: 'to_and_from', ...(slot.timeWindow ? {} : { timeWindow: BRIEF_TIME_OUTSIDE_WINDOW }) },
+      { mood, question, dateRange, location, fetchImpl, seasonIsCalendarOnly },
+    )
+    const outdoors = String(reading.label || '').replace(/^indoor; transit: /, '')
+    return {
+      ...reading,
+      label: `${slot.atHome === true ? 'mostly at home' : 'mostly indoors'}, the indoor temperature was not stated; time outside: brief${slot.timeWindow ? '' : ', no set time'} — outdoors ${outdoors}`,
     }
   }
   // 2026-10-02 (live thread_1790929985430): a trip activity with no day of its own inherits the
@@ -4579,6 +4599,7 @@ export function serializeTripRequirementSlot(slot = {}) {
     statedWeather: slot.statedWeather || '',
     environment: slot.environment || '',
     ...(slot.atHome === true ? { atHome: true } : {}),
+    ...(slot.timeOutside ? { timeOutside: slot.timeOutside } : {}),
     register: slot.register || '',
     occasion: slot.stylingContext?.occasion || slot.occasion || '',
     activity: slot.stylingContext?.activity || slot.activity || '',
@@ -4604,6 +4625,7 @@ export function restoreTripRequirementSlot(persisted = {}) {
     statedWeather: persisted.statedWeather,
     environment: persisted.environment,
     ...(persisted.atHome === true ? { atHome: true } : {}),
+    ...(persisted.timeOutside ? { timeOutside: persisted.timeOutside } : {}),
     register: persisted.register,
     occasion: persisted.occasion,
     activity: persisted.activity,
@@ -5044,7 +5066,9 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       // decided this slot calls for — a derived styling judgment the model was then instructed to
       // obey. The exposure window is the fact underneath it, and the model can size a layer from a
       // temperature range on its own (docs/model-facing-signal-inventory.md).
-      exposure_conditions: slotExposureConditions(slotExposure),
+      exposure_conditions: slot.timeOutside === 'brief'
+        ? slotExposureConditions(slotExposure).replace('indoor destination, outdoor transit', 'mostly indoors, brief time outside')
+        : slotExposureConditions(slotExposure),
       // The daypart range is measured on ONE day. For an activity with no day of its own that day
       // is the trip's first, a stand-in (engine map, 2026-10-02 amendment: "still first-day-only…
       // resolveSlotTimeSensitivity"), and showing it beside a week's weather_used told the
@@ -6814,6 +6838,13 @@ export function normalizePlanSlots(rawSlots = [], {
         location,
         environment,
         ...(atHome ? { atHome: true } : {}),
+        // Indoor and home slots only: a home slot is 'none' unless it says 'brief'; an indoor venue defaults to getting
+        // there and back. Structured; no keyword reader sets or reads it.
+        ...(() => {
+          const declared = TIME_OUTSIDE_VALUES.has(String(slot?.time_outside || '').trim()) ? String(slot.time_outside).trim() : ''
+          if (atHome) return { timeOutside: declared === 'brief' ? 'brief' : 'none' }
+          return environment === 'indoor' ? { timeOutside: declared || 'to_and_from' } : {}
+        })(),
         date: resolvedSlotDate,
         // True when the slot named no day of its own and resolvedSlotDate is only the trip's first
         // day standing in for it. resolveSlotWeather reads this to slice the slot's time of day

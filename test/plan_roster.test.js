@@ -18,7 +18,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { db } = await import('../db.js')
 const { executeTool } = await import('../styling-engine/tools.js')
-const { coordinatedPlanCompositionSchema, coordinatedPlanCompositionSystemPrompt, tripRosterSelectionSystemPrompt, tripRosterSelectionUserText, tripPlanCompositionSystemPrompt } = await import('../routes/ai.js')
+const { PLAN_ROSTER_PHOTO_CEILING, coordinatedPlanCompositionSchema, coordinatedPlanCompositionSystemPrompt, tripRosterSelectionSystemPrompt, tripRosterSelectionUserText, tripPlanCompositionSystemPrompt } = await import('../routes/ai.js')
 
 after(() => {
   db.close()
@@ -174,10 +174,22 @@ test('trips and capsules never call the plan chooser; a trip still uses its own'
   assert.equal(tripCalls, 1)
 })
 
+// A plan's roster is what the photo composer chooses from, not a suitcase (owner, 2026-10-30):
+// thread_1793389062299 shortlisted one look's worth per morning, so the composer had nothing to swap
+// for the fuzzy wide-sleeved cardigan it put over a ribbed mock-neck.
+test('a plan roster gives each look alternatives for the photo composer, within its photo ceiling', () => {
+  const system = tripRosterSelectionSystemPrompt({ planKind: 'coordinated_plan' })
+  assert.match(system, /Pick, by ID, the garments the next step should choose from/)
+  assert.match(system, /give each look more than one candidate for each part it needs/)
+  assert.match(system, /Then choose the pieces those looks could be made from/)
+  assert.match(system, new RegExp(`up to ${PLAN_ROSTER_PHOTO_CEILING} photographs`))
+  assert.match(tripRosterSelectionSystemPrompt(), /Then choose the pieces those looks need/, 'a trip still packs what its looks need')
+})
+
 test('one roster prompt for every plan: the trip\'s, with only its packing paragraphs left out; it reads the request in the person\'s words and each use case\'s season', () => {
   const system = tripRosterSelectionSystemPrompt({ planKind: 'coordinated_plan' })
   assert.match(system, /Nothing is being packed/)
-  assert.match(system, /a garment you leave out cannot be used/)
+  assert.match(system, /A garment you leave out cannot be used/)
   assert.doesNotMatch(system, /suitcase|5-4-3-2-1|travels well/i)
   assert.match(tripRosterSelectionSystemPrompt(), /suitcase/, 'the trip prompt keeps its packing contract')
   // The trip's lessons that are not about packing reach every plan (owner, 2026-10-28).
