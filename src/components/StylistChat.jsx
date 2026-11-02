@@ -5509,9 +5509,11 @@ export default function StylistChat({
         // failure, under "I would skip", with rating chips and no way to retry (thread_1793144336653, 2026-10-27).
         // It is a failed turn: shown as the error bubble, with a retry of this same piece request.
         if (data.debug?.compositionSkipped === 'composer_failed') {
-          throw Object.assign(new Error(data.debug.composerErrorIsTimeout
-            ? "The stylist didn't answer in time, so no outfits came back."
-            : "The stylist couldn't put outfits together this time."), { userFacing: true })
+          throw Object.assign(new Error(data.debug.composerErrorIsBilling
+            ? "The AI provider refused this request because of a billing problem on the account, so no outfits came back. Trying again may not help until that's sorted out."
+            : data.debug.composerErrorIsTimeout
+              ? "The stylist didn't answer in time, so no outfits came back."
+              : "The stylist couldn't put outfits together this time."), { userFacing: true })
         }
         replyText = data.feedback || 'Something went wrong.'
         replyStructuredOutfits = data.structuredOutfits || null

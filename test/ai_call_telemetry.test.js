@@ -322,3 +322,18 @@ test('logAiCall warns and still records an honest unattributed row when context 
   assert.ok(row)
   assert.equal(row.tagger_source, '')
 })
+
+test('a failed real provider call is printed to the server console; a mock failure is not', async () => {
+  const { logAiCall } = await import('../lib/aiCallTelemetry.js')
+  const printed = []
+  const original = console.error
+  console.error = (...args) => printed.push(args.join(' '))
+  try {
+    await logAiCall({ flow: 'selected_piece_composer', provider: 'gemini', model: 'gemini-3.7-flash', subflow: 'selected_piece_visual_composer', success: false, errorMessage: 'payment required' })
+    await logAiCall({ flow: 'selected_piece_composer', provider: 'gemini', model: 'gemini-3.7-flash', success: false, errorMessage: 'mock failure', isMock: true })
+    await logAiCall({ flow: 'selected_piece_composer', provider: 'gemini', model: 'gemini-3.7-flash' })
+  } finally {
+    console.error = original
+  }
+  assert.deepEqual(printed, ['[ai call failed] gemini gemini-3.7-flash (selected_piece_visual_composer): payment required'])
+})

@@ -709,6 +709,22 @@ test('generation_runs is not written on selected-piece error path', async () => 
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM generation_runs').get().count, 0)
 })
 
+test('selected-piece composer refused on billing grounds tells the client so', async () => {
+  globalThis.__WARDROBE_AI_TEST_HANDLER__ = () => {
+    throw Object.assign(new Error('payment required'), { status: 402, isBilling: true })
+  }
+
+  const json = await postJson('/api/ai/generate-outfits-for-piece', {
+    pieceId: seeded.bottom,
+    occasion: 'city',
+    season: 'current season',
+  })
+
+  assert.equal(json.debug.compositionSkipped, 'composer_failed')
+  assert.equal(json.debug.composerErrorIsBilling, true)
+  assert.equal(json.debug.composerErrorIsTimeout, false)
+})
+
 // ATOMIC STRUCTURED OUTPUT (2026-09-13). The anchor used to be unshifted into any card that omitted
 // it, which presented an answer the model never gave. The composer is still told the anchor is the
 // premise; a card without it is shown as Needs review, saying so, with the model's own slots.
