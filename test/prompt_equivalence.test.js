@@ -700,6 +700,14 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         'around those calls, not as a hand-written piece list. When the user is instead thinking with you — exploring directions, asking how you see a piece or what could go with it — answer in words (declare want:\'text\'): name the directions, what each would do for the piece and which of their garments it would draw on, and offer to build any of them as cards. Build cards once they ask to see one. When they ask for examples, more options or something else, propose outfits not already shown in this thread unless they ask to see one again, and let examples of directions you have just discussed build those directions. Use \'generate_outfits\''
       )
     }
+    // 2026-11-01 (owner: "if the complaint is general it should be saved"; thread_1793389062299): a
+    // general dislike raised against one card was only swapped, never stored.
+    if (key === 'STYLIST_SYSTEM') {
+      expected = expected.replace(
+        'the same way you would judge any other candidate.\n',
+        'the same way you would judge any other candidate. When the issue is stated generally — about a kind of garment or combination, not only this piece ("I don\'t like cardigans over long sleeves") — it is also a standing preference: save it with \'store_user_correction\' in her own words as well as making the swap.\n'
+      )
+    }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
 })

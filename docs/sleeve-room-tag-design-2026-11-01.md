@@ -1,6 +1,6 @@
 # Sleeve room: a tag for how much fits inside a layer's sleeve
 
-**Status:** design for owner review, 2026-11-01. Not built. **Tested the same day and not supported:** with both cardigans recorded `thin_sleeves` and the values defined, the two failing cards were still kept (engine map 96). Also corrected the same day by the owner: the black top 996913 is a fine knit; its bulk is the finished sleeve cuff, which no recorded field describes. Owner direction the same day: "Design a sleeve-fit tag".
+**Status:** historical — a proposed design, 2026-11-01. Not built. **Tested the same day and not supported:** with both cardigans recorded `thin_sleeves` and the values defined, the two failing cards were still kept (engine map 96). Also corrected the same day by the owner: the black top 996913 is a fine knit; its bulk is the finished sleeve cuff, which no recorded field describes. Owner direction the same day: "Design a sleeve-fit tag".
 Related: [sleeve-thickness-audit-2026-10-21.md](sleeve-thickness-audit-2026-10-21.md) (owner ruling: no
 sleeve-*thickness* field), [research-layering-fit-2026-11-01.md](research-layering-fit-2026-11-01.md),
 [garment-field-reference.md](garment-field-reference.md), engine map item 96.

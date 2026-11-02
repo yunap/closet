@@ -535,7 +535,7 @@ effect. Where an action has no reader, that is stated.
 
 Five conclusions that follow, and that are easy to miss when reading the sections separately:
 
-1. **Automatic correction capture exists** — `store_user_correction` (§3).
+1. **Automatic correction capture exists** — `store_user_correction` (§3). Capture is the stylist model's choice alone; nothing catches a missed save. A general dislike raised against one card was swapped and never stored (`thread_1793389062299`); since 2026-11-01 the swap rule itself asks for the save (engine map 97).
 2. **[fixed 2026-08-09] It can now produce a verified garment-scoped rule.** A structured
    `piece_id` routes the correction to that garment's Rules learned list; prose names and
    unverified IDs cannot create piece authority.
