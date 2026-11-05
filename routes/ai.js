@@ -3567,7 +3567,13 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     content.push({ type: 'text', text: [
       location ? `Location: ${location}` : '',
       `Occasion: ${occasion}`,
-      `Season: ${season}`,
+      // Live thread_1793856738809 (hosting at home on a November Saturday): the model read "Season: current
+      // season; mild weather" and was never told it was fall, beside garment lines tagged "season warm", and
+      // chose sandals, a sleeveless summer dress and canvas slip-ons. The same fault the plan shortlist and
+      // the selected-piece composer already had fixed (owner ruling 2026-10-27, thread_1793167020175: state
+      // the season, no new gate). The second sentence is the plan composer's convention, word for word.
+      `Season: ${seasonPromptLabel(season, stylingContext.calendarSeason)}`,
+      extractSeasonRequest(season) && stylingContext.calendarSeason ? "A garment's tagged season is the season it is tagged to be worn in." : '',
       tempText ? `Temperature: ${tempText}${demandLabel ? ' — judge the outfit against the range, not against a number' : ''}` : '',
       // At home (owner ruling 2026-11-04): the outdoor forecast, for stepping outside only; never tempText.
       stepOutsideForecastLine(weatherProfile),

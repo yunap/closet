@@ -964,6 +964,29 @@ test('whole-wardrobe current-season composition receives applicable summer lesso
   assert.match(promptText, /not preferred for summer outfits/)
 })
 
+// Live thread_1793856738809: a November party at home was composed from "Season: current season; mild
+// weather", never naming fall, beside garment lines tagged "season warm" — sandals, a sleeveless summer
+// dress, canvas slip-ons. The owner's 2026-10-27 ruling for plans (state the season, no new gate) applies.
+test('the options composer is told which season "current season" is, with the tag convention', async () => {
+  aiCalls = []
+  await postJson('/api/ai/generate-wardrobe-outfits-visual', {
+    occasion: 'casual',
+    season: 'current season; mild weather',
+    currentDate: '2026-11-07T12:00:00-08:00',
+    limit: 2,
+  })
+  const composerCall = aiCalls.find(call => call.system.includes('personal stylist. You are looking at photos'))
+  assert.ok(composerCall)
+  const promptText = composerCall.messages
+    .flatMap(message => Array.isArray(message.content) ? message.content : [])
+    .filter(part => part?.type === 'text')
+    .map(part => part.text)
+    .join('\n')
+  assert.match(promptText, /^Season: fall \(the current season\); mild weather$/m)
+  assert.match(promptText, /^A garment's tagged season is the season it is tagged to be worn in\.$/m)
+  assert.doesNotMatch(promptText, /^Season: current season/m)
+})
+
 test('whole-wardrobe visual composer per-piece lines are the shared recorded-fact line, with the tagger impression on its own labelled line (no derived warmth or pairing cautions)', async () => {
   aiCalls = []
   const plainPiece = insertPiece({

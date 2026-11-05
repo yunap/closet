@@ -403,6 +403,8 @@ test('both calls name the season when the request says "current season"; a named
   assert.equal(seasonPromptLabel('current season', 'fall'), 'fall (the current season)')
   assert.equal(seasonPromptLabel('winter', 'fall'), 'winter')
   assert.equal(seasonPromptLabel('current season', ''), 'current season')
+  assert.equal(seasonPromptLabel('current season; mild weather', 'fall'), 'fall (the current season); mild weather', 'a compound value keeps its other parts (thread_1793856738809)')
+  assert.equal(seasonPromptLabel('current', 'fall'), 'fall (the current season)')
 })
 
 // Owner ruling 2026-10-27: "if the model can't produce the outfits it considers good it should not fill the count
