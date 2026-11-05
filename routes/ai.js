@@ -78,6 +78,7 @@ import {
 import { serializeWeatherProfile, restoreWeatherProfile, restoreResolvedWeatherContext, registerWeatherHomeLocationReader, normalizedWeatherLocationIdentity } from '../styling-engine/weather.js'
 import { extractSeasonRequest, resolveCalendarSeason, seasonPromptLabel } from '../lib/seasonContext.js'
 import { projectStylingApplicabilityContext, resolveStylingContext, stepOutsideForecastLine } from '../styling-engine/stylingContext.js'
+import { reportTurnProgress, startTurnProgressStream } from '../lib/turnProgress.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
@@ -4281,6 +4282,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     if (composerReturnedNoOutfits) {
       layerRepairDebug.reason = 'skipped: composer returned zero model-composed outfits this turn'
     } else if (repairable.length) {
+      reportTurnProgress('layer_repair', { count: repairable.length })
       const repairStartedAt = Date.now()
       try {
         // THE SAME EVIDENCE THE COMPOSER HAD: every garment arrives as its photograph plus its
@@ -7450,6 +7452,8 @@ router.post('/repair-capsule-look', async (req, res) => {
 })
 
 router.post('/ask', async (req, res) => {
+  // Opt-in progress lines for the chat's wait (lib/turnProgress.js); a no-op without the header.
+  startTurnProgressStream(req, res)
   // Hoisted so the catch below can still record what this turn spent and
   // learned. A turn that throws part-way has usually already made paid provider
   // calls — thread_1785902365403 completed and paid for a capsule roster call,
@@ -7722,6 +7726,19 @@ router.post('/ask', async (req, res) => {
         recordToolLoopUsage(toolContext, routed.usage)
         bumpFreeformDiagnostic(toolContext, 'executionRouterCalls')
         recordFreeformToolIteration(toolContext, ['execution_router'])
+        // How the request was read, shown while the turn works so a misreading is visible in seconds.
+        // The router's own fields only; the client words them.
+        reportTurnProgress('understood', {
+          profile: String(routed.value?.profile || ''),
+          limit: Number(routed.value?.limit) || 0,
+          occasion: String(routed.value?.occasion || ''),
+          activity: String(routed.value?.activity || ''),
+          setting: String(routed.value?.setting || ''),
+          location: String(routed.value?.location || ''),
+          date: String(routed.value?.date || ''),
+          timeOfDay: String(routed.value?.time_of_day || ''),
+          asking: Boolean(String(routed.value?.clarifying_question || '').trim()),
+        })
         // The router has already resolved the request's structured occasion/activity. Preserve
         // that result as established turn state even when the selected profile is full_stylist;
         // otherwise a later search_wardrobe call that omits those optional arguments silently

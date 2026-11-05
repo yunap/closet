@@ -63,6 +63,7 @@ import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 import { getStylistConversationState } from './conversationState.js'
 import { validateOwnerConstraintInput } from '../lib/ownerConstraints.js'
 import { extractOwnerGuidanceApplicability, validateOwnerGuidanceApplicability } from '../lib/ownerGuidance.js'
+import { reportTurnProgress } from '../lib/turnProgress.js'
 
 export const CAPSULE_PLAN_EVIDENCE_BOUNDARY = ` Capsule evidence boundary: a requested colour may serve any visual role and never has to be a hero piece. A roster piece absent from the representative cards means only "not demonstrated" — never rejected, bad, or previously flagged. State a requested-colour shortage or wardrobe gap only when a plan_line explicitly reports insufficient eligible supply; absence from the roster or cards is not supply evidence.`
 
@@ -1718,8 +1719,24 @@ function correctUnpermittedColdLayerDecisions(pendingPlan = {}, submittedOutfits
   return { outfits, corrected }
 }
 
+// What the chat's progress line may say about a tool call (lib/turnProgress.js): its name and plain
+// counts or categories from its arguments, never the arguments themselves.
+export function toolProgressFacts(name, args = {}) {
+  const facts = { tool: String(name || '') }
+  const categories = [].concat(args?.category || []).map(String).filter(Boolean)
+  if (name === 'search_wardrobe' && categories.length) facts.categories = [...new Set(categories)]
+  if (name === 'view_pieces' && Array.isArray(args?.ids)) facts.count = new Set(args.ids).size
+  if (name === 'generate_outfits') {
+    if (Number(args?.limit) > 0) facts.count = Number(args.limit)
+    if (args?.piece_id) facts.aroundPiece = true
+  }
+  if ((name === 'plan_outfit_set') && Array.isArray(args?.slots)) facts.count = args.slots.length
+  return facts
+}
+
 export async function executeTool(name, args, toolContext = {}) {
   console.log(`\n🤖 [Agent Tool Call] ${name} (${JSON.stringify(args)})`)
+  reportTurnProgress('tool', toolProgressFacts(name, args))
   try {
     const result = await executeToolInternal(name, args, toolContext)
     logAgentToolResult(name, result)
@@ -5053,6 +5070,9 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           const composerProducedNoModelCards = !(Number(result?.debug?.aiReturnedCount) > 0)
           if (composerProducedNoModelCards) {
             bumpFreeformDiagnostic(toolContext, 'composerZeroModelCardsNotReportedAsSuccess')
+            // Said plainly in the chat's progress (thread_1793852510241: a first attempt ran out of room
+            // and the turn silently took another minute). Whether to retry stays the stylist's.
+            reportTurnProgress('attempt_failed', { tool: 'generate_outfits' })
             const engineAssembledCount = result.structuredOutfits.filter(outfit => outfit?.composedBy === 'engine').length
             return {
               status: "error",

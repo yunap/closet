@@ -8327,6 +8327,22 @@ button.outfit-styling-outfit-name { cursor: pointer; }
   30% { opacity: 1; transform: scale(1); }
 }
 
+/* Chat turn progress (src/components/TurnProgress.jsx) */
+.turn-progress { display: flex; flex-direction: column; gap: 4px; font-size: var(--type-meta); }
+.turn-progress-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.turn-progress-chip {
+  font-size: var(--type-caption);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.turn-progress-done { color: var(--text-muted); }
+.turn-progress-done.is-warning { color: var(--repair); }
+.turn-progress-current { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.turn-progress-current .typing-dots { padding: 0; }
+.turn-progress-elapsed { font-size: var(--type-caption); color: var(--text-light); margin-top: 2px; }
+
 /* ── Outfit lookbook ───────────────────────────────────────────── */
 .outfit-grid {
   display: grid;

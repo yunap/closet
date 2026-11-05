@@ -741,6 +741,18 @@ plan: a header, an overview block, then looks grouped by slot.
 
 ---
 
+## Stylist → the wait while a reply is composed
+
+**[owner request 2026-11-04: "just showing '...' to the user is not good enough"]** A chat turn takes a median of about 20 s of model time and up to several minutes (268 turns since 2026-10-01; `ai_call_log`). While it works, the reply position shows `TurnProgress` (`src/components/TurnProgress.jsx`) in place of the three dots:
+
+- **How the request was read**, as chips from the router: *At home · Saturday · Casual · A few options*. Only on turns that build outfits; none on a garment question or a turn that will ask a question first. The point is that a misreading shows in seconds, not in a weather note two minutes later.
+- **The current step**, with the last three finished steps ticked under it ("Looking through your tops, bottoms and shoes", "Putting together 3 outfits from the photos", "Looking for a layer for 2 looks").
+- **A failed attempt said plainly**: "That attempt didn't finish", in the warning colour. Whether to retry stays the stylist's.
+- **Elapsed seconds** from 8 s; from 60 s, "Longer requests can take a couple of minutes".
+- **[owner ruling 2026-11-04] No "ready" line.** The reply replaces the block; the outfits arriving say it is done, and nothing about the wait stays in the thread.
+
+The three composer landing panels keep their one status line, which now shows the current step. Other loading flows (the direct "Create my outfits" button and its timed status messages, critique, evaluation) are unchanged. Not built yet: a Stop button (needs the server to stop issuing model calls when the browser goes away, or it only hides the cost), thumbnails of the pieces being looked at, and picking a turn's progress back up after a reload. Transport: `message-lifecycle.md`, amendment 2026-11-04.
+
 ## Stylist → response chips and the thread header
 
 **How you get there.** The chip row under each structured reply, and the subtitle beside the page

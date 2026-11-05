@@ -2508,6 +2508,36 @@ test('freeform ask attaches generated outfit image context when cards are suppli
   assert.match(latestUserMessage.content[1].text, /generated outfit garment-reference sheet/)
 })
 
+// Chat turn progress (lib/turnProgress.js, owner 2026-11-04): the same /ask turn, asked for progress,
+// streams lines and ends with exactly the JSON body it would otherwise have sent.
+test('/ask with the progress header streams and ends with the ordinary response body', async () => {
+  const body = {
+    question: 'today is June 1st',
+    pieces: [],
+    history: [
+      { role: 'user', content: 'What should I pack for Portland in a few weeks?' },
+      { role: 'assistant', content: 'Assuming fall, bring layers.' },
+    ],
+    conversationMode: 'correction',
+    currentDateLabel: 'Monday, June 1, 2026',
+    timezone: 'America/Los_Angeles',
+  }
+  const plain = await postJson('/api/ai/ask', body)
+  const response = await fetch(`${baseUrl}/api/ai/ask`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-stylist-progress': 'ndjson' },
+    body: JSON.stringify(body),
+  })
+  assert.equal(response.status, 200)
+  assert.match(response.headers.get('content-type'), /application\/x-ndjson/)
+  const lines = (await response.text()).trim().split('\n').map(line => JSON.parse(line))
+  const result = lines.at(-1)
+  assert.equal(result.type, 'result')
+  assert.equal(result.status, 200)
+  assert.equal(result.body.answer, plain.answer)
+  assert.ok(lines.slice(0, -1).every(line => line.type === 'progress'), 'every line before the result is progress')
+})
+
 test('freeform ask grounds date and correction mode for conversational follow-ups', async () => {
   const json = await postJson('/api/ai/ask', {
     question: 'today is June 1st',
