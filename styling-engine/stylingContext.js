@@ -414,6 +414,43 @@ function profileFromResolvedWeatherContext(resolved, { indoor = false } = {}) {
   }, { indoor })
 }
 
+// Owner ruling 2026-11-04 (thread_1793852510241, hosting neighbours at home): "how can the live forecast
+// tell the model my indoor temperature? it's fine to have it in case the host needs to go outside". So an
+// occasion the router placed at home may carry the outdoor forecast, for stepping outside only. It lives
+// in its own field and nothing that judges an outfit reads it: the at-home profile keeps no highF/lowF
+// and no cold or hot flag, so no weather note, layer repair or set disclosure can fire from it. Not on
+// plan slots, which say their own time outside (`time_outside`, outfitSetPlanner.js); a home slot with
+// none still gets no outdoor numbers (engine map item 87: the shortlist read the outdoor low as the
+// morning's indoor temperature). A forecast already resolved earlier this turn is reused, so a
+// composer retry with live lookups off still has it.
+async function resolveStepOutsideForecast({ evidence, location, date, allowLiveWeather, weatherResolver }) {
+  const earlier = profileCandidate(evidence, 'explicitRequest')?.stepOutsideForecast
+    || profileCandidate(evidence, 'establishedState')?.stepOutsideForecast
+  if (earlier && Number.isFinite(earlier.highF)) return earlier
+  if (!allowLiveWeather || !hasText(location)) return null
+  try {
+    const live = await weatherResolver({ date: date || new Date(), location, mood: '', season: '' })
+    if (live?.weatherSource !== 'live' || !Number.isFinite(Number(live.highF))) return null
+    return {
+      highF: Number(live.highF),
+      ...(Number.isFinite(Number(live.lowF)) ? { lowF: Number(live.lowF) } : {}),
+      location: text(live.resolvedWeatherContext?.location || location),
+    }
+  } catch {
+    return null
+  }
+}
+
+// The one sentence every model-facing surface uses for it, so none states the number as the room's.
+export function stepOutsideForecastLine(profile) {
+  const forecast = profile?.stepOutsideForecast
+  if (!forecast || !Number.isFinite(forecast.highF)) return ''
+  const high = Math.round(forecast.highF)
+  const low = Number.isFinite(forecast.lowF) ? Math.round(forecast.lowF) : null
+  const range = low !== null && low !== high ? `high ${high}°F, low ${low}°F` : `around ${high}°F`
+  return `At home for the whole occasion; the indoor temperature was not stated. Outdoors${forecast.location ? ` in ${forecast.location}` : ''}, if the wearer steps outside: forecast ${range}. That is the outdoor temperature, not the room's: dress for the room, and do not judge the outfit's warmth against it.`
+}
+
 async function resolveWeather({
   evidence,
   season,
@@ -440,8 +477,13 @@ async function resolveWeather({
   // destination forecast cached earlier in the turn or restored from the thread's cards is not
   // projected onto it as transit. Weather the user stated this turn still goes through below.
   if (indoorEnvironment && explicitRequest.indoorOnly === true && !validateUserWeather(explicitRequest.userWeather)) {
+    const profile = statedWeatherProfile({ statedWeather: explicitStatedWeather, mood, requestText, date })
+    const stepOutsideForecast = await resolveStepOutsideForecast({ evidence, location, date, allowLiveWeather, weatherResolver })
+    // `atHome` says the router placed the whole occasion at home (owner, 2026-11-04): the options
+    // composer's roster then gives its layer photo slots to indoor layers first (rules.js,
+    // buildVisualComposerRoster). Like stepOutsideForecast, nothing that judges an outfit reads it.
     return {
-      profile: statedWeatherProfile({ statedWeather: explicitStatedWeather, mood, requestText, date }),
+      profile: { ...profile, atHome: true, ...(stepOutsideForecast ? { stepOutsideForecast } : {}) },
       provenance: { source: 'explicit_request.indoor_only' },
     }
   }

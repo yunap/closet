@@ -3373,9 +3373,131 @@ test('adaptive visual evidence rides the bounded multi-look path only', () => {
   )
   // 2026-10-09: the whole-wardrobe hand-off passes the tool's resolved weather on a follow-up too
   // (thread_1791509009539); the selected-piece path still gets neither, as before.
-  assert.match(wholeWardrobeCall, /resolvedWeatherProfile: carryResolvedWeather \? toolContext\.weatherProfile : null/)
+  // 2026-11-04 (thread_1793852510241): both also take the profile when the router fixed the setting
+  // (at home, or no place given); otherwise the selected-piece path still resolves its own weather.
+  assert.match(wholeWardrobeCall, /resolvedWeatherProfile: carryResolvedWeather \|\| settingFixedWeather \? toolContext\.weatherProfile : null/)
   assert.match(wholeWardrobeCall, /adaptiveVisualDetail: boundedMultiLook/)
-  assert.doesNotMatch(selectedPieceCall, /adaptiveVisualDetail|resolvedWeatherProfile/)
+  assert.doesNotMatch(selectedPieceCall, /adaptiveVisualDetail/)
+  assert.match(selectedPieceCall, /resolvedWeatherProfile: settingFixedWeather \? toolContext\.weatherProfile : null/)
+})
+
+// thread_1793852510241: "hosting a small get-together for my neighbours" was routed indoor_only and the
+// tool resolved an indoor profile with no temperatures. The batch call hit max_tokens; on the retry the
+// hand-off passed no profile (the carry keyed on boundedMultiLook or a highF), so the composer looked
+// up the live home forecast and every card "runs warm for a high of 77°F".
+test('a setting the router fixed reaches the composer, which then looks up no forecast of its own', async () => {
+  const lookups = []
+  const resolver = createStylingContextResolver({
+    weatherResolver: async () => {
+      lookups.push(1)
+      return { weatherSource: 'live', highF: 76.6, lowF: 52.9, isHot: false, isCold: false }
+    },
+  })
+  const composerRequest = weatherProfile => ({
+    explicitRequest: { occasion: 'casual', season: 'current season', location: 'Home', date: new Date('2026-11-07T12:00:00'), statedWeather: '', weatherProfile },
+    policy: { allowLiveWeather: true },
+  })
+  // At home the tool makes one lookup, for the step-outside forecast (next test); no place given makes none.
+  for (const [label, toolRequest, source, toolLookups] of [
+    ['at home', { statedWeather: 'indoor', indoorOnly: true, weatherEstimate: null }, 'explicit_request.indoor_only', 1],
+    ['no place given', { noSituation: true, weatherEstimate: null }, 'explicit_request.no_situation', 0],
+  ]) {
+    lookups.length = 0
+    const tool = await resolver({
+      explicitRequest: { occasion: 'casual', season: 'current season', location: 'Home', date: new Date('2026-11-07T12:00:00'), ...toolRequest },
+      policy: { mode: 'freeform_action', allowLiveWeather: true },
+    })
+    assert.equal(tool.provenanceByField.weatherProfile.source, source, `${label}: the tool's provenance the hand-off keys on`)
+    assert.equal(lookups.length, toolLookups, `${label}: the tool's own lookups`)
+    const composer = await resolver(composerRequest(tool.weatherProfile))
+    assert.equal(lookups.length, toolLookups, `${label}: handed the profile, the composer looks nothing up`)
+    assert.ok(!Number.isFinite(composer.weatherProfile.highF), `${label}: no outdoor temperature reaches the composer`)
+  }
+  // The failure mode, pinned so the test shows what the hand-off prevents.
+  lookups.length = 0
+  const unguided = await resolver(composerRequest(null))
+  assert.equal(lookups.length, 1)
+  assert.equal(unguided.weatherProfile.highF, 76.6)
+
+  const toolsSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tools.js'), 'utf8')
+  assert.match(toolsSrc, /const settingFixedWeather = \['explicit_request\.indoor_only', 'explicit_request\.no_situation'\]\s*\.includes\(stylingContext\.provenanceByField\?\.weatherProfile\?\.source\)/)
+})
+
+// Owner, 2026-11-04 ("Yes, set it to low"): the options composer's 'medium' thinking was set from one run
+// and never shown to help; on gemini-3.7-flash it spent the whole 6,200-token cap thinking, 2 of 2 runs,
+// and every batch was redone by a second composer call. Low thinking, 500 tokens for the stylist note.
+test('the options composer thinks at the default level, with room only for its stylist note', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const start = routeSrc.indexOf('const wantsStylistNote = Boolean(stylistNote && !composerExperiment)')
+  const end = routeSrc.indexOf('// Resolve slots (composerSlots.js)', start)
+  assert.ok(start > 0 && end > start)
+  const composer = routeSrc.slice(start, end).split('\n').filter(line => !line.trim().startsWith('//')).join('\n')
+  assert.match(composer, /structuredResponseMaxTokens\(composerExperiment\?\.maxTokensForCount \|\| requestedLimit\) \+ \(wantsStylistNote \? 500 : 0\)/)
+  assert.doesNotMatch(composer, /thinkingLevel/, 'neither the composer call nor its name correction sets a thinking level')
+})
+
+// Owner ruling 2026-11-04 (thread_1793852510241): "how can the live forecast tell the model my indoor
+// temperature? it's fine to have it in case the host needs to go outside, but saying that the outfit is
+// too warm for 77F is not correct." The at-home profile carries the forecast in its own field, which
+// the model reads as outdoor-only and nothing that judges the outfit reads at all.
+test('an at-home occasion carries the outdoor forecast for stepping outside, and nothing judges the outfit against it', async () => {
+  const { stepOutsideForecastLine } = await import('../styling-engine/stylingContext.js')
+  const { evaluateOutfitEnvironmentalAdequacy } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  const { resolveExposureContext } = await import('../styling-engine/exposure.js')
+  const { requiredThermalBand } = await import('../styling-engine/thermalDemand.js')
+  const lookups = []
+  const resolver = createStylingContextResolver({
+    weatherResolver: async request => {
+      lookups.push(request)
+      return { weatherSource: 'live', highF: 76.6, lowF: 52.9, isHot: false, isCold: false, needsRemovableCoolLayer: true, resolvedWeatherContext: { location: 'Walnut Creek, CA' } }
+    },
+  })
+  const atHome = { occasion: 'casual', season: 'current season', location: 'Walnut Creek, CA', date: new Date('2026-11-07T12:00:00'), statedWeather: 'indoor', indoorOnly: true, weatherEstimate: null }
+
+  const tool = await resolver({ explicitRequest: atHome, policy: { allowLiveWeather: true } })
+  assert.equal(lookups.length, 1)
+  assert.equal(tool.provenanceByField.weatherProfile.source, 'explicit_request.indoor_only')
+  assert.deepEqual(tool.weatherProfile.stepOutsideForecast, { highF: 76.6, lowF: 52.9, location: 'Walnut Creek, CA' })
+  for (const field of ['highF', 'lowF', 'isHot', 'isCold', 'needsRemovableCoolLayer', 'resolvedWeatherContext']) {
+    assert.ok(!tool.weatherProfile[field], `the at-home profile itself states no outdoor ${field}`)
+  }
+
+  const line = stepOutsideForecastLine(tool.weatherProfile)
+  assert.match(line, /indoor temperature was not stated/)
+  assert.match(line, /if the wearer steps outside: forecast high 77°F, low 53°F/)
+  assert.match(line, /not the room's: dress for the room, and do not judge the outfit's warmth against it/)
+  assert.equal(stepOutsideForecastLine({ isHot: false, isCold: false }), '', 'no forecast, no line')
+
+  // Nothing that judges the outfit sees it: same exposure, demand and findings with and without.
+  const { stepOutsideForecast, ...without } = tool.weatherProfile
+  assert.deepEqual(requiredThermalBand(resolveExposureContext({}, tool.weatherProfile)), requiredThermalBand(resolveExposureContext({}, without)))
+  const warmOutfit = [
+    { id: 1, name: 'Wool Sweater', category: 'top', fabric_weight: 'heavy', fiber_content: ['wool'], sleeve_length: 'long' },
+    { id: 2, name: 'Corduroy Pants', category: 'bottom', fabric_weight: 'medium' },
+    { id: 3, name: 'Loafers', category: 'shoes' },
+  ]
+  const judged = evaluateOutfitEnvironmentalAdequacy(warmOutfit, { weatherProfile: tool.weatherProfile })
+  assert.deepEqual(judged.findings, evaluateOutfitEnvironmentalAdequacy(warmOutfit, { weatherProfile: without }).findings)
+  assert.deepEqual(judged.findings, [], 'no warm or cool finding for an evening at home')
+
+  // A retry with live lookups off keeps the forecast already resolved this turn, and looks nothing up.
+  lookups.length = 0
+  const retry = await resolver({ explicitRequest: atHome, establishedState: { weatherProfile: tool.weatherProfile }, policy: { allowLiveWeather: false } })
+  assert.equal(lookups.length, 0)
+  assert.equal(retry.weatherProfile.stepOutsideForecast.highF, 76.6)
+  // The composer, handed the profile, keeps it as is.
+  const composer = await resolver({ explicitRequest: { occasion: 'casual', season: 'current season', location: 'Walnut Creek, CA', statedWeather: '', weatherProfile: tool.weatherProfile }, policy: { allowLiveWeather: true } })
+  assert.equal(lookups.length, 0)
+  assert.equal(stepOutsideForecastLine(composer.weatherProfile), line)
+  // No earlier forecast and lookups off: none, rather than a guess.
+  const offline = await resolver({ explicitRequest: atHome, policy: { allowLiveWeather: false } })
+  assert.equal(offline.weatherProfile.stepOutsideForecast, undefined)
+
+  // Both model-facing surfaces state it with that line.
+  const catalog = buildSingleOutfitStylistCatalog([{ id: 1, name: 'Tee', category: 'top' }], { stylingContext: { activity: 'none', weatherProfile: tool.weatherProfile } })
+  assert.equal(catalog.conditions, line)
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  assert.match(routeSrc, /tempText \? `Temperature: [^\n]*\n[^\n]*\n\s*stepOutsideForecastLine\(weatherProfile\),/, 'the batch composer prompt carries it beside the temperature line')
 })
 
 test('nested composer usage is included in the parent freeform diagnostics', () => {
@@ -3751,7 +3873,7 @@ test('a follow-up holds the thread\'s season: a tool call\'s "warm" does not mak
 
   const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
   assert.match(toolsSrc, /const carryResolvedWeather = boundedMultiLook \|\| Number\.isFinite\(Number\(stylingContext\.weatherProfile\?\.highF\)\)/)
-  assert.match(toolsSrc, /resolvedWeatherProfile: carryResolvedWeather \? toolContext\.weatherProfile : null/, 'a follow-up hand-off passes the weather the tool resolved')
+  assert.match(toolsSrc, /resolvedWeatherProfile: carryResolvedWeather \|\| settingFixedWeather \? toolContext\.weatherProfile : null/, 'a follow-up hand-off passes the weather the tool resolved')
   assert.doesNotMatch(toolsSrc, /resolvedWeatherProfile: boundedMultiLook \? toolContext\.weatherProfile : null/)
 })
 
@@ -5250,4 +5372,13 @@ test('compact answers see suggested new pieces from ideal-additions cards as uno
   assert.match(message, /Close cotton rib, sits at the hip\./)
   assert.doesNotMatch(compactFreeformAnswerMessage({ profile: 'general_advice', question: 'q', context }), /Suggested new pieces/)
   assert.doesNotMatch(compactFreeformAnswerMessage({ profile: 'garment_fact', question: 'q', context: { pieceIds: [1] } }), /Suggested new pieces/)
+})
+
+test('a router-classified at-home turn marks its weather profile atHome, and an ordinary indoor destination does not', async () => {
+  const resolver = createStylingContextResolver({ weatherResolver: async () => ({ weatherSource: 'unavailable' }) })
+  const date = new Date('2026-11-07T12:00:00')
+  const atHome = await resolver({ explicitRequest: { occasion: 'casual', season: 'current season', statedWeather: 'indoor', indoorOnly: true, date, location: 'Home' }, policy: { allowLiveWeather: false } })
+  assert.equal(atHome.weatherProfile.atHome, true)
+  const destination = await resolver({ explicitRequest: { occasion: 'casual', season: 'current season', statedWeather: 'indoor', date, location: 'Home' }, policy: { allowLiveWeather: false } })
+  assert.equal(destination.weatherProfile.atHome, undefined, "the model's own 'indoor' marks an indoor destination, not a stay at home")
 })

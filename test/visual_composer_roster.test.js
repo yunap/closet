@@ -997,3 +997,45 @@ test('SEASON: it also ranks, so an out-of-season piece sinks rather than vanishi
   const adjustments = JSON.stringify(debug.relevanceAdjustments || {})
   assert.match(adjustments, /tagged warm-season clothing/, 'the advisory is recorded as a visible reason, not a silent number')
 })
+
+// Owner, 2026-11-04 (thread_1793858820740): hosting at home showed 7 of 41 eligible layers, three of
+// them a raincoat, a windbreaker and a chore jacket. On a turn the router placed at home, the layer
+// photo slots go by recorded outerwear_role first; relevance still orders within a role.
+test('Visual Composer Roster - at home, indoor layers take the layer photo slots before coats', () => {
+  const pieces = [
+    { id: 1, name: 'Rain Shell', category: 'outerwear', photo: 'img.jpg', formality: 'everyday', outerwear_role: 'protective_shell' },
+    { id: 2, name: 'Windbreaker', category: 'outerwear', photo: 'img.jpg', formality: 'everyday', outerwear_role: 'transition_layer' },
+    { id: 3, name: 'Winter Coat', category: 'outerwear', photo: 'img.jpg', formality: 'everyday', outerwear_role: 'cold_weather_outerwear' },
+    { id: 4, name: 'Untagged Cardigan', category: 'outerwear', photo: 'img.jpg', formality: 'everyday' },
+    { id: 5, name: 'Knit Cardigan', category: 'outerwear', photo: 'img.jpg', formality: 'everyday', outerwear_role: 'indoor_layer' },
+    { id: 6, name: 'Open Vest', category: 'outerwear', photo: 'img.jpg', formality: 'everyday', outerwear_role: 'indoor_layer' },
+  ]
+  for (let i = 0; i < 10; i++) pieces.push({ id: 100 + i, name: `Top ${i}`, category: 'top', photo: 'img.jpg', formality: 'everyday' })
+  for (let i = 0; i < 10; i++) pieces.push({ id: 200 + i, name: `Bottom ${i}`, category: 'bottom', photo: 'img.jpg', formality: 'everyday' })
+  for (let i = 0; i < 5; i++) pieces.push({ id: 300 + i, name: `Shoe ${i}`, category: 'shoes', photo: 'img.jpg', formality: 'everyday' })
+  // maxImages 24 over a 31-piece pool: the layer ceiling scales with the pool, so read it from the run.
+  const run = weatherProfile => buildVisualComposerRoster(pieces, { occasion: 'casual', weatherProfile, maxImages: 24, recordMetadataTodos: false })
+  const layerIds = result => result.roster.filter(p => p.category === 'outerwear').map(p => p.id)
+
+  const away = run({ isHot: false, isCold: false, weatherSource: 'stated', statedWeather: 'indoor' })
+  const slots = layerIds(away).length
+  assert.ok(slots >= 2 && slots < 6, `the cap must cut some layers for this test to mean anything (got ${slots} slots)`)
+  assert.ok(layerIds(away).some(id => [1, 2, 3].includes(id)), `without the at-home mark a coat takes a layer slot: ${layerIds(away)}`)
+  assert.equal(away.debug.atHomeLayerOrder, undefined)
+
+  const home = run({ isHot: false, isCold: false, weatherSource: 'stated', statedWeather: 'indoor', atHome: true })
+  // Tier by tier (relevance orders within a tier): indoor 5 and 6, then untagged 4, then transition 2,
+  // then shell 1 and winter coat 3.
+  const tiers = [[5, 6], [4], [2], [1, 3]]
+  const expected = []
+  for (const tier of tiers) for (const id of tier) if (expected.length < slots) expected.push(id)
+  const shown = layerIds(home)
+  assert.equal(shown.length, slots)
+  assert.deepEqual([...shown].sort(), [...expected].sort(), `at home: indoor layers first, coats last (got ${shown})`)
+  assert.equal(home.debug.atHomeLayerOrder, true)
+  assert.equal(home.excluded.find(e => e.pieceId === 3)?.reason, 'roster cap: category limit', 'the winter coat is only cut for space, never made ineligible')
+  assert.deepEqual(home.roster.filter(p => p.category !== 'outerwear').map(p => p.id), away.roster.filter(p => p.category !== 'outerwear').map(p => p.id), 'other categories are untouched')
+
+  const fewer = buildVisualComposerRoster(pieces.filter(p => [1, 5].includes(p.id) || p.category !== 'outerwear'), { occasion: 'casual', weatherProfile: { atHome: true }, maxImages: 24, recordMetadataTodos: false })
+  assert.deepEqual(layerIds(fewer).sort(), [1, 5], 'with room for every layer, a coat is still shown')
+})

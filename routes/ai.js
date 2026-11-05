@@ -77,7 +77,8 @@ import {
 } from '../styling-engine/stylingIntent.js'
 import { serializeWeatherProfile, restoreWeatherProfile, restoreResolvedWeatherContext, registerWeatherHomeLocationReader, normalizedWeatherLocationIdentity } from '../styling-engine/weather.js'
 import { extractSeasonRequest, resolveCalendarSeason, seasonPromptLabel } from '../lib/seasonContext.js'
-import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
+import { projectStylingApplicabilityContext, resolveStylingContext, stepOutsideForecastLine } from '../styling-engine/stylingContext.js'
+import { reportTurnProgress, startTurnProgressStream } from '../lib/turnProgress.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
@@ -3566,8 +3567,16 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     content.push({ type: 'text', text: [
       location ? `Location: ${location}` : '',
       `Occasion: ${occasion}`,
-      `Season: ${season}`,
+      // Live thread_1793856738809 (hosting at home on a November Saturday): the model read "Season: current
+      // season; mild weather" and was never told it was fall, beside garment lines tagged "season warm", and
+      // chose sandals, a sleeveless summer dress and canvas slip-ons. The same fault the plan shortlist and
+      // the selected-piece composer already had fixed (owner ruling 2026-10-27, thread_1793167020175: state
+      // the season, no new gate). The second sentence is the plan composer's convention, word for word.
+      `Season: ${seasonPromptLabel(season, stylingContext.calendarSeason)}`,
+      extractSeasonRequest(season) && stylingContext.calendarSeason ? "A garment's tagged season is the season it is tagged to be worn in." : '',
       tempText ? `Temperature: ${tempText}${demandLabel ? ' — judge the outfit against the range, not against a number' : ''}` : '',
+      // At home (owner ruling 2026-11-04): the outdoor forecast, for stepping outside only; never tempText.
+      stepOutsideForecastLine(weatherProfile),
       mood ? `Mood: ${mood}` : '',
       stylingRequest ? `Styling request: ${stylingRequest}` : '',
       // The stylist's own statement of what the request is asking for. She has the conversation and
@@ -3624,8 +3633,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let composerUsage = null
     const composerStartedAt = Date.now()
     const wantsStylistNote = Boolean(stylistNote && !composerExperiment)
-    // The /ask options turn also thinks at 'medium' (below); Gemini counts thinking against this cap.
-    const composerMaxTokens = structuredResponseMaxTokens(composerExperiment?.maxTokensForCount || requestedLimit) + (wantsStylistNote ? 4000 : 0)
+    // The /ask options turn also writes the stylist note: 500 more tokens for it (engine map item 30). It
+    // thinks at the default 'low'. 'medium' (2026-10-06, item 32) was set from one run and never shown to
+    // help, and on gemini-3.7-flash it spent the whole 6,200-token cap thinking, 2 of 2 runs
+    // (thread_1793852510241, thread_1793855385322; owner 2026-11-04: "Yes, set it to low").
+    const composerMaxTokens = structuredResponseMaxTokens(composerExperiment?.maxTokensForCount || requestedLimit) + (wantsStylistNote ? 500 : 0)
     const productionSystemPrompt = wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance)
     const sleeveSystemPrompt = composerExperiment?.sleeveGuidance === 'neutral' ? withNeutralSleeveGuidance(productionSystemPrompt) : productionSystemPrompt
     const explainDayWear = composerExperiment?.dayWearGuidance === 'explain'
@@ -3649,12 +3661,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         name: 'wardrobe_outfits',
         description: 'Return the composed outfits, each garment named by ID in the slot for its job.',
         subflow: 'whole_wardrobe_visual_composer',
-        // Live thread_1791328549015: told "hot weather; evening forecast high 89°F", with sandals,
-        // espadrilles and canvas shoes in view, the composer put cool-season leather ankle boots
-        // under warm-season tropical trousers — on 592 output tokens for two outfits and a note,
-        // i.e. no reasoning. Same lever that fixed the trip packer (item 25). Scoped to the /ask
-        // options turn; the Use-my-wardrobe screen keeps the default.
-        ...(wantsStylistNote ? { thinkingLevel: 'medium' } : {}),
+        // No thinkingLevel: the default 'low' (see composerMaxTokens). 'medium' was added for live
+        // thread_1791328549015 (cool-season leather ankle boots under warm-season tropical trousers on
+        // 592 output tokens); if that kind of pairing returns, that thread is the case to replay.
         signal,
       }), 120000, 'Visual wardrobe composer')
       timings.composerMs = Date.now() - composerStartedAt
@@ -3705,7 +3714,6 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       const checked = await correctComposerSlots({
         parsed, candidatePieces: allowedPieces, system: systemPrompt, content, schema: composerSchema,
         maxTokens: composerMaxTokens, providerOverride, subflow: 'whole_wardrobe_visual_composer',
-        thinkingLevel: wantsStylistNote ? 'medium' : null,
       })
       parsed = checked.parsed
       nameCheck = checked.nameCheck
@@ -4279,6 +4287,7 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     if (composerReturnedNoOutfits) {
       layerRepairDebug.reason = 'skipped: composer returned zero model-composed outfits this turn'
     } else if (repairable.length) {
+      reportTurnProgress('layer_repair', { count: repairable.length })
       const repairStartedAt = Date.now()
       try {
         // THE SAME EVIDENCE THE COMPOSER HAD: every garment arrives as its photograph plus its
@@ -7448,6 +7457,8 @@ router.post('/repair-capsule-look', async (req, res) => {
 })
 
 router.post('/ask', async (req, res) => {
+  // Opt-in progress lines for the chat's wait (lib/turnProgress.js); a no-op without the header.
+  startTurnProgressStream(req, res)
   // Hoisted so the catch below can still record what this turn spent and
   // learned. A turn that throws part-way has usually already made paid provider
   // calls — thread_1785902365403 completed and paid for a capsule roster call,
@@ -7720,6 +7731,19 @@ router.post('/ask', async (req, res) => {
         recordToolLoopUsage(toolContext, routed.usage)
         bumpFreeformDiagnostic(toolContext, 'executionRouterCalls')
         recordFreeformToolIteration(toolContext, ['execution_router'])
+        // How the request was read, shown while the turn works so a misreading is visible in seconds.
+        // The router's own fields only; the client words them.
+        reportTurnProgress('understood', {
+          profile: String(routed.value?.profile || ''),
+          limit: Number(routed.value?.limit) || 0,
+          occasion: String(routed.value?.occasion || ''),
+          activity: String(routed.value?.activity || ''),
+          setting: String(routed.value?.setting || ''),
+          location: String(routed.value?.location || ''),
+          date: String(routed.value?.date || ''),
+          timeOfDay: String(routed.value?.time_of_day || ''),
+          asking: Boolean(String(routed.value?.clarifying_question || '').trim()),
+        })
         // The router has already resolved the request's structured occasion/activity. Preserve
         // that result as established turn state even when the selected profile is full_stylist;
         // otherwise a later search_wardrobe call that omits those optional arguments silently

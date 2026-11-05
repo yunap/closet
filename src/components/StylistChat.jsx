@@ -11,6 +11,9 @@ import StylistSelect from './StylistSelect.jsx'
 import { uploadThumbnailSrc } from '../utils/uploadThumbnails.js'
 import { getCachedChatThread, loadChatThread } from '../utils/chatThreadCache.js'
 import { classifyChatTurn } from '../utils/chatTurn.js'
+import { postAskWithProgress } from '../utils/askStream.js'
+import { initialTurnProgress, reduceTurnProgress } from '../utils/turnProgressCopy.js'
+import TurnProgress from './TurnProgress.jsx'
 import {
   OVERALL_VERDICT_LABELS,
   STYLE_DIRECTION_REASONS,
@@ -736,6 +739,9 @@ export default function StylistChat({
   const [pendingOutfitAction, setPendingOutfitAction] = useState(null)
   const [loading, setLoading] = useState(false)
   const [loadingStatus, setLoadingStatus] = useState('')
+  // A chat turn's real progress (lib/turnProgress.js → src/utils/turnProgressCopy.js). Null when no
+  // /ask turn is in flight; other loading flows keep their own status line.
+  const [turnProgress, setTurnProgress] = useState(null)
   const [chatAnnouncement, setChatAnnouncement] = useState('')
   const wasLoadingRef = useRef(false)
   const [imageStatusByKey, setImageStatusByKey] = useState({})
@@ -1538,6 +1544,33 @@ export default function StylistChat({
   }
 
   useEffect(() => () => clearLoadingTimers(), [])
+
+  const turnProgressRef = useRef(null)
+  const startTurnProgress = useCallback(() => {
+    const next = initialTurnProgress()
+    turnProgressRef.current = next
+    setTurnProgress(next)
+    setLoadingStatus(next.current)
+  }, [])
+
+  const handleTurnProgress = useCallback(event => {
+    const previous = turnProgressRef.current
+    if (!previous) return
+    const next = reduceTurnProgress(previous, event)
+    if (next === previous) return
+    turnProgressRef.current = next
+    setTurnProgress(next)
+    // The landing panels show one status line; they get the current step.
+    if (next.current !== previous.current) setLoadingStatus(next.current)
+  }, [])
+
+  // The reply replaces the progress block; nothing about it stays in the thread.
+  useEffect(() => {
+    if (loading || !turnProgress) return
+    turnProgressRef.current = null
+    setTurnProgress(null)
+    setLoadingStatus('')
+  }, [loading, turnProgress])
 
   const refreshWholeWardrobeSessionMemory = useCallback(async () => {
     try {
@@ -5646,10 +5679,7 @@ export default function StylistChat({
         // fresh question it actually is (found live: the retry answered "Confirmed — the taupe
         // suede boots are real..." instead of redoing the original discovery question).
         const conversationMode = overrides.forceNewRequest ? 'new_request' : classifyChatTurn(q, { hasThreadMemory: true })
-        const res = await fetch('/api/ai/ask', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const res = await postAskWithProgress({
             question: q || 'Continue discussing this generated outfit.',
             sessionId: targetThreadId,
             pieces,
@@ -5662,8 +5692,7 @@ export default function StylistChat({
             ...(overrides.providerOverride ? { provider: overrides.providerOverride } : {}),
             ...stylingContextFromMemory(threadMemory),
             ...currentChatDateContext(),
-          })
-        })
+        }, { onStart: startTurnProgress, onProgress: handleTurnProgress })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not continue generated outfit evaluation')
         replyText = data.answer || 'Outfit follow-up complete.'
@@ -5725,10 +5754,7 @@ export default function StylistChat({
         // fresh question it actually is (found live: the retry answered "Confirmed — the taupe
         // suede boots are real..." instead of redoing the original discovery question).
         const conversationMode = overrides.forceNewRequest ? 'new_request' : classifyChatTurn(q, { hasThreadMemory: true })
-        const res = await fetch('/api/ai/ask', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const res = await postAskWithProgress({
             question: q || 'Continue evaluating this outfit.',
             sessionId: targetThreadId,
             pieces,
@@ -5749,8 +5775,7 @@ export default function StylistChat({
             ...(overrides.providerOverride ? { provider: overrides.providerOverride } : {}),
             ...stylingContextFromMemory(threadMemory),
             ...currentChatDateContext(),
-          })
-        })
+        }, { onStart: startTurnProgress, onProgress: handleTurnProgress })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Could not continue outfit evaluation')
         replyText = data.answer || 'Outfit follow-up complete.'
@@ -5819,10 +5844,7 @@ export default function StylistChat({
         // no way to see the photo again unless we hand it back explicitly. Most recent upload in
         // the thread wins — a second upload later in the same thread supersedes the first.
         const latestUploadedPhoto = [...messages].reverse().find(m => m.uploadedPhoto)?.uploadedPhoto || ''
-        const res = await fetch('/api/ai/ask', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const res = await postAskWithProgress({
             question: q,
             sessionId: targetThreadId,
             pieces,
@@ -5836,8 +5858,7 @@ export default function StylistChat({
             ...(overrides.providerOverride ? { provider: overrides.providerOverride } : {}),
             ...(overrides.forceNewRequest ? {} : stylingContextFromMemory(threadMemory, effectiveActiveContext?.type === 'piece' ? generateActivity : wardrobeOutfitActivity)),
             ...currentChatDateContext(),
-          })
-        })
+        }, { onStart: startTurnProgress, onProgress: handleTurnProgress })
         const data = await res.json()
         if (!res.ok) {
           throw new Error(data.error || 'Something went wrong — try again')
@@ -7147,7 +7168,8 @@ export default function StylistChat({
             </div>
           )})}
 
-          {loading && (
+          {loading && turnProgress && <TurnProgress progress={turnProgress} />}
+          {loading && !turnProgress && (
             <div className="ai-message assistant" role="status" aria-live="polite">
               <div className="typing-dots" aria-hidden="true"><span /><span /><span /></div>
               <div className={loadingStatus ? undefined : 'sr-only'} style={loadingStatus ? { marginTop: 8, fontSize: 12, color: 'var(--text-muted)' } : undefined}>
