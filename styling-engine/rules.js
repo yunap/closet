@@ -3629,6 +3629,20 @@ export function buildVisualComposerRoster(allowedPieces = [], {
           }
         }
       } else {
+        // AT HOME, INDOOR LAYERS FIRST (owner, 2026-11-04, thread_1793858820740). Hosting neighbours at
+        // home showed the composer 7 of 41 eligible layers, and the relevance score, which does not know
+        // the occasion is spent indoors, gave three of those slots to a raincoat, a windbreaker and a
+        // chore jacket while the cream and green cardigans were cut. On a turn the router placed at
+        // home, the recorded outerwear_role (outerwear-weather-capability-spec.md) orders the layers
+        // before the cut: indoor layers, then untagged, then transition layers, then shells and cold-
+        // weather coats. Relevance still orders within each role (stable sort). This chooses which
+        // photos fill the image budget; it makes nothing ineligible, and a coat is still shown when
+        // slots are left over.
+        if (cat === 'outerwear' && weatherProfile?.atHome === true && pieces.length > limit) {
+          const roleRank = p => ({ indoor_layer: 0, transition_layer: 2, protective_shell: 3, cold_weather_outerwear: 3 })[pieceOuterwearRole(p)] ?? 1
+          pieces.sort((a, b) => roleRank(a) - roleRank(b))
+          debug.atHomeLayerOrder = true
+        }
         let categoryKeptCount = 0
         for (const p of pieces) {
           if (isSelected(p)) {

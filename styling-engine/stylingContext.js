@@ -479,8 +479,11 @@ async function resolveWeather({
   if (indoorEnvironment && explicitRequest.indoorOnly === true && !validateUserWeather(explicitRequest.userWeather)) {
     const profile = statedWeatherProfile({ statedWeather: explicitStatedWeather, mood, requestText, date })
     const stepOutsideForecast = await resolveStepOutsideForecast({ evidence, location, date, allowLiveWeather, weatherResolver })
+    // `atHome` says the router placed the whole occasion at home (owner, 2026-11-04): the options
+    // composer's roster then gives its layer photo slots to indoor layers first (rules.js,
+    // buildVisualComposerRoster). Like stepOutsideForecast, nothing that judges an outfit reads it.
     return {
-      profile: stepOutsideForecast ? { ...profile, stepOutsideForecast } : profile,
+      profile: { ...profile, atHome: true, ...(stepOutsideForecast ? { stepOutsideForecast } : {}) },
       provenance: { source: 'explicit_request.indoor_only' },
     }
   }

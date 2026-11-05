@@ -5373,3 +5373,12 @@ test('compact answers see suggested new pieces from ideal-additions cards as uno
   assert.doesNotMatch(compactFreeformAnswerMessage({ profile: 'general_advice', question: 'q', context }), /Suggested new pieces/)
   assert.doesNotMatch(compactFreeformAnswerMessage({ profile: 'garment_fact', question: 'q', context: { pieceIds: [1] } }), /Suggested new pieces/)
 })
+
+test('a router-classified at-home turn marks its weather profile atHome, and an ordinary indoor destination does not', async () => {
+  const resolver = createStylingContextResolver({ weatherResolver: async () => ({ weatherSource: 'unavailable' }) })
+  const date = new Date('2026-11-07T12:00:00')
+  const atHome = await resolver({ explicitRequest: { occasion: 'casual', season: 'current season', statedWeather: 'indoor', indoorOnly: true, date, location: 'Home' }, policy: { allowLiveWeather: false } })
+  assert.equal(atHome.weatherProfile.atHome, true)
+  const destination = await resolver({ explicitRequest: { occasion: 'casual', season: 'current season', statedWeather: 'indoor', date, location: 'Home' }, policy: { allowLiveWeather: false } })
+  assert.equal(destination.weatherProfile.atHome, undefined, "the model's own 'indoor' marks an indoor destination, not a stay at home")
+})
