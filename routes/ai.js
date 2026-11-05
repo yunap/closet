@@ -3627,8 +3627,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
     let composerUsage = null
     const composerStartedAt = Date.now()
     const wantsStylistNote = Boolean(stylistNote && !composerExperiment)
-    // The /ask options turn also thinks at 'medium' (below); Gemini counts thinking against this cap.
-    const composerMaxTokens = structuredResponseMaxTokens(composerExperiment?.maxTokensForCount || requestedLimit) + (wantsStylistNote ? 4000 : 0)
+    // The /ask options turn also writes the stylist note: 500 more tokens for it (engine map item 30). It
+    // thinks at the default 'low'. 'medium' (2026-10-06, item 32) was set from one run and never shown to
+    // help, and on gemini-3.7-flash it spent the whole 6,200-token cap thinking, 2 of 2 runs
+    // (thread_1793852510241, thread_1793855385322; owner 2026-11-04: "Yes, set it to low").
+    const composerMaxTokens = structuredResponseMaxTokens(composerExperiment?.maxTokensForCount || requestedLimit) + (wantsStylistNote ? 500 : 0)
     const productionSystemPrompt = wholeWardrobeVisualComposerSystemPrompt(savedVariantGuidance)
     const sleeveSystemPrompt = composerExperiment?.sleeveGuidance === 'neutral' ? withNeutralSleeveGuidance(productionSystemPrompt) : productionSystemPrompt
     const explainDayWear = composerExperiment?.dayWearGuidance === 'explain'
@@ -3652,12 +3655,9 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         name: 'wardrobe_outfits',
         description: 'Return the composed outfits, each garment named by ID in the slot for its job.',
         subflow: 'whole_wardrobe_visual_composer',
-        // Live thread_1791328549015: told "hot weather; evening forecast high 89°F", with sandals,
-        // espadrilles and canvas shoes in view, the composer put cool-season leather ankle boots
-        // under warm-season tropical trousers — on 592 output tokens for two outfits and a note,
-        // i.e. no reasoning. Same lever that fixed the trip packer (item 25). Scoped to the /ask
-        // options turn; the Use-my-wardrobe screen keeps the default.
-        ...(wantsStylistNote ? { thinkingLevel: 'medium' } : {}),
+        // No thinkingLevel: the default 'low' (see composerMaxTokens). 'medium' was added for live
+        // thread_1791328549015 (cool-season leather ankle boots under warm-season tropical trousers on
+        // 592 output tokens); if that kind of pairing returns, that thread is the case to replay.
         signal,
       }), 120000, 'Visual wardrobe composer')
       timings.composerMs = Date.now() - composerStartedAt
@@ -3708,7 +3708,6 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       const checked = await correctComposerSlots({
         parsed, candidatePieces: allowedPieces, system: systemPrompt, content, schema: composerSchema,
         maxTokens: composerMaxTokens, providerOverride, subflow: 'whole_wardrobe_visual_composer',
-        thinkingLevel: wantsStylistNote ? 'medium' : null,
       })
       parsed = checked.parsed
       nameCheck = checked.nameCheck

@@ -3423,6 +3423,19 @@ test('a setting the router fixed reaches the composer, which then looks up no fo
   assert.match(toolsSrc, /const settingFixedWeather = \['explicit_request\.indoor_only', 'explicit_request\.no_situation'\]\s*\.includes\(stylingContext\.provenanceByField\?\.weatherProfile\?\.source\)/)
 })
 
+// Owner, 2026-11-04 ("Yes, set it to low"): the options composer's 'medium' thinking was set from one run
+// and never shown to help; on gemini-3.7-flash it spent the whole 6,200-token cap thinking, 2 of 2 runs,
+// and every batch was redone by a second composer call. Low thinking, 500 tokens for the stylist note.
+test('the options composer thinks at the default level, with room only for its stylist note', () => {
+  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
+  const start = routeSrc.indexOf('const wantsStylistNote = Boolean(stylistNote && !composerExperiment)')
+  const end = routeSrc.indexOf('// Resolve slots (composerSlots.js)', start)
+  assert.ok(start > 0 && end > start)
+  const composer = routeSrc.slice(start, end).split('\n').filter(line => !line.trim().startsWith('//')).join('\n')
+  assert.match(composer, /structuredResponseMaxTokens\(composerExperiment\?\.maxTokensForCount \|\| requestedLimit\) \+ \(wantsStylistNote \? 500 : 0\)/)
+  assert.doesNotMatch(composer, /thinkingLevel/, 'neither the composer call nor its name correction sets a thinking level')
+})
+
 // Owner ruling 2026-11-04 (thread_1793852510241): "how can the live forecast tell the model my indoor
 // temperature? it's fine to have it in case the host needs to go outside, but saying that the outfit is
 // too warm for 77F is not correct." The at-home profile carries the forecast in its own field, which
