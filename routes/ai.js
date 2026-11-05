@@ -77,7 +77,7 @@ import {
 } from '../styling-engine/stylingIntent.js'
 import { serializeWeatherProfile, restoreWeatherProfile, restoreResolvedWeatherContext, registerWeatherHomeLocationReader, normalizedWeatherLocationIdentity } from '../styling-engine/weather.js'
 import { extractSeasonRequest, resolveCalendarSeason, seasonPromptLabel } from '../lib/seasonContext.js'
-import { projectStylingApplicabilityContext, resolveStylingContext } from '../styling-engine/stylingContext.js'
+import { projectStylingApplicabilityContext, resolveStylingContext, stepOutsideForecastLine } from '../styling-engine/stylingContext.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine } from '../styling-engine/tools.js'
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
@@ -3568,6 +3568,8 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       `Occasion: ${occasion}`,
       `Season: ${season}`,
       tempText ? `Temperature: ${tempText}${demandLabel ? ' — judge the outfit against the range, not against a number' : ''}` : '',
+      // At home (owner ruling 2026-11-04): the outdoor forecast, for stepping outside only; never tempText.
+      stepOutsideForecastLine(weatherProfile),
       mood ? `Mood: ${mood}` : '',
       stylingRequest ? `Styling request: ${stylingRequest}` : '',
       // The stylist's own statement of what the request is asking for. She has the conversation and

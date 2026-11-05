@@ -20,7 +20,7 @@ import { ENVIRONMENTAL_ADEQUACY_CODES, outerwearPieces, collapseWarmthAdvisoryFi
 import { validatedSubstitute } from './recovery.js'
 import { normalizeOutfitResult } from './outfitResult.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
-import { createStylingContextResolver, projectStylingApplicabilityContext, resolveStylingContext } from './stylingContext.js'
+import { createStylingContextResolver, projectStylingApplicabilityContext, resolveStylingContext, stepOutsideForecastLine } from './stylingContext.js'
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { extractSeasonRequest } from '../lib/seasonContext.js'
 import {
@@ -401,9 +401,11 @@ export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext, w
   const weatherLabel = resolvedWeather?.temperature && resolvedWeather.temperature.source !== 'heuristic'
     ? truthfulWeatherLabel(resolvedWeather.temperature, { location: resolvedWeather.location })
     : ''
+  // An occasion at home has no outdoor conditions to wear the outfit in; the forecast, when there is one,
+  // is for stepping outside only (owner ruling 2026-11-04).
   const conditions = weatherLabel
     ? `${weatherWindow ? `this ${weatherWindow}: ` : ''}${weatherLabel}. These are the conditions the outfit is worn in; say them in your Stylist Note so the wearer can correct them.`
-    : ''
+    : stepOutsideForecastLine(stylingContext?.weatherProfile)
 
   return {
     eligible_piece_count: unique.length,
@@ -4886,6 +4888,16 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // thread_1791509009539, where the user had stated 80s and 48, the composer was told 78/59°F
         // on one follow-up and "summer" with no temperature on the next.
         const carryResolvedWeather = boundedMultiLook || Number.isFinite(Number(stylingContext.weatherProfile?.highF))
+        // The router fixed this turn's setting: spent at home (indoor_only), or no place or time given
+        // (not_stated). Either composer, handed no profile, resolves weather again by itself and looks
+        // up the live forecast for the home location. Live thread_1793852510241 ("hosting a small
+        // get-together for my neighbours"): the batch call hit max_tokens, the retry was no longer a
+        // bounded batch, so carryResolvedWeather was false — the indoor profile has no highF — and
+        // every card was told it "runs warm for a high of 77°F". Owner, 2026-11-04: an outdoor
+        // forecast cannot tell the model the indoor temperature. The profile goes to the composer
+        // whenever the setting fixed it; the season text is left as it was.
+        const settingFixedWeather = ['explicit_request.indoor_only', 'explicit_request.no_situation']
+          .includes(stylingContext.provenanceByField?.weatherProfile?.source)
         if (carryResolvedWeather) {
           const resolvedWeather = stylingContext.weatherProfile
           const hasHigh = Number.isFinite(Number(resolvedWeather.highF))
@@ -4958,6 +4970,8 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             question: toolContext.question || '',
             activity: resolvedActivity,
             currentDate: stylingContext.date,
+            // Otherwise this path still resolves its own weather, as before (see settingFixedWeather).
+            resolvedWeatherProfile: settingFixedWeather ? toolContext.weatherProfile : null,
             // Found live: this nested composer call ran on Anthropic even under
             // STYLIST_PROVIDER_OVERRIDE=gemini, since neither this call site nor the function
             // itself forwarded any provider override — a real gap, not deliberate pinning.
@@ -4974,7 +4988,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             explorationMode: 'moderate',
             question: toolContext.question || '',
             activity: resolvedActivity,
-            resolvedWeatherProfile: carryResolvedWeather ? toolContext.weatherProfile : null,
+            resolvedWeatherProfile: carryResolvedWeather || settingFixedWeather ? toolContext.weatherProfile : null,
             currentDate: stylingContext.date,
             adaptiveVisualDetail: boundedMultiLook,
             stylistNote: boundedMultiLook,
