@@ -20,7 +20,7 @@ process.env.ANTHROPIC_API_KEY = ''
 
 const { generateOutfitsForPieceInternal, selectedItemVisualComposerSystemPrompt, styleDirectionLine, selectedPieceOutfitCount } = await import('../routes/ai.js')
 const { OCCASION_PROFILES, occasionVibe, stripSoftRankingRules } = await import('../styling-engine/occasions.js')
-const { EXPLORE_INSTRUCTION, EXPLORE_LAYER_ANCHOR_LINE, EXPLORE_DEPENDENT_ANCHOR_LINE, EXPLORE_LAYER_BASE_SCOPE, OUTFIT_VARIETY_RULE } = await import('../styling-engine/prompts.js')
+const { EXPLORE_FORMULAS_FRAME, EXPLORE_INSTRUCTION, EXPLORE_LAYER_ANCHOR_LINE, EXPLORE_DEPENDENT_ANCHOR_LINE, EXPLORE_LAYER_BASE_SCOPE, OUTFIT_VARIETY_RULE } = await import('../styling-engine/prompts.js')
 const { selectedPieceRosterSystemPrompt, ROSTER_LAYER_ANCHOR_BLOCK, ROSTER_DEPENDENT_ANCHOR_BLOCK } = await import('../styling-engine/selectedPieceRoster.js')
 const { ensureFixturePieces } = await import('./helpers/dbFixtures.js')
 
@@ -87,6 +87,23 @@ test('composer prompt: Explore replaces the variety rule whole; the default keep
   assert.ok(!explore.includes(OUTFIT_VARIETY_RULE), 'the variety rule is gone, not competing')
   assert.equal(explore.split(EXPLORE_INSTRUCTION).length, 2, 'the Explore instruction appears once')
   assert.ok(!/clean columns|deep color palettes|explore_vibe/.test(explore))
+})
+
+test('composer prompt: Explore reframes the Proven Formulas right after them; the default never carries the frame', async () => {
+  const { prompts } = await import('../styling-engine/promptRuntime.js')
+  const formulas = String(prompts.PROVEN_FORMULAS || '').trim()
+  assert.ok(formulas, 'the constitution has a Proven Formulas section to frame')
+  const standard = selectedItemVisualComposerSystemPrompt()
+  assert.ok(!standard.includes(EXPLORE_FORMULAS_FRAME))
+  const explore = selectedItemVisualComposerSystemPrompt({ explore: true })
+  assert.equal(explore.split(EXPLORE_FORMULAS_FRAME).length, 2, 'the frame appears once')
+  assert.ok(explore.includes(`${formulas}\n${EXPLORE_FORMULAS_FRAME}`), 'the frame follows the formulas, which are kept as written')
+  assert.ok(standard.includes(formulas) && !standard.includes(`${formulas}\n${EXPLORE_FORMULAS_FRAME}`))
+})
+
+test('the Explore formulas frame is intent only: it names no formula, garment or styling dimension', () => {
+  // "Layer 1" names the constitution's body contract, not a garment layer.
+  assert.doesNotMatch(EXPLORE_FORMULAS_FRAME.replace('Layer 1', ''), /\b(tops?|bottoms?|dress(es)?|shoes?|layers?|layering|vests?|colou?rs?|prints?|patterns?|solids?|textures?|silhouettes?|proportions?|black|columns?|monochrome)\b/i)
 })
 
 test('the Explore instruction is intent only: it names no styling dimension, garment category or technique', () => {

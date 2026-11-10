@@ -53,7 +53,7 @@ import {
 import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT, GEMINI_TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, occasionVibe, stripSoftRankingRules } from '../styling-engine/occasions.js'
-import { EXPLORE_INSTRUCTION, exploreLayerAnchorLine, OUTFIT_VARIETY_RULE } from '../styling-engine/prompts.js'
+import { EXPLORE_FORMULAS_FRAME, EXPLORE_INSTRUCTION, exploreLayerAnchorLine, OUTFIT_VARIETY_RULE } from '../styling-engine/prompts.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   garmentKind,
@@ -3070,7 +3070,14 @@ export function selectedItemVisualComposerSystemPrompt({ explore = false } = {})
   // Explore replaces the variety rule whole; it is not appended beside it, so the two never compete.
   const base = prompts.WHOLE_WARDROBE_VISUAL_COMPOSER_SYSTEM
   if (explore && base.split(OUTFIT_VARIETY_RULE).length !== 2) throw new Error('Explore: the composer prompt must contain the variety rule exactly once')
-  const composer = explore ? base.replace(OUTFIT_VARIETY_RULE, EXPLORE_INSTRUCTION) : base
+  let composer = explore ? base.replace(OUTFIT_VARIETY_RULE, EXPLORE_INSTRUCTION) : base
+  // Explore reads the user's Proven Formulas as the familiar outfits, not the bar (spec §15). The section is the
+  // user's own text, so the frame follows it rather than editing it; a constitution without one gets no frame.
+  const formulas = String(prompts.PROVEN_FORMULAS || '').trim()
+  if (explore && formulas) {
+    if (composer.split(formulas).length !== 2) throw new Error('Explore: the composer prompt must contain the Proven Formulas exactly once')
+    composer = composer.replace(formulas, () => `${formulas}\n${EXPLORE_FORMULAS_FRAME}`)
+  }
   return `${composer}\n\nSELECTED-ANCHOR CONTRACT:\nEvery outfit must include the selected anchor id. The selected garment is the premise, not one option among many.\n\nOCCASION & CLIMATE PROFILES (RULES-AS-DATA):\n${JSON.stringify(stripSoftRankingRules(OCCASION_PROFILES, { explore }), null, 2)}\n\nACTIVITY PROFILES (RULES-AS-DATA):\n${JSON.stringify(stripSoftRankingRules(ACTIVITY_PROFILES, { explore }), null, 2)}`
 }
 

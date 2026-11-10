@@ -36,6 +36,13 @@ export const OUTFIT_VARIETY_RULE = 'Select each outfit on its own merits. Repeat
 // reason comes from. Shared by the roster call and the composer. Wearability is not loosened.
 export const EXPLORE_INSTRUCTION = 'EXPLORE. The outfits anyone would assemble first around this garment, its obvious and expected pairings, are already known, so leave them out. Show outfits that still work, and work for a reason that is not the obvious one. Where that reason comes from is your judgment for this garment and this wardrobe. Each outfit takes its own direction: no two should be variations of the same idea. Every outfit must still be wearable for the request and physically sound, and you should be able to say in its reason what makes it work.'
 
+// Explore reframes the constitution's Proven Formulas (owner ruling 2026-11-04, spec §15). thread_1793861982606:
+// the roster swapped 15 expected pieces for 15 less obvious ones, and the composer used none of them. All four
+// cards followed the user's own Layer 2 formula, which for a loud print is the obvious answer, and its saveable
+// learning restated it. The formulas stay in the prompt as the user's record; in Explore they describe the
+// familiar outfits rather than the bar. Intent only, like EXPLORE_INSTRUCTION: it names no formula.
+export const EXPLORE_FORMULAS_FRAME = 'In this mode, read the Proven Formulas above as a record of what the familiar outfits are built from: the obvious pairings this mode leaves out. They are not the standard an outfit has to meet here; an outfit may set them aside when it works for another reason. Layer 1 still applies in full.'
+
 // Explore with a layer anchor (owner rulings 2026-10-25: a layer garment always needs a top or a dress
 // under it; in Explore that base is out of scope). thread_1792909006877 left the base out;
 // thread_1792915678690 and thread_1792916742017 put the less obvious direction into it (textured
