@@ -545,3 +545,42 @@ the fit rule, and the season line in each call.
 - Rebuild of `thread_1793090407904`: only the count line, the shortlist's "up to 5", and the §13 lines differ from the capture.
 
 **Not verified.** Whether either model actually returns fewer cards when it has fewer good ones. That needs a paid turn.
+
+## 15 · In Explore, the Proven Formulas describe the familiar outfits, not the bar (2026-11-04, owner ruling)
+
+**The failure.** `thread_1793861982606` was an Explore turn on piece 171 (colorful abstract floral pants, city), run
+against a Classic turn on the same piece minutes earlier, `thread_1793861498696`. Both ran on gemini-3.7-flash.
+Three of the four Explore cards were Classic cards with one piece swapped. The captures
+(`~/.wardrobe-captures`, calls 0007–0018 of run `p42935-06d48542`) place the fault in the composer, not the roster:
+- The Explore roster kept 25 of Classic's 40 pieces. It replaced 15 expected pieces (black and cream solid tops,
+  black jackets, neutral vests, sneakers) with 15 less obvious ones: both striped tops (266, 349), the floral cashmere
+  (996870), red and olive and navy knits, the red tweed jacket (187), and check, herringbone and tapestry outerwear.
+- The composer used none of those 15. All 10 garments on its cards were also in the Classic roster.
+- Every card was a solid top over the print pants, three of them with a layer over a fitted base. Its saveable learning
+  restated the user's own Layer 2 formula: *"bold print on one piece + solid on the other"*, *"open shirt or vest over a
+  fitted base is almost always better"*.
+
+The Explore instruction asks her to leave the obvious pairings out. The same prompt lists those pairings as "proven".
+This is §7's open note ("several Explore sets still open with a monochrome column") showing up on a print anchor.
+
+**Owner ruling.** Reframe the formulas in Explore. Do not drop them, and do not change the user's constitution.
+
+**Change.**
+- `EXPLORE_FORMULAS_FRAME` (`styling-engine/prompts.js`). Like `EXPLORE_INSTRUCTION`, it states intent only and names
+  no formula, garment or dimension: *"In this mode, read the Proven Formulas above as a record of what the familiar
+  outfits are built from: the obvious pairings this mode leaves out. They are not the standard an outfit has to meet
+  here; an outfit may set them aside when it works for another reason. Layer 1 still applies in full."*
+- `selectedItemVisualComposerSystemPrompt({ explore: true })` (`routes/ai.js`) puts the frame on the line right after
+  the user's Proven Formulas section, which is kept as written. A constitution with no such section gets no frame.
+  A prompt that contains the section more than once throws, as the variety-rule swap already does.
+- Composer only. The roster prompt carries no constitution and already shortlisted beyond the formulas.
+  The default prompt is unchanged.
+
+**Verified offline.**
+- Tests in `test/selected_piece_explore.test.js`: the frame appears once, right after the formulas, only in Explore;
+  the frame names nothing. `node --test test/` passes 2,669 of 2,669, and `scratch/check_style_claims.js` passes.
+- Rebuild on a `.backup` copy of the real DB: the Explore composer system prompt is byte-identical to capture 0016
+  except for the frame line, and the default one is byte-identical to capture 0010.
+
+**Not verified.** Whether the frame moves the composer onto the less obvious pieces. That needs a paid replay of
+capture 0016 (≈ $0.05 per call on gemini-3.7-flash).
