@@ -510,3 +510,20 @@ test('the options composer reads the situation on a chat turn, in the single-out
   assert.match(promptsSrc, /READ THE SITUATION FIRST:\n\$\{readTheSituation\('Before you search'\)\}/, 'the single-outfit stylist reads the same paragraph')
 })
 
+// Owner, 2026-11-10: people come to a stylist for advice, "not just echoing of their habits", and want to know what is
+// socially acceptable as well as comfortable; what the others will be wearing is hers to answer, "not ask the user".
+// The first wording of the recurring-activity rule had her ask how the person does it (thread_1794275667026: "do you
+// prefer to start in cozy loungewear… or get dressed right away?").
+test('what is appropriate is the stylist\'s to advise: the situation read, the plan tool and the router all say so', async () => {
+  const { readTheSituation } = await import('../styling-engine/prompts.js')
+  const read = readTheSituation('Before you choose')
+  assert.match(read, /Read the room as well: who will see the wearer, what the wearer's part in it is, and what people at this kind of occasion, in this place and season, actually wear\./)
+  assert.match(read, /That is your knowledge to bring, not a question for the wearer/)
+  assert.match(read, /choose what is right across the likely range and say so/)
+  const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(toolsSrc, /What it is done in is yours to advise, not theirs to be asked/)
+  assert.doesNotMatch(toolsSrc, /ask them before calling this tool/)
+  const providerSrc = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(providerSrc, /What is appropriate to wear, and what the other people there will be wearing, is never asked/)
+})
+

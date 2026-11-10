@@ -22,6 +22,10 @@ First run: `thread_1794273948027`, 2026-11-09, `gemini-3.7-flash`, capture sessi
 **Must hold**
 
 - No question about the weather: the person is at home and the forecast is looked up.
+- No question about what the person usually wears to cook in or what others will be wearing. She recommends what a
+  host with friends staying cooks breakfast in, says why (it gets splashed, and it is seen), and plans for it; the
+  person can say they do it differently. *(Added 2026-11-10, owner: advice, not an echo of habits.)*
+- The winery and the restaurant are each dressed for how people there dress, and the reply says how she read them.
 - Every morning has something to cook in, and the reply says what it is for each day. Unless the person has said they
   dress before breakfast, the days with an outing have a separate at-home morning look (six looks under that reading).
 - Whatever is worn at the stove is washable and has nothing hanging at the wrist.
@@ -63,6 +67,8 @@ item 103's change to this path.
 
 - The request does not say whether the host cooks or serves. Either she asks, or the options hold up for a host on her
   feet around food and drink and the note says what it assumed.
+- The note says how dressed a get-together for neighbours at home is, as her own reading, and the options sit inside
+  it. She does not ask the host what the neighbours will wear. *(Added 2026-11-10.)*
 - Each card's reason says why the outfit suits hosting, not only how its colours and textures sit together.
 - A fabric that needs special care, where one is offered, is named as a drawback for a host.
 - No note on a card about outdoor weather for an evening spent at home.
@@ -76,4 +82,11 @@ item 103's change to this path.
 about colour, sheen and drape only (fail); the second option is a silk blouse and nothing is said about it for a host
 (fail); nothing asked and nothing stated as assumed (fail); no outdoor-weather note (pass); one card carries
 "Contains a piece the occasion/activity profile usually discourages" under a note calling it zero fuss (fail).
+
+## How appropriateness is judged
+
+Whether a look is right for the room is the part a model is least reliable on: it states a norm confidently, and the
+norm varies by place, age and circle. The lines above that concern it are scored by a person reading the reply, never
+by a model, and a reading that is wrong for this wearer's circle is recorded as that wearer's context, not as a rule
+for everyone.
 
