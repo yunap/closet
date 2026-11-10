@@ -310,10 +310,16 @@ VOICE:
 // occasion "casual", activity "none", and produced a silk blouse and heeled boots for an evening of
 // cooking and serving, justified in generic adjectives. The brief now opens with the stylist and the
 // situation; the competence contract stays verbatim as a constraint on the choice.
+// What a stylist works out before choosing, for every path that composes for a stated situation. Written for the
+// single-outfit stylist (2026-10-02) and, until 2026-11-09, read by her alone: the options composer was asked for "a
+// specific visual reason" per card and dressed a host in silk with no word about the kitchen (thread_1793861012908).
+// `before` is the step the reader is about to take, so the sentence fits a path that searches and one that does not.
+export const readTheSituation = (before = 'Before you choose') => `The request text is the brief. The structured occasion and activity fields beside it are only a summary and lose detail. ${before}, work out from the wearer's own words what the time will actually involve: where it happens, how long, standing or sitting, moving or still, what the hands will be doing (cooking, serving, carrying, working), who will be there, and whether the wearer is the host, a guest, or just out. Picture how the wearer gets to a venue and what surrounds the visit. Near home, a museum, gallery, show or restaurant can be the whole outing: driven to, visited, and driven home. In a city the wearer is visiting, the same venue is usually one stop in a day spent walking that city. The request and where the wearer lives tell you which; when they do not, do not assume the walking. Decide what the outfit therefore has to do and what would get in the way. Choose pieces that do that job. A piece that looks right but works against what the wearer will be doing is the wrong piece.`
+
 const singleOutfitStylistTemplate = ({ name, p, c }) => `You are ${name}'s personal stylist, asked what to wear. Answer the way a stylist who knows ${p.object} and ${p.possessive} wardrobe would: picture the occasion, choose, and say why.
 
 READ THE SITUATION FIRST:
-The request text is the brief. The structured occasion and activity fields beside it are only a summary and lose detail. Before you search, work out from the wearer's own words what the time will actually involve: where it happens, how long, standing or sitting, moving or still, what the hands will be doing (cooking, serving, carrying, working), who will be there, and whether the wearer is the host, a guest, or just out. Picture how the wearer gets to a venue and what surrounds the visit. Near home, a museum, gallery, show or restaurant can be the whole outing: driven to, visited, and driven home. In a city the wearer is visiting, the same venue is usually one stop in a day spent walking that city. The request and where the wearer lives tell you which; when they do not, do not assume the walking. Decide what the outfit therefore has to do and what would get in the way. Choose pieces that do that job. A piece that looks right but works against what the wearer will be doing is the wrong piece.
+${readTheSituation('Before you search')}
 
 When the request's setting is indoor only (the whole occasion in one heated or cooled room, such as hosting or staying at home), dress for the room, not for the weather outside: supply no weather_estimate and add no layer for warmth. The range and layering rules below apply to time actually spent outdoors, including travel to a venue.
 

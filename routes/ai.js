@@ -53,7 +53,7 @@ import {
 import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT, GEMINI_TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, occasionVibe, stripSoftRankingRules } from '../styling-engine/occasions.js'
-import { EXPLORE_FORMULAS_FRAME, EXPLORE_INSTRUCTION, exploreLayerAnchorLine, OUTFIT_VARIETY_RULE } from '../styling-engine/prompts.js'
+import { EXPLORE_FORMULAS_FRAME, EXPLORE_INSTRUCTION, exploreLayerAnchorLine, OUTFIT_VARIETY_RULE, readTheSituation } from '../styling-engine/prompts.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   garmentKind,
@@ -3602,6 +3602,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       // TIME-OF-DAY WEATHER removed (owner ruling 2026-09-15): the stated range and the request text, including outing hours, carry
       // the conditions; its garment and layer prescriptions were not neutral facts.
       // COOL-END LAYER removed (2026-09-15): an engine-derived requirement that also quoted the old `opacity: sheer` label format.
+      // A chat turn asking for options has a situation to read; the Use-my-wardrobe screen sends no styling request
+      // and keeps the composer's own visual reason. Same condition as the stylist note below.
+      stylistNote && !composerExperiment
+        ? `READ THE SITUATION FIRST:\n${readTheSituation('Before you compose')}\nOn this turn each outfit's reason says first why it suits what the wearer will be doing, then what makes it work to the eye.`
+        : '',
       `Compose ${requestedLimit} outfits.`,
       // 2026-09-15 (owner ruling): both paragraphs previously pushed toward variety and thermal
       // uniformity as ends in themselves — forcing a weaker alternative merely to look different,
@@ -6407,7 +6412,7 @@ export function tripRosterSelectionUserText({
   const tripContext = [contextHeader, journeyLine].filter(Boolean).join('. ')
   const words = String(requestWords || '').trim()
   const headerBlock = trip
-    ? `${tripContext ? `TRIP CONTEXT: ${tripContext}\n\n` : ''}${approachBlock}`
+    ? `${tripContext ? `TRIP CONTEXT: ${tripContext}\n\n` : ''}${approachBlock}${words ? `THE REQUEST (their words, oldest first):\n${words}\n\n` : ''}`
     : `${words ? `THE REQUEST (their words, oldest first):\n${words}\n\n` : ''}${contextHeader ? `${contextHeader}\n\n` : ''}`
   // The sparse fact line carries no owner rules/rejections (that's a separate, source-labelled
   // channel — docs/garment-evidence-parity-2026-09-15.md) — buildPieceText used to fold "RULES
@@ -6557,7 +6562,9 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
     planKind,
     constraints,
     // Only what the person typed in this thread, never the assistant's replies (thread_1792781414837).
-    requestWords: trip ? '' : String(toolContext?.userWords || toolContext?.question || '').slice(-4000),
+    // Trips as well (2026-11-09): the packer's prompt already says "when the request states this" and "unless the
+    // request fixes the days", and until now it was never shown the request.
+    requestWords: String(toolContext?.userWords || toolContext?.question || '').slice(-4000),
   })
 
   const { value, usage } = await askStylistStructuredWithUsage({
@@ -6626,6 +6633,12 @@ const COORDINATED_PLAN_REQUEST_AND_SHORTLIST = `THE REQUEST. When the request is
 
 shortlist_reasons, when given, is why each garment was chosen for this plan by the step before you, written from the same request. They are that step's reasons, not recorded facts: read them to see what a garment was chosen to do, and judge each look yourself from the request, the recorded facts and the photographs.`
 
+// The trip's form of the two sentences above (2026-11-09): the trip composer was handed neither the request nor the
+// packer's reasons, as the plan composer was not.
+const TRIP_REQUEST_AND_PACKING_REASONS = `THE REQUEST. When the request is given in the traveller's own words, start from it: it says what the trip is, who they are with and what matters to them, and it outranks the use-case summaries where they differ.
+
+shortlist_reasons, when given, is why each piece was packed, written by the step that packed the bag from the same request. They are that step's reasons, not recorded facts: read them to see what a piece was packed to do, and judge each look yourself from the request, the recorded facts and the photographs.`
+
 export function tripPlanCompositionSystemPrompt({ planKind = 'trip' } = {}) {
   // plan_outfit_set's one composer prompt (owner, 2026-10-28); only what packing adds is trip-only.
   const trip = planKind === 'trip'
@@ -6638,6 +6651,8 @@ ${trip ? `This is a suitcase you are packing against a real itinerary and its we
 LAYERED LOOKS. An outfit is not only a top, a bottom and a coat for the cold. A piece worn over the top and kept on indoors — ${trip ? `whatever the suitcase holds that can be worn that way` : `whatever the wardrobe holds that can be worn that way`} — is part of how a look is composed: it is chosen by sight, for how its colour, length and line sit with what is under it, and it makes the same top and trousers a different outfit. ${trip ? `A stylist dressing a week away builds some of the looks this way when the suitcase allows it,` : `A stylist builds some of the looks this way when the garments allow it,`} and leaves a look alone when a layer would add nothing. This is separate from cold_layer_decision, which is only about warmth outdoors: a layer that is part of the look goes in piece_ids, and styling_instructions says what is worn over what and how it is worn.
 
 ${trip ? `${HOW_A_DAY_AWAY_WORKS} When a look would also carry the wearer through another of the trip's activities on the same day, say so in its reason, and what would need to change (usually only the shoes or a layer).
+
+${TRIP_REQUEST_AND_PACKING_REASONS}
 
 ` : `${COORDINATED_PLAN_REQUEST_AND_SHORTLIST}
 
@@ -6824,17 +6839,26 @@ async function composeTripPlanOnce(workbench, toolContext) {
     : []
   // The shared garment fact line and saved-record notes — the same evidence Whole Wardrobe and /ask receive.
   const truthCatalog = tripPlanTruthCatalog(rosterPieces)
+  // The plan composer's hand-off, for a trip (engine map item 102): the traveller's words and the packer's reasons.
+  const requestBlock = coordinatedPlanRequestBlock(String(toolContext?.userWords || toolContext?.question || '').slice(-4000))
+  const packingReasons = coordinatedPlanShortlistReasons(workbench.roster_jobs, rosterIds)
   const promptPayload = {
     instructions: atomicTripCompositionInstructions(workbench.instructions),
     constraints: workbench.constraints,
-    slots: (workbench.slots || []).map(tripComposerSlotView),
+    // Rows whose advisories are all neutral are not sent; a hot or active slot's rows are, as before.
+    slots: (workbench.slots || []).map(slot => {
+      const { piece_assessments, ...rest } = tripComposerSlotView(slot)
+      const assessments = planPieceAssessmentsThatSaySomething(piece_assessments)
+      return { ...rest, ...(assessments.length ? { piece_assessments: assessments } : {}) }
+    }),
     piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog,
     piece_catalog_conventions: TRIP_GARMENT_FACT_CONVENTIONS,
-    piece_notes: tripPlanPieceNotes(rosterPieces)
+    piece_notes: tripPlanPieceNotes(rosterPieces),
+    ...(packingReasons.length ? { shortlist_reasons: packingReasons } : {}),
   }
   const content = [{
     type: 'text',
-    text: `Compose this fixed trip packing workbench:\n${JSON.stringify(promptPayload)}\n\nThe following thumbnails are the visual evidence for the same fixed roster. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
+    text: `${requestBlock}Compose this fixed trip packing workbench:\n${JSON.stringify(promptPayload)}\n\nThe following thumbnails are the visual evidence for the same fixed roster. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
     cache_control: { type: 'ephemeral' }
   }]
   // Unconditional, whole-roster image attachment — the same policy capsule composition uses, not

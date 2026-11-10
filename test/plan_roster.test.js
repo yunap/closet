@@ -449,13 +449,25 @@ test('the plan composer is handed the request in the person\'s words, each slot\
   assert.deepEqual(slots[1].allowed_piece_ids, [7, 8], 'the allowed list is untouched')
 })
 
-test('only the at-home plan composer is told how to read the request and the shortlist\'s reasons', () => {
+test('both composers are told how to read the request and the earlier step\'s reasons, each in its own words', () => {
   const plan = coordinatedPlanCompositionSystemPrompt()
   assert.match(plan, /THE REQUEST\. When the request is given in the person's own words, start from it/)
   assert.match(plan, /shortlist_reasons, when given, is why each garment was chosen/)
   assert.match(tripRosterSelectionSystemPrompt({ planKind: 'coordinated_plan' }), /THE REQUEST\. When the request is given in the person's own words, start from it/, 'the shortlist\'s own sentence')
   const trip = tripPlanCompositionSystemPrompt({ planKind: 'trip' })
-  assert.doesNotMatch(trip, /shortlist_reasons|THE REQUEST\./, 'the trip composer is unchanged')
+  assert.match(trip, /THE REQUEST\. When the request is given in the traveller's own words, start from it/)
+  assert.match(trip, /shortlist_reasons, when given, is why each piece was packed/)
+  assert.doesNotMatch(trip, /why each garment was chosen for this plan/, 'the plan\'s wording stays out of a trip')
+})
+
+// The trip packer's prompt says "when the request states this" and "unless the request fixes the days"; until
+// 2026-11-09 the request itself was withheld from it.
+test('the trip packer is shown the traveller\'s words, after the trip context', () => {
+  const text = tripRosterSelectionUserText({
+    bench: [], slots: [{ label: 'Dinners', occasion: 'evening', activity: 'none', targetOutfits: 1 }], dateRange: { start: '2026-11-12', end: '2026-11-15' },
+    planKind: 'trip', requestWords: 'Four days in Paso Robles. Dinner is booked for Saturday.',
+  })
+  assert.match(text, /THE REQUEST \(their words, oldest first\):\nFour days in Paso Robles\. Dinner is booked for Saturday\./)
 })
 
 // thread_1794273948027: Saturday afternoon's hourly slice had rain in it; the label said only "62°F high / 60°F low".
@@ -467,3 +479,34 @@ test('a dated slot\'s weather label states the rain its hourly slice measured', 
   assert.equal(withHourlyRainStated(label, 'unknown'), label, 'nothing is said where nothing was measured')
   assert.equal(withHourlyRainStated('mild', 'rain'), 'mild; rain forecast at that time')
 })
+
+// thread_1794275667026: the winery card read "no layer here has tagged rain protection for wet conditions" and the
+// reply above it called the look weather-ready; the writer had been given neither the note nor the look's reason.
+test('the writer of an at-home plan\'s reply is given each look\'s reason and the notes printed on its card', async () => {
+  const { coordinatedPlanOutfitSummary } = await import('../styling-engine/tools.js')
+  const noted = coordinatedPlanOutfitSummary({
+    label: 'Saturday: Winery Tasting & Dinner', coveragePosition: 'Saturday · 1 of 1', slotWeather: '62°F high / 60°F low; rain forecast at that time',
+    pieces: [{ name: 'black lambskin zip jacket' }], reason: 'Tweed and leather for the terrace.',
+    systemFlags: [{ type: 'Weather note', message: 'no layer here has tagged rain protection for wet conditions' }, { type: 'Weather note', message: ' ' }],
+  })
+  assert.deepEqual(noted.notes, ['no layer here has tagged rain protection for wet conditions'])
+  assert.equal(noted.reason, 'Tweed and leather for the terrace.')
+  assert.deepEqual(noted.pieceNames, ['black lambskin zip jacket'])
+  assert.equal('notes' in coordinatedPlanOutfitSummary({ label: 'Sunday', pieces: [] }), false, 'no notes, no field')
+})
+
+// The situation read was the single-outfit stylist's alone; a request for a few options went to a composer asked
+// for "a specific visual reason" per card (thread_1793861012908: a silk blouse for a host, nothing said).
+test('the options composer reads the situation on a chat turn, in the single-outfit stylist\'s own words', async () => {
+  const promptsModule = await import('../styling-engine/prompts.js')
+  const { readTheSituation } = promptsModule
+  const shared = readTheSituation('Before you compose')
+  assert.match(shared, /^The request text is the brief\./)
+  assert.match(shared, /Before you compose, work out from the wearer's own words what the time will actually involve/)
+  assert.match(shared, /what the hands will be doing \(cooking, serving, carrying, working\)/)
+  const routeSrc = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(routeSrc, /stylistNote && !composerExperiment\n\s+\? `READ THE SITUATION FIRST:\\n\$\{readTheSituation\('Before you compose'\)\}/, 'sent only on the turn that also writes a stylist note')
+  const promptsSrc = fs.readFileSync(new URL('../styling-engine/prompts.js', import.meta.url), 'utf8')
+  assert.match(promptsSrc, /READ THE SITUATION FIRST:\n\$\{readTheSituation\('Before you search'\)\}/, 'the single-outfit stylist reads the same paragraph')
+})
+

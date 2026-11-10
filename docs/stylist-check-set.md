@@ -52,3 +52,28 @@ with rain forecast, the raincoat was among its allowed pieces, and the reply cal
 notes no rain protection (fail); the reply again lists each look's pieces above the cards (fail). The shortlist's
 reasons did not reach the composer on this run (a lookup fault in the hand-off, fixed the same day).
 
+## 2 · A few options for hosting at home
+
+> I am hosting a small get-together for my neighbours this Saturday. Give me a few options to wear.
+
+Stored run: `thread_1793861012908`, 2026-11-05, `gemini-3.7-flash`, capture session `06d48542` (calls 1 and 4), before
+item 103's change to this path.
+
+**Must hold**
+
+- The request does not say whether the host cooks or serves. Either she asks, or the options hold up for a host on her
+  feet around food and drink and the note says what it assumed.
+- Each card's reason says why the outfit suits hosting, not only how its colours and textures sit together.
+- A fabric that needs special care, where one is offered, is named as a drawback for a host.
+- No note on a card about outdoor weather for an evening spent at home.
+
+**Must not**
+
+- Sleeves or hems that trail into food on every option.
+- A pick described as fuss-free above a card carrying a warning.
+
+**Stored run, scored:** two options, a pick named with a reason about welcoming guests (pass); both card reasons are
+about colour, sheen and drape only (fail); the second option is a silk blouse and nothing is said about it for a host
+(fail); nothing asked and nothing stated as assumed (fail); no outdoor-weather note (pass); one card carries
+"Contains a piece the occasion/activity profile usually discourages" under a note calling it zero fuss (fail).
+

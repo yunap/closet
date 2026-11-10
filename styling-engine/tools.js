@@ -1704,6 +1704,22 @@ export function isWearerHomeLocation(value = '', toolContext = {}) {
 // One-shot composition only (trip and coordinated plan): a cold_layer_decision on a slot where no layer is required or
 // permitted has exactly one correct form, so it is corrected before validation rather than costing the card. The
 // tool-loop submit_plan_outfits case keeps rejecting it, since it can resubmit (thread_1788584505940).
+// What the writer of an at-home plan's reply is given for each look: its own reason, and the notes the user sees
+// printed on its card (thread_1794275667026: a look described as weather-ready above a card noting no rain protection).
+export function coordinatedPlanOutfitSummary(outfit = {}) {
+  const notes = (Array.isArray(outfit.systemFlags) ? outfit.systemFlags : [])
+    .map(flag => String(flag?.message || '').trim())
+    .filter(Boolean)
+  return {
+    slot: outfit.label,
+    coverage: outfit.coveragePosition,
+    weather: outfit.slotWeather || '',
+    pieceNames: (outfit.pieces || []).map(piece => piece.name),
+    reason: outfit.reason || '',
+    ...(notes.length ? { notes } : {}),
+  }
+}
+
 function correctUnpermittedColdLayerDecisions(pendingPlan = {}, submittedOutfits = []) {
   const slotById = new Map((pendingPlan.slots || []).map(slot => [slot.id, slot]))
   const corrected = []
@@ -4292,7 +4308,9 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
               instructions: workbench.instructions,
               piece_catalog: workbench.piece_catalog,
               slots: workbench.slots,
-              constraints: workbench.constraints
+              constraints: workbench.constraints,
+              // Why each piece was packed, for the composer to read (engine map item 102).
+              roster_jobs: pendingPlan.tripRosterJobs || []
             })
           } catch (err) {
             compositionError = err
@@ -4798,6 +4816,21 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         toolContext.sourceLocked = true
         toolContext.pendingPlan = null
         const planLinesForResponse = Array.isArray(planOutfits[0]?.tripPlanLines) ? planOutfits[0].tripPlanLines : []
+        // An at-home plan's reply (live thread_1794275667026, 2026-11-09). "Present THIS set slot by slot and include
+        // the plan_lines" produced a report: plan length, coverage and forecast as bullets, then each look's pieces
+        // listed above cards that already show them. And the writer was not given what the user sees printed on a
+        // card: the winery look carried "no layer here has tagged rain protection for wet conditions" while her reply
+        // called it weather-ready. The client renders the plan lines itself (StylistChat getTripPlanNotes), as it does
+        // for a trip, so this follows the trip's instruction above: write what the screen cannot show. Capsules and
+        // tool-loop trip submissions keep the earlier message.
+        if (pendingPlan.planKind === 'coordinated_plan') {
+          return {
+            status: "success",
+            message: `Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the plan length and the weather used are ALREADY displayed to the user. Do not list the outfits' pieces again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who planned these days: (1) open with what these days ask of the clothes, as you understood the request, saying the weather you planned for and anything you assumed about the days so it can be corrected; (2) then go through the days and say why each look suits what the person will be doing in it, and name a real drawback where a look has one; a look's notes are what the user sees printed on that card, so either say how the look answers a note or say plainly that it does not and what to take or wear instead, and never describe a look as protected against weather its note says it is not; (3) say plainly, in your own words, anything the plan does not cover, from the plan_lines. As long as it needs to be and no longer, in plain paragraphs: no overview list, no headings for each field.`,
+            plan_lines: planLinesForResponse,
+            outfit_summaries: planOutfits.map(coordinatedPlanOutfitSummary)
+          }
+        }
         return {
           status: "success",
           message: `Accepted ${planOutfits.length} model-composed plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. Present THIS set slot by slot and include the plan_lines; do not call propose_outfit to rebuild it. These cards are already displayed to the user — do NOT call propose_outfit or render them again; write your final answer presenting them.${pendingPlan.isSeasonalCapsule ? CAPSULE_PLAN_EVIDENCE_BOUNDARY : ''}`,

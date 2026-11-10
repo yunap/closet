@@ -415,3 +415,15 @@ thread are in `engine-behaviour-map.md` item 102.
   unknown and changes the slots.
 
 Trips are unchanged. Not run live.
+
+## 14 · The reply to a plan, and the same hand-off for a trip (2026-11-09)
+
+After §13's live run (`thread_1794275667026`). Details in `engine-behaviour-map.md` item 103.
+
+- The reply to an at-home plan is asked for what the screen cannot show, as a trip's reply is: what the days ask of the
+  clothes, why each look suits what is done in it, and what is not covered. It is given each look's reason and the
+  notes printed on its card, and must answer a note or admit it.
+- The trip composer is handed the traveller's words and the packer's reason for each piece; the trip packer is handed
+  the words. All-neutral assessment rows are dropped for a trip as well.
+
+Not run live.

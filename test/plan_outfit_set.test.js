@@ -5249,7 +5249,15 @@ test('submit_plan_outfits success message tells the model not to call propose_ou
   }, toolContext)
 
   assert.equal(result.status, 'success')
-  assert.match(result.message, /do NOT call propose_outfit or render them again/)
+  // 2026-11-09: an at-home plan's message is the trip's shape (write what the screen cannot show); the prohibition
+  // this test pins is unchanged.
+  assert.match(result.message, /ALREADY displayed to the user/)
+  assert.match(result.message, /do not call propose_outfit/)
+  // thread_1794275667026: the writer was told to "include the plan_lines" and listed every look's pieces above its
+  // card, and was never shown the note printed on a card.
+  assert.doesNotMatch(result.message, /include the plan_lines|slot by slot/)
+  assert.match(result.message, /a look's notes are what the user sees printed on that card/)
+  assert.ok('reason' in result.outfit_summaries[0], 'each look\'s own reason is there to explain from')
 })
 
 // --- Partial-accept gap-fill pointer (spec 26 Part 2) -----------------------
