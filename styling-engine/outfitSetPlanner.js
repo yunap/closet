@@ -1257,6 +1257,22 @@ export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, 
   return `${parts.join('; ')} — ${sourceLabel}${location ? `, ${location}` : ''}${farAhead}`
 }
 
+// A dated slot's hourly slice measures rain as well as temperature, and its label stated only the temperature
+// (live thread_1794273948027, 2026-11-09): a Saturday afternoon "mostly outdoors" read "62°F high / 60°F low" to the
+// shortlist and the composer, the slice had rain in it, and the card then carried "no layer here has tagged rain
+// protection for wet conditions" about weather neither model had been told. Stated the way the several-day sentence
+// above states it, and only where it was measured.
+export function withHourlyRainStated(label = '', precipitation = '') {
+  const text = String(label || '')
+  const value = String(precipitation || '')
+  const rain = value === 'rain' || value === 'mixed' ? 'rain forecast at that time'
+    : value === 'none' ? 'no rain forecast at that time'
+    : ''
+  if (!text || !rain) return text
+  const at = text.indexOf(' — ')
+  return at === -1 ? `${text}; ${rain}` : `${text.slice(0, at)}; ${rain}${text.slice(at)}`
+}
+
 // The whole-day counterpart of the sentence above, for an undated trip activity with no time of day:
 // the same facts (range, coolest and warmest day, days not forecast, far-ahead caveat) from the
 // daily series, so every activity of one trip is described to the same standard. Null when the
@@ -1403,7 +1419,10 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       }
       const hourlyLabel = acrossDays
         ? tripWindowWeatherSentence(acrossDays, { timeWindow: slot.timeWindow, location: targetLocation })
-        : truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
+        : withHourlyRainStated(
+            truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season }),
+            hourly.precipitation
+          )
       if (isIndoorSlot) {
         // Same indoor+transit shape as the daily-path branch below, sourced from the hourly slice
         // instead of the flat day envelope — base stays climate-controlled/permissive, transit*

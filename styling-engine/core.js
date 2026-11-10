@@ -4739,7 +4739,15 @@ export async function buildStylistConversationPayload(body) {
     // whether the user or the assistant's prose produced it, and the user's words are read above.
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
     || ''
-  const travelOrPackingRequest = isTravelOrPackingRequest(question, effectiveOccasion)
+  // Whether this is a trip is the router's reading when it read the request, and the word match only when it did not
+  // (live thread_1794273948027, 2026-11-09). "My friends are staying with us… Saturday afternoon we're going to a
+  // winery tasting" matched "going to", the router had called it full_stylist with no place because the wearer is at
+  // home, and the turn was told to stop and ask the user for the forecast of their own town. The router has a
+  // profile for trips (trip_plan); a fresh request it did not give that profile is not one.
+  const routedProfile = String(body?.routedProfile || '').trim()
+  const travelOrPackingRequest = routedProfile
+    ? routedProfile === 'trip_plan' || String(effectiveOccasion || '').toLowerCase() === 'travel'
+    : isTravelOrPackingRequest(question, effectiveOccasion)
   // The router's structured reading of the place outranks the word match (live thread_1791764470904,
   // 2026-10-11): "a trip to Vienna, Virginia… Do some sightseeing and visit museums" failed the
   // activity list below on a plural ("museums"), the turn was marked as missing weather, and she was

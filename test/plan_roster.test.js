@@ -67,6 +67,7 @@ test('a coordinated plan: the stylist chooses the roster with the trip mechanism
   let rosterCalls = 0
   let seenRequest = null
   let composedWorkbench = null
+  let reasonsAtComposition = null
   const toolContext = {
     declaredIntent: { want: 'cards' },
     generatedOutfits: [],
@@ -78,6 +79,10 @@ test('a coordinated plan: the stylist chooses the roster with the trip mechanism
     },
     composeCoordinatedPlanOnce: async workbench => {
       composedWorkbench = workbench
+      // What the real composer reads at this moment (thread_1794275667026: the reasons were stored as { pieceId, job },
+      // read as piece_id, and none reached the composer on the first live run of the hand-off).
+      const { coordinatedPlanShortlistReasons } = await import('../routes/ai.js')
+      reasonsAtComposition = coordinatedPlanShortlistReasons(toolContext.pendingPlan?.planRosterJobs, workbench.slots.flatMap(slot => slot.allowed_piece_ids))
       const [hosting, dinner] = workbench.slots
       return {
         outfits: [{ slot_id: hosting.id, piece_ids: [ids.tops[0], ids.bottoms[0], ids.shoes[0]], title: 'Hosting', reason: 'Easy and put together.', cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } }],
@@ -99,6 +104,8 @@ test('a coordinated plan: the stylist chooses the roster with the trip mechanism
   const roster = new Set([ids.tops[0], ids.tops[1], ids.bottoms[0], ids.shoes[0]])
   assert.ok(composedWorkbench.slots.every(slot => slot.allowed_piece_ids.length && slot.allowed_piece_ids.every(id => roster.has(Number(id)))), 'each slot composes from her roster only')
   assert.equal(result.status, 'success', JSON.stringify(result).slice(0, 400))
+  assert.deepEqual(reasonsAtComposition.map(entry => entry.id).sort((a, b) => a - b), [...roster].sort((a, b) => a - b), 'every chosen garment\'s reason is there for the composer')
+  assert.ok(reasonsAtComposition.every(entry => entry.chosen_for === 'a look'))
   assert.equal(toolContext.generatedOutfits.length, 1)
   assert.ok((result.plan_lines || []).some(line => /Friday Visit/.test(line) && /nothing dressy enough/.test(line)), JSON.stringify(result.plan_lines))
   assert.equal(toolContext.freeformDiagnostics.coordinatedPlanCompositionCalls, 1)
@@ -400,4 +407,63 @@ test('a plan shortlist receives the owner\'s rules', async () => {
   assert.ok(Array.isArray(rulesAtShortlist) && rulesAtShortlist.includes('I want to see some layered outfits.'), JSON.stringify(rulesAtShortlist))
   const text = tripRosterSelectionUserText({ bench: [], slots: [], dateRange: {}, planKind: 'coordinated_plan', ownerRules: rulesAtShortlist })
   assert.match(text, /OWNER GUIDANCE — applicable to these use cases\. Follow it unless the owner explicitly changes it in this request: "I want to see some layered outfits\."/)
+})
+
+// thread_1794273948027 (2026-11-09): the composer was handed slot labels only. "I'll cook breakfast every morning"
+// reached it as two slots' best_for, the shortlist's reason for each garment was dropped, and 41% of its text was
+// assessment rows that all read neutral.
+test('the plan composer is handed the request in the person\'s words, each slot\'s best_for and the shortlist\'s reasons', async () => {
+  const { coordinatedPlanRequestBlock, coordinatedPlanShortlistReasons, coordinatedPlanComposerSlots, planPieceAssessmentsThatSaySomething } = await import('../routes/ai.js')
+
+  assert.equal(coordinatedPlanRequestBlock(''), '', 'no words, no block')
+  assert.equal(
+    coordinatedPlanRequestBlock(' I\'ll cook breakfast every morning. '),
+    'THE REQUEST (their words, oldest first):\nI\'ll cook breakfast every morning.\n\n',
+    'the same heading the shortlist reads'
+  )
+
+  const reasons = coordinatedPlanShortlistReasons([
+    { piece_id: 7, job: 'Trench coat: for crisp outdoor hours at the winery.' },
+    { piece_id: 7, job: 'duplicate' },
+    { piece_id: 8, job: '  ' },
+    { piece_id: 99, job: 'not in this plan' },
+  ], [7, 8])
+  assert.deepEqual(reasons, [{ id: 7, chosen_for: 'Trench coat: for crisp outdoor hours at the winery.' }])
+
+  const neutral = { tier: 'neutral', score: 0, reason: '' }
+  const rows = [
+    { id: 7, extreme_heat: neutral, movement: neutral, operational_ease: neutral },
+    { id: 8, extreme_heat: { tier: 'discouraged', score: -2, reason: 'full-leg coverage' }, movement: neutral, operational_ease: neutral },
+  ]
+  assert.deepEqual(planPieceAssessmentsThatSaySomething(rows).map(row => row.id), [8], 'a row that says something is kept whole')
+
+  const slots = coordinatedPlanComposerSlots([
+    { id: 'thursday', label: 'Thursday at home', allowed_piece_ids: [7, 8], piece_assessments: [rows[0]], styling_context: { season: 'current season', calendarSeason: 'fall' } },
+    { id: 'hot_walk', label: 'Hot walk', allowed_piece_ids: [7, 8], piece_assessments: rows, styling_context: { season: 'current season', calendarSeason: 'summer' } },
+  ], [{ id: 'thursday', bestFor: 'Hosting friends & cooking breakfast at home' }])
+  assert.equal(slots[0].best_for, 'Hosting friends & cooking breakfast at home')
+  assert.equal('piece_assessments' in slots[0], false, 'all-neutral rows are not sent')
+  assert.equal(slots[0].season, 'fall (the current season)')
+  assert.equal('best_for' in slots[1], false)
+  assert.deepEqual(slots[1].piece_assessments.map(row => row.id), [8])
+  assert.deepEqual(slots[1].allowed_piece_ids, [7, 8], 'the allowed list is untouched')
+})
+
+test('only the at-home plan composer is told how to read the request and the shortlist\'s reasons', () => {
+  const plan = coordinatedPlanCompositionSystemPrompt()
+  assert.match(plan, /THE REQUEST\. When the request is given in the person's own words, start from it/)
+  assert.match(plan, /shortlist_reasons, when given, is why each garment was chosen/)
+  assert.match(tripRosterSelectionSystemPrompt({ planKind: 'coordinated_plan' }), /THE REQUEST\. When the request is given in the person's own words, start from it/, 'the shortlist\'s own sentence')
+  const trip = tripPlanCompositionSystemPrompt({ planKind: 'trip' })
+  assert.doesNotMatch(trip, /shortlist_reasons|THE REQUEST\./, 'the trip composer is unchanged')
+})
+
+// thread_1794273948027: Saturday afternoon's hourly slice had rain in it; the label said only "62°F high / 60°F low".
+test('a dated slot\'s weather label states the rain its hourly slice measured', async () => {
+  const { withHourlyRainStated } = await import('../styling-engine/outfitSetPlanner.js')
+  const label = '62°F high / 60°F low — live hourly forecast, sliced to this activity\'s actual time window, Walnut Creek, CA'
+  assert.equal(withHourlyRainStated(label, 'rain'), '62°F high / 60°F low; rain forecast at that time — live hourly forecast, sliced to this activity\'s actual time window, Walnut Creek, CA')
+  assert.match(withHourlyRainStated(label, 'none'), /^62°F high \/ 60°F low; no rain forecast at that time — live hourly/)
+  assert.equal(withHourlyRainStated(label, 'unknown'), label, 'nothing is said where nothing was measured')
+  assert.equal(withHourlyRainStated('mild', 'rain'), 'mild; rain forecast at that time')
 })

@@ -9671,6 +9671,22 @@ test('a trip turn the router routed with a named place is not told to ask the us
   assert.match(text(unrouted), /TRAVEL WEATHER BLOCKER/)
 })
 
+// Live thread_1794273948027: guests at home, "we're going to a winery tasting". The words matched "going to", the
+// router had read no trip and no place, and the stylist was told to ask the user what weather to expect.
+test('a fresh request the router did not read as a trip is not blocked on travel weather by its wording', async () => {
+  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
+  const question = 'My friends are staying with us this Thursday through Sunday. I’ll cook breakfast every morning. Saturday afternoon we’re going to a winery tasting, mostly outdoors, then dinner at a nice restaurant that evening. Can you plan my outfits?'
+  const text = payload => (typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system))
+  const atHome = await buildStylistConversationPayload({ question, sessionId: 'travel-blocker-at-home', conversationMode: 'new_request', history: [], routedProfile: 'full_stylist' })
+  assert.doesNotMatch(text(atHome), /TRAVEL WEATHER BLOCKER/)
+  assert.equal(atHome.threadState.travel, undefined)
+  // The word match still decides when the router did not read the request, and a trip the router named keeps the stop.
+  const unrouted = await buildStylistConversationPayload({ question, sessionId: 'travel-blocker-unrouted', conversationMode: 'new_request', history: [] })
+  assert.match(text(unrouted), /TRAVEL WEATHER BLOCKER/)
+  const trip = await buildStylistConversationPayload({ question: 'I am away for a few days next week, help me pack', sessionId: 'travel-blocker-trip', conversationMode: 'new_request', history: [], tripPlanTurn: true, routedProfile: 'trip_plan' })
+  assert.match(text(trip), /TRAVEL WEATHER BLOCKER/)
+})
+
 // Live thread_1791416150174 (a 49–83°F week): a trip thread stores no single forecast profile, so
 // the follow-up label fell back to a word match and read "hot weather". The cards' own stored
 // ranges now supply it. Same turn: new information about the plans must change the answer.

@@ -6620,6 +6620,12 @@ ${prompts.WORKING_STYLE}`
 // IS shared verbatim is the style constitution, and the mechanical contract (allowed_piece_ids
 // only, exact target_outfits count, read formality/occasions from the catalog rather than trusting
 // allowed_piece_ids alone) — those are true of any fixed-roster composition, not capsule-specific.
+// The first sentence is the plan shortlist's own (choosePlanRosterWithProvider's system prompt), so both steps
+// read the request the same way; the second names the shortlist's reasons for what they are.
+const COORDINATED_PLAN_REQUEST_AND_SHORTLIST = `THE REQUEST. When the request is given in the person's own words, start from it: it says what the days are, who they are with and what matters to them, and it outranks the use-case summaries where they differ. Something the person says they do on every day, or on several, belongs to each of those days, whichever slots mention it.
+
+shortlist_reasons, when given, is why each garment was chosen for this plan by the step before you, written from the same request. They are that step's reasons, not recorded facts: read them to see what a garment was chosen to do, and judge each look yourself from the request, the recorded facts and the photographs.`
+
 export function tripPlanCompositionSystemPrompt({ planKind = 'trip' } = {}) {
   // plan_outfit_set's one composer prompt (owner, 2026-10-28); only what packing adds is trip-only.
   const trip = planKind === 'trip'
@@ -6633,7 +6639,9 @@ LAYERED LOOKS. An outfit is not only a top, a bottom and a coat for the cold. A 
 
 ${trip ? `${HOW_A_DAY_AWAY_WORKS} When a look would also carry the wearer through another of the trip's activities on the same day, say so in its reason, and what would need to change (usually only the shoes or a layer).
 
-` : ''}${PHYSICAL_WEARABILITY_REALISM_RULES}
+` : `${COORDINATED_PLAN_REQUEST_AND_SHORTLIST}
+
+`}${PHYSICAL_WEARABILITY_REALISM_RULES}
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -6935,6 +6943,60 @@ export function coordinatedPlanCompositionSchema(targetOutfits = 1) {
   return schema
 }
 
+// What the plan composer is handed besides the slots (thread_1794273948027, 2026-11-09). The request reached the
+// shortlist in the person's own words and the composer only as each slot's label: "I'll cook breakfast every
+// morning" arrived as "Hosting friends & cooking breakfast at home" on two of four days, and a top with extra-long
+// flared sleeves went to the stove. The shortlist's reason for each garment ("for crisp outdoor hours during the
+// winery tasting") was written and then dropped before composition. Both now travel; nothing is gated on either.
+export function coordinatedPlanRequestBlock(requestWords = '') {
+  const words = String(requestWords || '').trim()
+  return words ? `THE REQUEST (their words, oldest first):\n${words}\n\n` : ''
+}
+
+export function coordinatedPlanShortlistReasons(jobs = [], rosterIds = []) {
+  const allowed = new Set((Array.isArray(rosterIds) ? rosterIds : []).map(Number))
+  const seen = new Set()
+  const reasons = []
+  for (const entry of Array.isArray(jobs) ? jobs : []) {
+    // The stored shape is { pieceId, job } (selectTripRosterViaModel); the model's own answer says piece_id.
+    const id = Number(entry?.pieceId ?? entry?.piece_id)
+    const reason = String(entry?.job || '').trim()
+    if (!allowed.has(id) || seen.has(id) || !reason) continue
+    seen.add(id)
+    reasons.push({ id, chosen_for: reason })
+  }
+  return reasons
+}
+
+// A row whose every advisory is neutral says nothing, and on that thread such rows were 26,524 of the composer's
+// 64,814 characters. Rows that say something are sent as before, each with its own id.
+export function planPieceAssessmentsThatSaySomething(assessments = []) {
+  return (Array.isArray(assessments) ? assessments : []).filter(row => Object.entries(row || {})
+    .some(([key, advisory]) => key !== 'id' && advisory && typeof advisory === 'object' && String(advisory.tier || 'neutral') !== 'neutral'))
+}
+
+export function coordinatedPlanComposerSlots(slots = [], pendingSlots = []) {
+  const bestForById = new Map((Array.isArray(pendingSlots) ? pendingSlots : [])
+    .map(slot => [String(slot?.id || ''), String(slot?.bestFor || '').trim()]))
+  // The slot's season, stated beside its label rather than left as calendar_season inside styling_context.
+  return (Array.isArray(slots) ? slots : []).map(slot => {
+    const { id, label, piece_assessments, ...rest } = tripComposerSlotView(slot)
+    const season = seasonPromptLabel(slot?.styling_context?.season || 'current season', slot?.styling_context?.calendarSeason || slot?.calendar_season || '')
+    // The system prompt calls best_for "the lived scenario"; until now it reached the composer only inside
+    // styling_context.requestText.
+    const bestFor = bestForById.get(String(id || '')) || ''
+    const assessments = planPieceAssessmentsThatSaySomething(piece_assessments)
+    return {
+      id,
+      label,
+      ...(bestFor ? { best_for: bestFor } : {}),
+      ...(season !== 'current season' ? { season } : {}),
+      ...rest,
+      ...(assessments.length ? { piece_assessments: assessments } : {}),
+    }
+  })
+}
+
 export async function composeCoordinatedPlanOnce(workbench, toolContext) {
   const targetOutfitCount = (workbench.slots || [])
     .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
@@ -6945,22 +7007,21 @@ export async function composeCoordinatedPlanOnce(workbench, toolContext) {
   const rosterPieces = rosterIds.length
     ? db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${rosterIds.map(() => '?').join(',')})`).all(...rosterIds).map(parsePiece)
     : []
+  // The same words the shortlist was given (choosePlanRosterWithProvider's requestWords).
+  const requestBlock = coordinatedPlanRequestBlock(String(toolContext?.userWords || toolContext?.question || '').slice(-4000))
+  const shortlistReasons = coordinatedPlanShortlistReasons(toolContext?.pendingPlan?.planRosterJobs, rosterIds)
   const promptPayload = {
     instructions: atomicTripCompositionInstructions(workbench.instructions),
     constraints: workbench.constraints,
-    // The slot's season, stated beside its label rather than left as calendar_season inside styling_context.
-    slots: (workbench.slots || []).map(slot => {
-      const { id, label, ...rest } = tripComposerSlotView(slot)
-      const season = seasonPromptLabel(slot?.styling_context?.season || 'current season', slot?.styling_context?.calendarSeason || slot?.calendar_season || '')
-      return { id, label, ...(season !== 'current season' ? { season } : {}), ...rest }
-    }),
+    slots: coordinatedPlanComposerSlots(workbench.slots, toolContext?.pendingPlan?.slots),
     piece_catalog: rosterPieces.length ? tripPlanTruthCatalog(rosterPieces) : workbench.piece_catalog,
     piece_catalog_conventions: COORDINATED_PLAN_GARMENT_FACT_CONVENTIONS,
     piece_notes: tripPlanPieceNotes(rosterPieces),
+    ...(shortlistReasons.length ? { shortlist_reasons: shortlistReasons } : {}),
   }
   const content = [{
     type: 'text',
-    text: `Compose this plan:\n${JSON.stringify(promptPayload)}\n\nThe following photographs are the visual evidence for every garment chosen for it. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
+    text: `${requestBlock}Compose this plan:\n${JSON.stringify(promptPayload)}\n\nThe following photographs are the visual evidence for every garment chosen for it. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
     cache_control: { type: 'ephemeral' },
   }]
   // Every chosen garment's photo, unconditionally, as the trip and capsule composers do (visual grounding).
@@ -7691,6 +7752,8 @@ router.post('/ask', async (req, res) => {
       && !req.body.imageData
     let singleOutfitRoute = null
     let tripPlanRoute = null
+    // The profile the router gave a fresh request; '' when it did not run or the turn is a follow-up.
+    let routedFreshProfile = ''
     const savedPackingApproach = getSavedPackingApproach()
     toolContext.savedPackingApproach = savedPackingApproach
     if (routerEligible) {
@@ -7832,6 +7895,7 @@ router.post('/ask', async (req, res) => {
         toolContext.freeformDiagnostics ||= {}
         toolContext.freeformDiagnostics.executionRouterProfile = String(compactProfile || '')
         toolContext.freeformDiagnostics.executionRouterLimit = routedLimit
+        if (freshExecutionRequest) routedFreshProfile = String(compactProfile || '')
         if (freshExecutionRequest && compactProfile === 'single_outfit' && routedLimit === 1) {
           singleOutfitRoute = routed.value
         }
@@ -8149,6 +8213,7 @@ router.post('/ask', async (req, res) => {
           season: req.body.season,
           activity: req.body.activity,
           ...(tripPlanRoute ? { tripPlanTurn: true, routedLocation: String(tripPlanRoute.location || '') } : {}),
+          ...(routedFreshProfile ? { routedProfile: routedFreshProfile } : {}),
           // Only an ordinary text follow-up: an attached image or outfit/piece launch keeps the full request.
           tripFollowupEligible: !freshExecutionRequest && !req.body?.image && !req.body?.imageBase64,
           answerInWords: toolContext.answerInWords === true,
