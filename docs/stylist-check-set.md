@@ -180,6 +180,22 @@ feels styled, intentional"); how dressed the dinner itself would be was not stat
 leather coat as "down-insulated", which the record supports (down in the insulating-layer field) (pass). The
 care-from-fibre note reached the composer on both runs (item 108); nothing in this request exercises it.
 
+## 7 · A few options for a gallery opening, then a walk to dinner
+
+> I'm going to a gallery opening in San Francisco on Thursday evening with a friend. We'll probably walk a few blocks
+> between the gallery and dinner afterwards. Give me a few options to wear.
+
+**Must hold:** three options; the evening forecast; something for the walk outside; shoes for several blocks; the
+reply says what a gallery opening is dressed like. **Must not:** a fibre or warmth claim the record contradicts.
+
+**Run** (`thread_1794424155403`, 2026-11-11, first run with the new capture names): three cards, none rejected (pass);
+forecast 63/56°F stated as the evening's chill (pass); a bouclé wool jacket, a lambskin jacket and a cashmere vest
+over low flat shoes (pass); the lambskin option says outright it lacks a heavy shell (pass). Fail: the second card is
+titled "Tailored Silk & Wide Wool" and the reply calls the pants "warm, substantial", but they are rayon knit; "warm
+leather loafers" are tagged a warm-season shoe. Weak: "curated and creative indoors" is the only reading of the room;
+no statement of how dressed the opening itself is (the same gap as entry 6). The turned-down-option preface was not
+exercised; it still needs a prompt where the composer cannot find three.
+
 ## How appropriateness is judged
 
 Whether a look is right for the room is the part a model is least reliable on: it states a norm confidently, and the
