@@ -216,6 +216,11 @@ export function extractStatedTripDateRange(text = '', { currentDate = new Date()
   const now = currentDate instanceof Date && !Number.isNaN(currentDate.getTime()) ? currentDate : new Date()
   const today = localCalendarDay(now, timeZone)
 
+  // "Next Thursday", said on a Wednesday, is the Thursday of next week, not tomorrow (live thread_1794386322652:
+  // the weather and cards were planned for the 12th-15th while the reply said the 19th-22nd). "Next <day>" is the
+  // first such day in the calendar week after this one; "this", "coming", "upcoming" and "on" keep the nearest.
+  const saysNext = new RegExp(`\\bnext\\s+(?:weekend|${WEEKDAY_PATTERN})\\b`).test(normalized)
+
   let startDate = null
   let statedEndDate = null
   const dateMatch = normalized.match(new RegExp(`\\b(${MONTH_NAME_PATTERN})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`))
@@ -244,7 +249,8 @@ export function extractStatedTripDateRange(text = '', { currentDate = new Date()
       const firstOffset = first === 'today' || first === 'tonight' ? 0
         : first === 'tomorrow' ? 1
         : ((WEEKDAYS[first] - today.getUTCDay() + 7) % 7) || (/\btoday\b/.test(normalized) ? 0 : 7)
-      startDate = new Date(today.getTime() + firstOffset * 86400000)
+      const spanFirstOffset = firstOffset + (saysNext && first !== 'today' && first !== 'tonight' && first !== 'tomorrow' && today.getUTCDay() + firstOffset < 7 ? 7 : 0)
+      startDate = new Date(today.getTime() + spanFirstOffset * 86400000)
       statedEndDate = new Date(startDate.getTime() + ((WEEKDAYS[spanMatch[2]] - startDate.getUTCDay() + 7) % 7) * 86400000)
     }
   }
@@ -259,6 +265,7 @@ export function extractStatedTripDateRange(text = '', { currentDate = new Date()
       if (daysAhead === 0 && !/\btoday\b/.test(normalized)) {
         daysAhead = 7
       }
+      if (saysNext && currentDay + daysAhead < 7) daysAhead += 7
       startDate = new Date(today.getTime() + daysAhead * 86400000)
       // "Wednesday through Saturday", "Wed to Sat", "Wednesday–Saturday": the stated last day ends the range.
       if (weekdayMatch) {

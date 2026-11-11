@@ -154,6 +154,13 @@ coming Thursday without saying so (fail, changed); no rain layer packed: the pac
 for the cooking evenings (pass); that look is a cashmere turtleneck for cooking in (fail: the same miss as the first
 plan run, on a trip; a care note assumed from fibre reaches the packer and composer as of item 108).
 
+**Third run** (`thread_1794386322652`, 2026-11-11, after items 105–108): the care note held, nothing cashmere or silk for
+cooking; the raincoat packed and worn over the silk blouse for the dinner; a look for the cooking evenings; the
+Saturday dinner in the silk blouse and heeled wedges (pass). The dates were wrong: "next Thursday", said on a
+Wednesday, was planned for the 12th-15th (the extractor took the nearest Thursday) while her reply said the 19th-22nd,
+so the weather and the cards named "Nov 15" for a trip she described as the 19th-22nd (fail, changed in item 110).
+No capture was written for this run; the thread payload was read instead.
+
 ## 6 · A few options for an outdoor dinner party
 
 > We're invited to a dinner party at friends' house in Walnut Creek this Saturday at 6. They're eating outside on the
