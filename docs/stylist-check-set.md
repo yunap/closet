@@ -151,7 +151,7 @@ coming Thursday without saying so (fail, changed); no rain layer packed: the pac
 **Second run** (`thread_1794365319946`, 2026-11-10, after items 105–106): dates stated ("planned for November 12–15")
 (pass); "drizzle forecast on three of the four days", the raincoat packed and named for every outing (pass); a look
 for the cooking evenings (pass); that look is a cashmere turtleneck for cooking in (fail: the same miss as the first
-plan run, on a trip).
+plan run, on a trip; a care note assumed from fibre reaches the packer and composer as of item 108).
 
 ## How appropriateness is judged
 

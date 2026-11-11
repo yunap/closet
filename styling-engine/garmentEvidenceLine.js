@@ -297,9 +297,35 @@ export function anchorGarmentEvidence(piece = {}) {
   return `${sharedGarmentEvidenceLine(piece)}${notes ? `\nGARMENT NOTES (source-labelled; not recorded facts): ${notes}` : ''}`
 }
 
+// CARE, ASSUMED FROM FIBRE (owner, 2026-11-10: "Yes, as a note"). Three live runs put cashmere or silk on a look that
+// is cooked in (thread_1793329874358, thread_1794273948027, thread_1794365319946), the last with the request, a slot
+// named "Cooking at Home" and `fibre wool, cashmere` all in front of the composer. How a garment is cleaned is not
+// recorded anywhere; this states the usual care of its recorded fibre as a NOTE, labelled as an assumption and never as
+// a recorded fact, so the 2026-09-15 rule (the fact line holds recorded values only) stands. It is not a rule about a
+// material (owner, 2026-11-04) and nothing reads it but the model: no gate, score or advisory. A label that says
+// otherwise is the owner's to record as a garment rule, which is printed beside it and has authority.
+// Kill switch: WARDROBE_CARE_NOTE=off.
+const CARE_ASSUMED_FROM_FIBRE = [
+  { fibres: ['leather', 'suede'], care: () => 'cannot be washed, only wiped or professionally cleaned' },
+  { fibres: ['silk'], care: many => `${many ? 'are' : 'is'} usually hand-washed or dry-cleaned` },
+  { fibres: ['cashmere', 'wool', 'merino', 'mohair', 'alpaca', 'angora'], care: many => `${many ? 'are' : 'is'} usually hand-washed or dry-cleaned` },
+]
+const CARE_NOTE_CATEGORIES = new Set(['top', 'bottom', 'dress', 'outerwear'])
+
+export function careNoteText(piece = {}) {
+  if (String(process.env.WARDROBE_CARE_NOTE || '').trim().toLowerCase() === 'off') return ''
+  if (!CARE_NOTE_CATEGORIES.has(String(piece.category || '').trim().toLowerCase())) return ''
+  const recorded = new Set(parsedList(piece.fiber_content).map(value => String(value || '').trim().toLowerCase()).filter(Boolean))
+  for (const { fibres, care } of CARE_ASSUMED_FROM_FIBRE) {
+    const present = fibres.filter(fibre => recorded.has(fibre))
+    if (present.length) return `care assumed from fibre, not from this garment's label: ${present.join(' and ')} ${care(present.length > 1)}`
+  }
+  return ''
+}
+
 // One entry per garment that has notes; '' when it has none. Deliberately not prefixed `ID n:`, so it can never be read as a fact line.
 export function garmentNotesEntry(piece = {}) {
-  const text = garmentNotesText(piece)
+  const text = [garmentNotesText(piece), careNoteText(piece)].filter(Boolean).join('; ')
   return text ? `- #${Number(piece.id)} ${piece.name || 'unnamed'}: ${text}` : ''
 }
 

@@ -637,3 +637,25 @@ test('options asked for without a number are three', () => {
   assert.doesNotMatch(providerSrc, /without a number, use 2\./)
 })
 
+// Owner, 2026-11-10 ("Yes, as a note"): cashmere was chosen to cook in on three live runs. The usual care of a
+// garment's recorded fibre travels as a labelled note, never on the fact line, and nothing but the model reads it.
+test('a care note assumed from fibre travels with the garment notes, labelled as an assumption', async () => {
+  const { careNoteText, garmentNotesEntry, sharedGarmentEvidenceFacts } = await import('../styling-engine/garmentEvidenceLine.js')
+  const cashmere = { id: 7, name: 'oatmeal turtleneck', category: 'top', fiber_content: '["wool","cashmere"]' }
+  assert.equal(careNoteText(cashmere), "care assumed from fibre, not from this garment's label: cashmere and wool are usually hand-washed or dry-cleaned")
+  assert.equal(careNoteText({ category: 'top', fiber_content: '["silk"]' }), "care assumed from fibre, not from this garment's label: silk is usually hand-washed or dry-cleaned")
+  assert.match(careNoteText({ category: 'outerwear', fiber_content: ['leather'] }), /leather cannot be washed, only wiped or professionally cleaned$/)
+  assert.equal(careNoteText({ category: 'top', fiber_content: '["cotton","polyester"]' }), '', 'nothing is said about a fibre with no usual special care')
+  assert.equal(careNoteText({ category: 'top', fiber_content: '["unknown"]' }), '', 'an unrecorded fibre is not guessed at')
+  assert.equal(careNoteText({ category: 'shoes', fiber_content: '["leather"]' }), '', 'garments only')
+  assert.match(garmentNotesEntry(cashmere), /^- #7 oatmeal turtleneck: care assumed from fibre/)
+  assert.doesNotMatch(sharedGarmentEvidenceFacts(cashmere), /care|hand-washed/, 'the fact line holds recorded values only')
+  process.env.WARDROBE_CARE_NOTE = 'off'
+  try {
+    assert.equal(careNoteText(cashmere), '')
+    assert.equal(garmentNotesEntry(cashmere), '')
+  } finally {
+    delete process.env.WARDROBE_CARE_NOTE
+  }
+})
+

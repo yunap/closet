@@ -1,5 +1,7 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Care note assumed from fibre — implemented 2026-11-10** (`engine-behaviour-map.md` item 108). `garmentNotesEntry` appends `careNoteText` for silk, wool-family and leather garments, labelled as an assumption; it reaches the options composer and the plan and trip shortlists and composers through the existing garment-notes block. `WARDROBE_CARE_NOTE=off` removes it. Not run live.
+
 > **Options without a number are three — implemented 2026-11-10** (`engine-behaviour-map.md` item 107). `FREEFORM_EXECUTION_ROUTER_SYSTEM`: "when options are asked for without a number, use 3" (was 2). Not run live.
 
 > **After five live runs — implemented 2026-11-10** (`engine-behaviour-map.md` item 105). (1) `normalizePlanSlotOccasion` keeps the stated occasion of a slot placed at home. (2) A set of options whose only change is that some were turned down keeps the stylist's note, prefaced by which and why (`optionsTurnedDownAfterComposition`, `optionsTurnedDownPreface`); the shortfall line is reworded; a rejected model card keeps its label. (3) The trip's `outfit_summaries` carry card `notes`, and its reply states the dates planned for. (4) `STYLIST_SYSTEM` gains one conversation-discipline line: a doubt is not a reason. (5) The occasion advisory names the garment. Not run live.
