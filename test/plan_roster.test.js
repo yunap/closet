@@ -629,3 +629,11 @@ test('a trip\'s whole-day weather sentence states the rain the daily forecast me
   _clearWeatherCachesForTests()
 })
 
+// Two shower runs (thread_1794359193592, thread_1794365489352): "a few options" was composed as two, a second look
+// turned one down each time, and one usable option was left. "A few" asked for without a number is three.
+test('options asked for without a number are three', () => {
+  const providerSrc = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(providerSrc, /when options are asked for without a number, use 3\./)
+  assert.doesNotMatch(providerSrc, /without a number, use 2\./)
+})
+

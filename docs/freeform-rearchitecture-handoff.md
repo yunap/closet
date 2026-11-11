@@ -1,5 +1,7 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Options without a number are three — implemented 2026-11-10** (`engine-behaviour-map.md` item 107). `FREEFORM_EXECUTION_ROUTER_SYSTEM`: "when options are asked for without a number, use 3" (was 2). Not run live.
+
 > **After five live runs — implemented 2026-11-10** (`engine-behaviour-map.md` item 105). (1) `normalizePlanSlotOccasion` keeps the stated occasion of a slot placed at home. (2) A set of options whose only change is that some were turned down keeps the stylist's note, prefaced by which and why (`optionsTurnedDownAfterComposition`, `optionsTurnedDownPreface`); the shortfall line is reworded; a rejected model card keeps its label. (3) The trip's `outfit_summaries` carry card `notes`, and its reply states the dates planned for. (4) `STYLIST_SYSTEM` gains one conversation-discipline line: a doubt is not a reason. (5) The occasion advisory names the garment. Not run live.
 
 > **Appropriateness is advised, not asked — implemented 2026-11-10** (`engine-behaviour-map.md` item 104). `plan_outfit_set`'s description no longer has the stylist ask how a recurring activity is done; she advises and says why. `readTheSituation` adds reading the room (who sees the wearer, what people there actually wear), stated in the answer. `FREEFORM_EXECUTION_ROUTER_SYSTEM`'s clarifying rule says what is appropriate and what others will wear is never asked. Tool description and single-outfit system prompt both changed, so both cached prefixes are rewritten once. Not run live.
