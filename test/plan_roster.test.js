@@ -587,3 +587,45 @@ test('the occasion note on a card names the garment, in plain words', () => {
   assert.match(rulesSrc, /not what this kind of occasion usually calls for\./)
 })
 
+// thread_1794359258964: four November days in Portland were packed from "49–61°F" alone. The daily forecast request
+// asked for no precipitation, so the packer and the composer were never told it rains, and no rain layer was packed.
+test('a trip\'s whole-day weather sentence states the rain the daily forecast measured, and nothing where it measured none', async () => {
+  const { normalizePlanSlots, resolveSlotWeather } = await import('../styling-engine/outfitSetPlanner.js')
+  const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
+  const dateRange = { start: '2026-11-12', end: '2026-11-15' }
+  const daily = rain => ({
+    time: ['2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15'],
+    temperature_2m_max: [61, 55, 52, 56],
+    temperature_2m_min: [50, 49, 49, 51],
+    ...(rain ? { precipitation_sum: rain } : {}),
+  })
+  const urls = []
+  const fetchWith = rain => async url => {
+    urls.push(url)
+    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 45.52, longitude: -122.68 }] }) }
+    return { ok: true, json: async () => ({ daily: daily(rain) }) }
+  }
+  const [walking] = normalizePlanSlots([
+    { label: 'City Walking', occasion: 'city', activity: 'walking', environment: 'outdoor', count: 2 },
+  ], { dateRange, location: 'Portland, OR' })
+
+  _clearWeatherCachesForTests()
+  const wet = await resolveSlotWeather(walking, { dateRange, location: 'Portland, OR', fetchImpl: fetchWith([4.2, 0, 7.5, 1.1]) })
+  assert.ok(urls.some(url => url.includes('precipitation_sum')), 'the daily request asks for the day\'s precipitation')
+  assert.match(wet.label, /^whole days, Nov 12–Nov 15: 49–61°F; .*rain forecast on 3 of 4 days/)
+  assert.doesNotMatch(wet.label, /at that time/, 'a whole day is not a time of day')
+
+  _clearWeatherCachesForTests()
+  const dry = await resolveSlotWeather(walking, { dateRange, location: 'Portland, OR', fetchImpl: fetchWith([0, 0, 0, 0]) })
+  assert.match(dry.label, /; no rain forecast — daily forecast/)
+
+  _clearWeatherCachesForTests()
+  const partly = await resolveSlotWeather(walking, { dateRange, location: 'Portland, OR', fetchImpl: fetchWith([4.2, null, 0, 0]) })
+  assert.doesNotMatch(partly.label, /rain/, 'a day with no measurement: nothing is claimed for the trip')
+
+  _clearWeatherCachesForTests()
+  const unmeasured = await resolveSlotWeather(walking, { dateRange, location: 'Portland, OR', fetchImpl: fetchWith(null) })
+  assert.doesNotMatch(unmeasured.label, /rain/)
+  _clearWeatherCachesForTests()
+})
+

@@ -1253,7 +1253,9 @@ export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, 
   // Rain is stated only where it was measured (the hourly slices); the whole-day path has none.
   if (acrossDays.rainDays != null) {
     const rainDays = Number(acrossDays.rainDays) || 0
-    parts.push(rainDays ? `rain at that time on ${rainDays} of ${days.length} day${days.length === 1 ? '' : 's'}` : 'no rain forecast at that time')
+    // A whole-day reading is not "at that time" (tripDaysWeatherSentence).
+    const when = acrossDays.rainWholeDays ? '' : ' at that time'
+    parts.push(rainDays ? `rain${when || ' forecast'} on ${rainDays} of ${days.length} day${days.length === 1 ? '' : 's'}` : `no rain forecast${when}`)
   }
   const uncovered = Array.isArray(acrossDays.uncoveredDates) ? acrossDays.uncoveredDates : []
   if (uncovered.length) parts.push(`${dateSpanText(uncovered)} not forecast yet`)
@@ -1286,8 +1288,10 @@ export function withHourlyRainStated(label = '', precipitation = '') {
 function tripDaysWeatherSentence(temperature = {}, { tripStart = '', tripEnd = '', location = '' } = {}) {
   const series = (Array.isArray(temperature.dailySeries) ? temperature.dailySeries : [])
     .filter(day => Number.isFinite(day?.highF) && Number.isFinite(day?.lowF))
-    .map(day => ({ date: String(day.date).slice(0, 10), highF: day.highF, lowF: day.lowF }))
+    .map(day => ({ date: String(day.date).slice(0, 10), highF: day.highF, lowF: day.lowF, ...(typeof day.rain === 'boolean' ? { rain: day.rain } : {}) }))
   if (temperature.source !== 'live' || series.length < 2) return null
+  // Stated only when every day was measured; a partly measured week says nothing rather than undercount.
+  const rainMeasured = series.every(day => typeof day.rain === 'boolean')
   const covered = new Set(series.map(day => day.date))
   const uncoveredDates = []
   if (tripStart && tripEnd) {
@@ -1304,6 +1308,7 @@ function tripDaysWeatherSentence(temperature = {}, { tripStart = '', tripEnd = '
     lowF: Math.min(...series.map(day => day.lowF)),
     highF: Math.max(...series.map(day => day.highF)),
     uncoveredDates,
+    ...(rainMeasured ? { rainDays: series.filter(day => day.rain).length, rainWholeDays: true } : {}),
   }, { location, whenLabel: 'whole days', sourceLabel: `daily forecast${temperature.provider ? ` (${temperature.provider})` : ''}` })
 }
 

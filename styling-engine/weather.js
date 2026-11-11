@@ -239,7 +239,7 @@ async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
   const cacheKey = `${start}:${end}|${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`
   const cached = weatherCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) return cached.data
-  const dailyBase = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto`
+  const dailyBase = `${FORECAST_URL}?latitude=${coords.lat}&longitude=${coords.lon}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&temperature_unit=fahrenheit&timezone=auto`
   let res = await withTimeout(fetchImpl(`${dailyBase}&start_date=${start}&end_date=${end}`), FETCH_TIMEOUT_MS)
   let withinHorizonOnly = false
   // A multi-day range that runs past the provider's horizon is rejected WHOLE (an error, not a
@@ -253,6 +253,11 @@ async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
   const data = await res.json()
   const rawHighs = data?.daily?.temperature_2m_max || []
   const rawLows = data?.daily?.temperature_2m_min || []
+  // Rain for the day, where the provider gives it (live thread_1794359258964, 2026-11-10: a November trip to Portland
+  // was packed from temperatures alone; the daily request asked for no precipitation, so neither the packer nor the
+  // composer was told it rains, and no rain layer went in the bag). A day counts as wet on any measured precipitation,
+  // as an hourly slice does (sliceHourlyWindow).
+  const rawRain = Array.isArray(data?.daily?.precipitation_sum) ? data.daily.precipitation_sum : []
   // A start/end request answers from the start date, so its days are known even without `time`.
   const requested = withinHorizonOnly ? [] : datesInRange(start, end)
   const rawDates = data?.daily?.time?.length ? data.daily.time : (rawHighs.length === requested.length ? requested : [])
@@ -264,12 +269,16 @@ async function fetchDailyRange(coords, startDate, endDate, fetchImpl) {
   const highs = rawHighs.filter((_, i) => keep[i])
   const lows = rawLows.filter((_, i) => keep[i])
   const dates = rawDates.length === rawHighs.length ? rawDates.filter((_, i) => keep[i]) : []
+  // null where nothing was measured for that day: unknown is not dry.
+  const rains = rawRain.length === rawHighs.length
+    ? rawRain.map(value => (Number.isFinite(value) ? value > 0 : null)).filter((_, i) => keep[i])
+    : []
   if (!highs.length || !lows.length) return null
   if (end > start && !forecastCoversRange(highs.length, datesInRange(start, end).length)) return null
   // `fetchedAt` is captured once, at the real network call, and rides along with the cached data —
   // a cache hit must report when the underlying forecast was actually retrieved, not "now", or
   // provenance silently lies about freshness for up to CACHE_TTL_MS.
-  const result = { highs, lows, dates, fetchedAt: new Date().toISOString() }
+  const result = { highs, lows, dates, rains, fetchedAt: new Date().toISOString() }
   weatherCache.set(cacheKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS })
   return result
 }
@@ -535,7 +544,7 @@ export async function resolveDaypartHourlyEvidence({ location = '', date = '', f
 // the plan then inherited as if it were that slot's own day's forecast. `dailySeries` preserves the
 // per-day numbers this function already has in hand, purely additively — `observedRange` and every
 // existing isHot/isCold/needsRemovableCoolLayer consumer is unchanged.
-function classify(highs, lows, { exclusive = true, dates = [] } = {}) {
+function classify(highs, lows, { exclusive = true, dates = [], rains = [] } = {}) {
   const maxHigh = Math.max(...highs)
   const minLow = Math.min(...lows)
   // Over SEVERAL days, "hot" describes the days you will mostly be in, not the single warmest one.
@@ -553,7 +562,7 @@ function classify(highs, lows, { exclusive = true, dates = [] } = {}) {
   const extreme = maxHigh >= EXTREME_HEAT_F ? { isExtremeHeat: true } : {}
   const needsRemovableCoolLayer = minLow <= COOL_LOW_F && !isCold
   const dailySeries = dates.length === highs.length && dates.length === lows.length
-    ? dates.map((date, i) => ({ date, highF: highs[i], lowF: lows[i] }))
+    ? dates.map((date, i) => ({ date, highF: highs[i], lowF: lows[i], ...(typeof rains[i] === 'boolean' ? { rain: rains[i] } : {}) }))
     : []
   if (!exclusive) return { isHot, isCold, needsRemovableCoolLayer, ...extreme, ...observedRange, dailySeries }
   return { isHot: isHot && !isCold, isCold: isCold && !isHot, needsRemovableCoolLayer, ...extreme, ...observedRange, dailySeries }
@@ -565,7 +574,7 @@ async function resolveLive({ startDate, endDate, location, fetchImpl, exclusive 
   const range = await fetchDailyRange(coords, startDate, endDate, fetchImpl)
   if (!range) return null
   return {
-    ...classify(range.highs, range.lows, { exclusive, dates: range.dates }),
+    ...classify(range.highs, range.lows, { exclusive, dates: range.dates, rains: range.rains }),
     weatherSource: 'live',
     provider: 'Open-Meteo',
     retrievedAt: range.fetchedAt,

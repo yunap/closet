@@ -134,7 +134,7 @@ rain in Portland in November is answered by what is packed, or she says it is no
 **Run** (`thread_1794359258964`, 2026-11-10): opening and knowledge of the place (pass); no packing question (pass);
 Saturday dinner (pass); no outfit for the cooking evenings, because the slot's name turned it into an evening out (fail,
 changed in item 105); trench called protection against rain above cards noting none (fail, changed); dates taken as the
-coming Thursday without saying so (fail, changed); no rain layer packed (fail, unchanged).
+coming Thursday without saying so (fail, changed); no rain layer packed: the packer was told temperatures only (fail; rain is stated to it as of item 106).
 
 ## How appropriateness is judged
 
