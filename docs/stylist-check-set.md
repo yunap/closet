@@ -109,6 +109,12 @@ jeans would cost there, then dresses the jeans if that is wanted.
 **Run** (`thread_1794359092528`, 2026-11-10): first reply passes every line. On the doubt she agreed at once ("Jeans
 can absolutely work") and offered three jeans directions without a word on her own pick (fail, changed in item 105).
 
+**Second run** (`thread_1794365607999`, 2026-11-10, after item 105): first reply reads the room and does not ask (pass),
+under a "Why This Combination Works" heading with bullets (weak); the card notes "runs warm for a high of 66°F, even
+with the layer off" for a dinner indoors and the reply does not mention it (fail, unchanged). On the doubt: "I still
+think tailored trousers are the safest bet when you haven't been to a boss's home before", then what jeans cost there,
+then two jeans directions (pass).
+
 ## 4 · A few options for a backyard baby shower
 
 > I've been invited to a baby shower in a friend's backyard on Sunday afternoon. Give me a few options.
@@ -120,6 +126,12 @@ of how dressed it is; if she no longer stands behind an option she says so in he
 **Run** (`thread_1794359193592`, 2026-11-10): her note was good and was discarded when a second look rejected one
 option; the reply was the app's template, and the rejected card was shown as "…: standard wear" (fail, changed in item
 105); cutout flats on a lawn on both options (fail, unchanged).
+
+**Second run** (`thread_1794365489352`, 2026-11-10, after item 105): one option was again rejected for clashing prints;
+her note stood, opened by which option she no longer stands behind and why, and the card kept its name (pass). One
+usable option for "a few" (fail: the composer paired two prints and defended them, two runs of two). The standing card
+notes "no layer to put on for the cooler part of the day" under a note calling it genuinely warm (fail, unchanged);
+mid-heel boots for a lawn, with her own caution about footing (weak).
 
 ## 5 · A carry-on trip with cooking at a friend's
 
@@ -135,6 +147,11 @@ rain in Portland in November is answered by what is packed, or she says it is no
 Saturday dinner (pass); no outfit for the cooking evenings, because the slot's name turned it into an evening out (fail,
 changed in item 105); trench called protection against rain above cards noting none (fail, changed); dates taken as the
 coming Thursday without saying so (fail, changed); no rain layer packed: the packer was told temperatures only (fail; rain is stated to it as of item 106).
+
+**Second run** (`thread_1794365319946`, 2026-11-10, after items 105–106): dates stated ("planned for November 12–15")
+(pass); "drizzle forecast on three of the four days", the raincoat packed and named for every outing (pass); a look
+for the cooking evenings (pass); that look is a cashmere turtleneck for cooking in (fail: the same miss as the first
+plan run, on a trip).
 
 ## How appropriateness is judged
 
