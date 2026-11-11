@@ -154,6 +154,25 @@ coming Thursday without saying so (fail, changed); no rain layer packed: the pac
 for the cooking evenings (pass); that look is a cashmere turtleneck for cooking in (fail: the same miss as the first
 plan run, on a trip; a care note assumed from fibre reaches the packer and composer as of item 108).
 
+## 6 · A few options for an outdoor dinner party
+
+> We're invited to a dinner party at friends' house in Walnut Creek this Saturday at 6. They're eating outside on the
+> patio with a fire pit, and I'll be sitting for a few hours. I know some of the people there and not others. Give me
+> a few options to wear.
+
+**Must hold:** three options with at least two standing; the evening forecast (not the day's) and warmth for sitting
+still outdoors for a wearer who runs cold; shoes for a patio; her own reading of how dressed such a dinner is; a
+caution for a fire pit where one belongs.
+**Must not:** a note about the weather for a room; a heel or hem that fails on paving.
+
+**Runs** (`thread_1794385068070`, `thread_1794386036118`, 2026-11-11, after items 107–109, `gemini-3.7-flash`): three
+options each time, none rejected (pass). The evening slice, 54–57°F, was used and stated, and every option carries a
+coat or jacket for sitting out (pass). Low-heeled or flat closed shoes, one wedge boot (pass). A fire-pit caution on the
+leather coat in one run (pass). New people were named in both openings ("meeting new people calls for an outfit that
+feels styled, intentional"); how dressed the dinner itself would be was not stated (weak). One option describes a
+leather coat as "down-insulated", which the record supports (down in the insulating-layer field) (pass). The
+care-from-fibre note reached the composer on both runs (item 108); nothing in this request exercises it.
+
 ## How appropriateness is judged
 
 Whether a look is right for the room is the part a model is least reliable on: it states a norm confidently, and the
