@@ -401,8 +401,27 @@ export function boundedAtomicMultiLookFinalAnswer(answerText = '', toolContext =
     ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
     : 0
   if (!requested || ready >= requested) return text
-  const note = `${ready} of ${requested} requested ${requested === 1 ? 'outfit' : 'outfits'} ${ready === 1 ? 'is' : 'are'} ready; the remaining ${requested - ready} could not be validated from this wardrobe in the bounded composition pass.`
+  // Said as she would say it (stylist-conversation-targets.md check 9; live thread_1794359193592 read "1 of 2
+  // requested outfits is ready; the remaining 1 could not be validated from this wardrobe in the bounded composition
+  // pass"). The count is a ceiling (owner ruling 2026-10-27), so fewer is stated, not apologised for.
+  const missing = requested - ready
+  const note = ready
+    ? `That is ${ready} of the ${requested} you asked for: I would not stand behind the other${missing === 1 ? '' : 's'} I tried.`
+    : ''
   return `${text}\n\n${note}`.trim()
+}
+
+// Which of her own options she no longer stands behind, said before her note about the set (tools.js
+// optionsTurnedDownAfterComposition).
+export function optionsTurnedDownPreface(options = []) {
+  const list = (Array.isArray(options) ? options : []).filter(option => option?.label)
+  if (!list.length) return ''
+  const names = list.map(option => `“${option.label}”`)
+  const named = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  const reasons = list.map(option => String(option.reason || '').trim()).filter(Boolean)
+  const why = reasons.length ? ` ${reasons.join(' ')}` : ''
+  const one = list.length === 1
+  return `Looking again at the finished outfits, I would not stand behind ${named}.${why} ${one ? 'It is' : 'They are'} shown below marked for review, and what I say about ${one ? 'it' : 'them'} after this no longer holds.`
 }
 
 export function boundedAtomicMultiLookResponse(toolContext = {}) {
@@ -422,7 +441,11 @@ export function boundedAtomicMultiLookResponse(toolContext = {}) {
   const stylistNote = String(toolContext?.boundedStylistNote || '').trim()
   const unavailableSentence = `I couldn’t verify the forecast${location ? ` for ${location}` : ''}, so these options avoid assuming hot or cold weather; check the temperature before choosing.`
   if (ready && stylistNote) {
-    return boundedAtomicMultiLookFinalAnswer(unavailableWeather ? `${unavailableSentence}\n\n${stylistNote}` : stylistNote, {
+    const turnedDown = optionsTurnedDownPreface(toolContext?.boundedOptionsTurnedDown)
+    const noted = [unavailableWeather ? unavailableSentence : '', turnedDown, stylistNote].filter(Boolean).join('\n\n')
+    // The preface already says which option fell and why; the count line would say it twice.
+    if (turnedDown) return noted
+    return boundedAtomicMultiLookFinalAnswer(noted, {
       ...toolContext,
       atomicMultiLookRequestedCount: requested
     })
@@ -1533,7 +1556,7 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
     answer_form: { type: 'string', enum: ['cards', 'words'] },
     occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
     activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
-    setting: { type: 'string', enum: ['indoor_only', 'includes_outdoors', 'not_stated'] },
+    setting: { type: 'string', enum: ['indoor_only', 'indoor_destination', 'includes_outdoors', 'not_stated'] },
     season: { type: 'string' },
     mood: { type: 'string' },
     mission: { type: 'string', enum: ['mix', 'capsule', 'wildcard'] },
@@ -1549,7 +1572,7 @@ export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
 
 const FREEFORM_EXECUTION_ROUTER_SYSTEM = `Classify one wardrobe-stylist request into an execution profile. You do not see the wardrobe and must not give styling advice.
 
-Choose bounded_multi ONLY when the user explicitly asks for several fresh complete outfit options ("a few options", "some ideas", "outfits", or a count from 2 to 5) sharing one occasion, activity, location, date, and weather context. Use the stated count; when options are asked for without a number, use 2.
+Choose bounded_multi ONLY when the user explicitly asks for several fresh complete outfit options ("a few options", "some ideas", "outfits", or a count from 2 to 5) sharing one occasion, activity, location, date, and weather context. Use the stated count; when options are asked for without a number, use 3.
 
 Choose single_outfit for a FRESH request for an outfit in one occasion/activity/location/date/weather context, with no garment subject and no current-card revision. An ordinary "what should I wear?" with no request for several options is single_outfit: the stylist recommends one outfit and the user can ask for more. Explicit "one", "one best", "pick one", and "give me an outfit" requests also use this profile. Use limit 1. A trip, capsule, schedule, attached photo, critique, garment-pairing request, or request spanning several use cases is never single_outfit.
 
@@ -1569,7 +1592,7 @@ answer_form says how the stylist should answer a full_stylist turn. Use words wh
 
 Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
 
-Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Setting is indoor_only ONLY when the whole occasion takes place inside the home the user is living or staying in, or another single heated or cooled room, with no travel and no time outdoors: hosting or staying in, working from home. Anything that involves going somewhere or being outside — a restaurant, gallery, office, party at someone else's home, errands, a barbecue, a trip — is includes_outdoors, and so is any request that asks about the weather. Setting is not_stated when the user has not said where or when the clothes will be worn — in this message or earlier — and does not ask about weather, as when the user asks which pieces go together or how to style a garment. Judge it only from the user's own words, which are the Request and the line of the user's earlier words: the assistant's replies in the recent exchange are suggestions, not the user's plans. An occasion or season the user selected is the style and the season they want, not a place or time. Judge setting from what the current message says the clothes are for, whatever the profile; a follow-up that carries on with a situation the user already gave keeps that situation's setting.
+Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Setting is indoor_only ONLY when the whole occasion takes place inside the home the user is living or staying in, or another single heated or cooled room, with no travel and no time outdoors: hosting or staying in, working from home. Setting is indoor_destination when the occasion itself is spent indoors at a place the user goes to — a restaurant, someone else's home, an office, a theatre, a concert hall — and the only time outside is getting there and back: the outfit is then judged for the room, and the weather only for the way there. Anything with real time outside — errands, a barbecue, a market, a walk, sightseeing, a day moving between places, a trip — is includes_outdoors, and so is any request that asks about the weather. Setting is not_stated when the user has not said where or when the clothes will be worn — in this message or earlier — and does not ask about weather, as when the user asks which pieces go together or how to style a garment. Judge it only from the user's own words, which are the Request and the line of the user's earlier words: the assistant's replies in the recent exchange are suggestions, not the user's plans. An occasion or season the user selected is the style and the season they want, not a place or time. Judge setting from what the current message says the clothes are for, whatever the profile; a follow-up that carries on with a situation the user already gave keeps that situation's setting.
 
 time_of_day is when the outing happens, when the request says so or plainly implies it: tonight, this evening, dinner, drinks, a concert or show at night are evening; breakfast, brunch, a morning walk are morning; lunch, an afternoon event are afternoon. Use an empty value when no time is stated or implied, when it spans the day, and for full_stylist. The forecast is then read for those hours rather than the whole day.
 
@@ -1579,7 +1602,7 @@ For trip_plan, clarifying_question asks how the traveller likes to pack, because
 
 remember_packing_approach is usually empty. Fill it only when the user states how they ALWAYS or usually pack — a standing preference, not a choice for this one trip — with that preference in their own words (for example "carry-on only, I re-wear and do laundry"). It is kept only so a later trip can be asked "same as usual?"; it is never applied without asking.
 
-For single_outfit and bounded_multi requests, clarifying_question is usually empty. You are also the stylist's first read of the request, and a good stylist asks before choosing when she has to. Write ONE short question, in a warm stylist's own voice, when either holds: a fact that would change the outfit is missing and cannot be looked up or sensibly taken from the request (what the occasion actually is, how dressed-up it is, what the person will be doing there, who it is with); or the request could honestly be dressed in clearly different directions and nothing says which. Leave it empty when the request already gives a stylist enough to choose well, when the only unknowns are weather, forecast, date or a named place (those are looked up, never asked), and when the request contains an answer the user gave to a question of yours ("You asked me: … My answer: …") — then work from that answer and do not ask again.
+For single_outfit and bounded_multi requests, clarifying_question is usually empty. You are also the stylist's first read of the request, and a good stylist asks before choosing when she has to. Write ONE short question, in a warm stylist's own voice, when either holds: a fact that would change the outfit is missing and cannot be looked up or sensibly taken from the request (what the occasion actually is, how dressed-up it is, what the person will be doing there, who it is with); or the request could honestly be dressed in clearly different directions and nothing says which. What is appropriate to wear, and what the other people there will be wearing, is never asked: that is the stylist's own knowledge to bring, and she says how she read it. Leave it empty when the request already gives a stylist enough to choose well, when the only unknowns are weather, forecast, date or a named place (those are looked up, never asked), and when the request contains an answer the user gave to a question of yours ("You asked me: … My answer: …") — then work from that answer and do not ask again.
 
 RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
 

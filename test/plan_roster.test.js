@@ -67,6 +67,7 @@ test('a coordinated plan: the stylist chooses the roster with the trip mechanism
   let rosterCalls = 0
   let seenRequest = null
   let composedWorkbench = null
+  let reasonsAtComposition = null
   const toolContext = {
     declaredIntent: { want: 'cards' },
     generatedOutfits: [],
@@ -78,6 +79,10 @@ test('a coordinated plan: the stylist chooses the roster with the trip mechanism
     },
     composeCoordinatedPlanOnce: async workbench => {
       composedWorkbench = workbench
+      // What the real composer reads at this moment (thread_1794275667026: the reasons were stored as { pieceId, job },
+      // read as piece_id, and none reached the composer on the first live run of the hand-off).
+      const { coordinatedPlanShortlistReasons } = await import('../routes/ai.js')
+      reasonsAtComposition = coordinatedPlanShortlistReasons(toolContext.pendingPlan?.planRosterJobs, workbench.slots.flatMap(slot => slot.allowed_piece_ids))
       const [hosting, dinner] = workbench.slots
       return {
         outfits: [{ slot_id: hosting.id, piece_ids: [ids.tops[0], ids.bottoms[0], ids.shoes[0]], title: 'Hosting', reason: 'Easy and put together.', cold_layer_decision: { mode: 'not_required', assigned_layer_piece_id: null } }],
@@ -99,6 +104,8 @@ test('a coordinated plan: the stylist chooses the roster with the trip mechanism
   const roster = new Set([ids.tops[0], ids.tops[1], ids.bottoms[0], ids.shoes[0]])
   assert.ok(composedWorkbench.slots.every(slot => slot.allowed_piece_ids.length && slot.allowed_piece_ids.every(id => roster.has(Number(id)))), 'each slot composes from her roster only')
   assert.equal(result.status, 'success', JSON.stringify(result).slice(0, 400))
+  assert.deepEqual(reasonsAtComposition.map(entry => entry.id).sort((a, b) => a - b), [...roster].sort((a, b) => a - b), 'every chosen garment\'s reason is there for the composer')
+  assert.ok(reasonsAtComposition.every(entry => entry.chosen_for === 'a look'))
   assert.equal(toolContext.generatedOutfits.length, 1)
   assert.ok((result.plan_lines || []).some(line => /Friday Visit/.test(line) && /nothing dressy enough/.test(line)), JSON.stringify(result.plan_lines))
   assert.equal(toolContext.freeformDiagnostics.coordinatedPlanCompositionCalls, 1)
@@ -401,3 +408,254 @@ test('a plan shortlist receives the owner\'s rules', async () => {
   const text = tripRosterSelectionUserText({ bench: [], slots: [], dateRange: {}, planKind: 'coordinated_plan', ownerRules: rulesAtShortlist })
   assert.match(text, /OWNER GUIDANCE — applicable to these use cases\. Follow it unless the owner explicitly changes it in this request: "I want to see some layered outfits\."/)
 })
+
+// thread_1794273948027 (2026-11-09): the composer was handed slot labels only. "I'll cook breakfast every morning"
+// reached it as two slots' best_for, the shortlist's reason for each garment was dropped, and 41% of its text was
+// assessment rows that all read neutral.
+test('the plan composer is handed the request in the person\'s words, each slot\'s best_for and the shortlist\'s reasons', async () => {
+  const { coordinatedPlanRequestBlock, coordinatedPlanShortlistReasons, coordinatedPlanComposerSlots, planPieceAssessmentsThatSaySomething } = await import('../routes/ai.js')
+
+  assert.equal(coordinatedPlanRequestBlock(''), '', 'no words, no block')
+  assert.equal(
+    coordinatedPlanRequestBlock(' I\'ll cook breakfast every morning. '),
+    'THE REQUEST (their words, oldest first):\nI\'ll cook breakfast every morning.\n\n',
+    'the same heading the shortlist reads'
+  )
+
+  const reasons = coordinatedPlanShortlistReasons([
+    { piece_id: 7, job: 'Trench coat: for crisp outdoor hours at the winery.' },
+    { piece_id: 7, job: 'duplicate' },
+    { piece_id: 8, job: '  ' },
+    { piece_id: 99, job: 'not in this plan' },
+  ], [7, 8])
+  assert.deepEqual(reasons, [{ id: 7, chosen_for: 'Trench coat: for crisp outdoor hours at the winery.' }])
+
+  const neutral = { tier: 'neutral', score: 0, reason: '' }
+  const rows = [
+    { id: 7, extreme_heat: neutral, movement: neutral, operational_ease: neutral },
+    { id: 8, extreme_heat: { tier: 'discouraged', score: -2, reason: 'full-leg coverage' }, movement: neutral, operational_ease: neutral },
+  ]
+  assert.deepEqual(planPieceAssessmentsThatSaySomething(rows).map(row => row.id), [8], 'a row that says something is kept whole')
+
+  const slots = coordinatedPlanComposerSlots([
+    { id: 'thursday', label: 'Thursday at home', allowed_piece_ids: [7, 8], piece_assessments: [rows[0]], styling_context: { season: 'current season', calendarSeason: 'fall' } },
+    { id: 'hot_walk', label: 'Hot walk', allowed_piece_ids: [7, 8], piece_assessments: rows, styling_context: { season: 'current season', calendarSeason: 'summer' } },
+  ], [{ id: 'thursday', bestFor: 'Hosting friends & cooking breakfast at home' }])
+  assert.equal(slots[0].best_for, 'Hosting friends & cooking breakfast at home')
+  assert.equal('piece_assessments' in slots[0], false, 'all-neutral rows are not sent')
+  assert.equal(slots[0].season, 'fall (the current season)')
+  assert.equal('best_for' in slots[1], false)
+  assert.deepEqual(slots[1].piece_assessments.map(row => row.id), [8])
+  assert.deepEqual(slots[1].allowed_piece_ids, [7, 8], 'the allowed list is untouched')
+})
+
+test('both composers are told how to read the request and the earlier step\'s reasons, each in its own words', () => {
+  const plan = coordinatedPlanCompositionSystemPrompt()
+  assert.match(plan, /THE REQUEST\. When the request is given in the person's own words, start from it/)
+  assert.match(plan, /shortlist_reasons, when given, is why each garment was chosen/)
+  assert.match(tripRosterSelectionSystemPrompt({ planKind: 'coordinated_plan' }), /THE REQUEST\. When the request is given in the person's own words, start from it/, 'the shortlist\'s own sentence')
+  const trip = tripPlanCompositionSystemPrompt({ planKind: 'trip' })
+  assert.match(trip, /THE REQUEST\. When the request is given in the traveller's own words, start from it/)
+  assert.match(trip, /shortlist_reasons, when given, is why each piece was packed/)
+  assert.doesNotMatch(trip, /why each garment was chosen for this plan/, 'the plan\'s wording stays out of a trip')
+})
+
+// The trip packer's prompt says "when the request states this" and "unless the request fixes the days"; until
+// 2026-11-09 the request itself was withheld from it.
+test('the trip packer is shown the traveller\'s words, after the trip context', () => {
+  const text = tripRosterSelectionUserText({
+    bench: [], slots: [{ label: 'Dinners', occasion: 'evening', activity: 'none', targetOutfits: 1 }], dateRange: { start: '2026-11-12', end: '2026-11-15' },
+    planKind: 'trip', requestWords: 'Four days in Paso Robles. Dinner is booked for Saturday.',
+  })
+  assert.match(text, /THE REQUEST \(their words, oldest first\):\nFour days in Paso Robles\. Dinner is booked for Saturday\./)
+})
+
+// thread_1794273948027: Saturday afternoon's hourly slice had rain in it; the label said only "62°F high / 60°F low".
+test('a dated slot\'s weather label states the rain its hourly slice measured', async () => {
+  const { withHourlyRainStated } = await import('../styling-engine/outfitSetPlanner.js')
+  const label = '62°F high / 60°F low — live hourly forecast, sliced to this activity\'s actual time window, Walnut Creek, CA'
+  assert.equal(withHourlyRainStated(label, 'rain'), '62°F high / 60°F low; rain forecast at that time — live hourly forecast, sliced to this activity\'s actual time window, Walnut Creek, CA')
+  assert.match(withHourlyRainStated(label, 'none'), /^62°F high \/ 60°F low; no rain forecast at that time — live hourly/)
+  assert.equal(withHourlyRainStated(label, 'unknown'), label, 'nothing is said where nothing was measured')
+  assert.equal(withHourlyRainStated('mild', 'rain'), 'mild; rain forecast at that time')
+})
+
+// thread_1794275667026: the winery card read "no layer here has tagged rain protection for wet conditions" and the
+// reply above it called the look weather-ready; the writer had been given neither the note nor the look's reason.
+test('the writer of an at-home plan\'s reply is given each look\'s reason and the notes printed on its card', async () => {
+  const { coordinatedPlanOutfitSummary } = await import('../styling-engine/tools.js')
+  const noted = coordinatedPlanOutfitSummary({
+    label: 'Saturday: Winery Tasting & Dinner', coveragePosition: 'Saturday · 1 of 1', slotWeather: '62°F high / 60°F low; rain forecast at that time',
+    pieces: [{ name: 'black lambskin zip jacket' }], reason: 'Tweed and leather for the terrace.',
+    systemFlags: [{ type: 'Weather note', message: 'no layer here has tagged rain protection for wet conditions' }, { type: 'Weather note', message: ' ' }],
+  })
+  assert.deepEqual(noted.notes, ['no layer here has tagged rain protection for wet conditions'])
+  assert.equal(noted.reason, 'Tweed and leather for the terrace.')
+  assert.deepEqual(noted.pieceNames, ['black lambskin zip jacket'])
+  assert.equal('notes' in coordinatedPlanOutfitSummary({ label: 'Sunday', pieces: [] }), false, 'no notes, no field')
+})
+
+// The situation read was the single-outfit stylist's alone; a request for a few options went to a composer asked
+// for "a specific visual reason" per card (thread_1793861012908: a silk blouse for a host, nothing said).
+test('the options composer reads the situation on a chat turn, in the single-outfit stylist\'s own words', async () => {
+  const promptsModule = await import('../styling-engine/prompts.js')
+  const { readTheSituation } = promptsModule
+  const shared = readTheSituation('Before you compose')
+  assert.match(shared, /^The request text is the brief\./)
+  assert.match(shared, /Before you compose, work out from the wearer's own words what the time will actually involve/)
+  assert.match(shared, /what the hands will be doing \(cooking, serving, carrying, working\)/)
+  const routeSrc = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(routeSrc, /stylistNote && !composerExperiment\n\s+\? `READ THE SITUATION FIRST:\\n\$\{readTheSituation\('Before you compose'\)\}/, 'sent only on the turn that also writes a stylist note')
+  const promptsSrc = fs.readFileSync(new URL('../styling-engine/prompts.js', import.meta.url), 'utf8')
+  assert.match(promptsSrc, /READ THE SITUATION FIRST:\n\$\{readTheSituation\('Before you search'\)\}/, 'the single-outfit stylist reads the same paragraph')
+})
+
+// Owner, 2026-11-10: people come to a stylist for advice, "not just echoing of their habits", and want to know what is
+// socially acceptable as well as comfortable; what the others will be wearing is hers to answer, "not ask the user".
+// The first wording of the recurring-activity rule had her ask how the person does it (thread_1794275667026: "do you
+// prefer to start in cozy loungewear… or get dressed right away?").
+test('what is appropriate is the stylist\'s to advise: the situation read, the plan tool and the router all say so', async () => {
+  const { readTheSituation } = await import('../styling-engine/prompts.js')
+  const read = readTheSituation('Before you choose')
+  assert.match(read, /Read the room as well: who will see the wearer, what the wearer's part in it is, and what people at this kind of occasion, in this place and season, actually wear\./)
+  assert.match(read, /That is your knowledge to bring, not a question for the wearer/)
+  assert.match(read, /choose what is right across the likely range and say so/)
+  const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(toolsSrc, /What it is done in is yours to advise, not theirs to be asked/)
+  assert.doesNotMatch(toolsSrc, /ask them before calling this tool/)
+  const providerSrc = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(providerSrc, /What is appropriate to wear, and what the other people there will be wearing, is never asked/)
+})
+
+// thread_1794359258964: "Cooking at Home Evenings" (casual, at home) was reclassified as an evening out by the word
+// "evenings", and the knit trousers packed for it were then a prohibited bottom.
+test('a slot placed at home keeps its stated occasion whatever its name says about the time of day', async () => {
+  const { normalizePlanSlots } = await import('../styling-engine/outfitSetPlanner.js')
+  const [atHome, dinnerAtHome, out] = normalizePlanSlots([
+    { label: 'Cooking at Home Evenings', occasion: 'casual', activity: 'none', environment: 'home', count: 1 },
+    { label: 'Thursday: cooking dinner for friends', occasion: 'casual', activity: 'none', environment: 'home', count: 1 },
+    { label: 'Dinners', occasion: 'city', activity: 'none', environment: 'indoor', count: 1 },
+  ])
+  assert.equal(atHome.occasion, 'casual')
+  assert.equal(dinnerAtHome.occasion, 'casual')
+  assert.equal(out.occasion, 'evening', 'a dinner out is read as before')
+})
+
+// thread_1794359193592: she composed two options and a note; a second look rejected one for clashing prints; the
+// reply was the app's template and the rejected card was renamed "…: standard wear".
+test('when one of her options is turned down afterwards, her note stands and the reply says first which and why', async () => {
+  const { optionsTurnedDownAfterComposition } = await import('../styling-engine/tools.js')
+  const { boundedAtomicMultiLookResponse, optionsTurnedDownPreface } = await import('../styling-engine/provider.js')
+  const cards = [
+    { label: 'Tonal Textured Tailored' },
+    { label: 'Graphic Knit Contrast', broken: true, source: 'model-rejected', rejectionReason: 'visual critic: The floral top and the chevron skirt fight each other in scale.' },
+  ]
+  const turnedDown = optionsTurnedDownAfterComposition(cards, ['Graphic Knit Contrast', 'Tonal Textured Tailored'])
+  assert.deepEqual(turnedDown, [{ label: 'Graphic Knit Contrast', reason: 'The floral top and the chevron skirt fight each other in scale.' }])
+  assert.deepEqual(optionsTurnedDownAfterComposition([cards[0], { label: 'Soft Column: standard wear', broken: true, source: 'local-fill' }], ['Graphic Knit Contrast', 'Tonal Textured Tailored']), [], 'a card she did not write about: no note')
+  assert.deepEqual(optionsTurnedDownAfterComposition([{ ...cards[1] }], ['Graphic Knit Contrast']), [], 'nothing left standing: no note')
+  assert.equal(optionsTurnedDownAfterComposition([cards[0], { ...cards[1], rejectionReason: 'heel height: prohibited for activity walking' }], ['Graphic Knit Contrast', 'Tonal Textured Tailored'])[0].reason, '', 'a gate\'s wording is not repeated as hers')
+
+  const reply = boundedAtomicMultiLookResponse({
+    generatedOutfits: cards, atomicMultiLookRequestedCount: 2,
+    boundedStylistNote: 'A backyard at 60°F is chilly once you sit down. Tonal Textured Tailored is my pick.',
+    boundedOptionsTurnedDown: turnedDown,
+  })
+  assert.match(reply, /^Looking again at the finished outfits, I would not stand behind “Graphic Knit Contrast”\. The floral top and the chevron skirt fight each other in scale\. It is shown below marked for review/)
+  assert.match(reply, /Tonal Textured Tailored is my pick\.$/)
+  assert.doesNotMatch(reply, /requested outfits|validated|bounded|you asked for/)
+  assert.equal(optionsTurnedDownPreface([]), '')
+})
+
+// thread_1794359258964: both walking looks were noted "no layer here has tagged rain protection for wet conditions";
+// the trip's reply, never shown the notes, called the trench protection against rain. "Next Thursday" was also taken
+// as this Thursday without saying so.
+test('a trip\'s reply is given the notes on its cards and states the dates it planned for', async () => {
+  const { cardNotes } = await import('../styling-engine/tools.js')
+  assert.deepEqual(cardNotes({ systemFlags: [{ type: 'Weather note', message: 'no layer here has tagged rain protection for wet conditions' }, { message: '' }] }), ['no layer here has tagged rain protection for wet conditions'])
+  assert.deepEqual(cardNotes({}), [])
+  const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(toolsSrc, /\.\.\.\(cardNotes\(outfit\)\.length \? \{ notes: cardNotes\(outfit\) \} : \{\}\),/, 'in the trip\'s outfit summaries')
+  assert.match(toolsSrc, /never describe a piece as protection against weather its note says the look lacks/)
+  assert.match(toolsSrc, /saying the dates and the weather you planned for so they can be corrected/)
+})
+
+// thread_1794358985721: "Contains a piece the occasion/activity profile usually discourages." named no piece.
+test('the occasion note on a card names the garment, in plain words', () => {
+  const rulesSrc = fs.readFileSync(new URL('../styling-engine/rules.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(rulesSrc, /Contains a piece the occasion\/activity profile usually discourages/)
+  assert.match(rulesSrc, /not what this kind of occasion usually calls for\./)
+})
+
+// thread_1794359258964: four November days in Portland were packed from "49–61°F" alone. The daily forecast request
+// asked for no precipitation, so the packer and the composer were never told it rains, and no rain layer was packed.
+test('a trip\'s whole-day weather sentence states the rain the daily forecast measured, and nothing where it measured none', async () => {
+  const { normalizePlanSlots, resolveSlotWeather } = await import('../styling-engine/outfitSetPlanner.js')
+  const { _clearWeatherCachesForTests } = await import('../styling-engine/weather.js')
+  const dateRange = { start: '2026-11-12', end: '2026-11-15' }
+  const daily = rain => ({
+    time: ['2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15'],
+    temperature_2m_max: [61, 55, 52, 56],
+    temperature_2m_min: [50, 49, 49, 51],
+    ...(rain ? { precipitation_sum: rain } : {}),
+  })
+  const urls = []
+  const fetchWith = rain => async url => {
+    urls.push(url)
+    if (url.includes('geocoding-api')) return { ok: true, json: async () => ({ results: [{ latitude: 45.52, longitude: -122.68 }] }) }
+    return { ok: true, json: async () => ({ daily: daily(rain) }) }
+  }
+  const [walking] = normalizePlanSlots([
+    { label: 'City Walking', occasion: 'city', activity: 'walking', environment: 'outdoor', count: 2 },
+  ], { dateRange, location: 'Portland, OR' })
+
+  _clearWeatherCachesForTests()
+  const wet = await resolveSlotWeather(walking, { dateRange, location: 'Portland, OR', fetchImpl: fetchWith([4.2, 0, 7.5, 1.1]) })
+  assert.ok(urls.some(url => url.includes('precipitation_sum')), 'the daily request asks for the day\'s precipitation')
+  assert.match(wet.label, /^whole days, Nov 12–Nov 15: 49–61°F; .*rain forecast on 3 of 4 days/)
+  assert.doesNotMatch(wet.label, /at that time/, 'a whole day is not a time of day')
+
+  _clearWeatherCachesForTests()
+  const dry = await resolveSlotWeather(walking, { dateRange, location: 'Portland, OR', fetchImpl: fetchWith([0, 0, 0, 0]) })
+  assert.match(dry.label, /; no rain forecast — daily forecast/)
+
+  _clearWeatherCachesForTests()
+  const partly = await resolveSlotWeather(walking, { dateRange, location: 'Portland, OR', fetchImpl: fetchWith([4.2, null, 0, 0]) })
+  assert.doesNotMatch(partly.label, /rain/, 'a day with no measurement: nothing is claimed for the trip')
+
+  _clearWeatherCachesForTests()
+  const unmeasured = await resolveSlotWeather(walking, { dateRange, location: 'Portland, OR', fetchImpl: fetchWith(null) })
+  assert.doesNotMatch(unmeasured.label, /rain/)
+  _clearWeatherCachesForTests()
+})
+
+// Two shower runs (thread_1794359193592, thread_1794365489352): "a few options" was composed as two, a second look
+// turned one down each time, and one usable option was left. "A few" asked for without a number is three.
+test('options asked for without a number are three', () => {
+  const providerSrc = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(providerSrc, /when options are asked for without a number, use 3\./)
+  assert.doesNotMatch(providerSrc, /without a number, use 2\./)
+})
+
+// Owner, 2026-11-10 ("Yes, as a note"): cashmere was chosen to cook in on three live runs. The usual care of a
+// garment's recorded fibre travels as a labelled note, never on the fact line, and nothing but the model reads it.
+test('a care note assumed from fibre travels with the garment notes, labelled as an assumption', async () => {
+  const { careNoteText, garmentNotesEntry, sharedGarmentEvidenceFacts } = await import('../styling-engine/garmentEvidenceLine.js')
+  const cashmere = { id: 7, name: 'oatmeal turtleneck', category: 'top', fiber_content: '["wool","cashmere"]' }
+  assert.equal(careNoteText(cashmere), "care assumed from fibre, not from this garment's label: cashmere and wool are usually hand-washed or dry-cleaned")
+  assert.equal(careNoteText({ category: 'top', fiber_content: '["silk"]' }), "care assumed from fibre, not from this garment's label: silk is usually hand-washed or dry-cleaned")
+  assert.match(careNoteText({ category: 'outerwear', fiber_content: ['leather'] }), /leather cannot be washed, only wiped or professionally cleaned$/)
+  assert.equal(careNoteText({ category: 'top', fiber_content: '["cotton","polyester"]' }), '', 'nothing is said about a fibre with no usual special care')
+  assert.equal(careNoteText({ category: 'top', fiber_content: '["unknown"]' }), '', 'an unrecorded fibre is not guessed at')
+  assert.equal(careNoteText({ category: 'shoes', fiber_content: '["leather"]' }), '', 'garments only')
+  assert.match(garmentNotesEntry(cashmere), /^- #7 oatmeal turtleneck: care assumed from fibre/)
+  assert.doesNotMatch(sharedGarmentEvidenceFacts(cashmere), /care|hand-washed/, 'the fact line holds recorded values only')
+  process.env.WARDROBE_CARE_NOTE = 'off'
+  try {
+    assert.equal(careNoteText(cashmere), '')
+    assert.equal(garmentNotesEntry(cashmere), '')
+  } finally {
+    delete process.env.WARDROBE_CARE_NOTE
+  }
+})
+

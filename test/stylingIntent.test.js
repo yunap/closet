@@ -489,3 +489,16 @@ test('extractStatedTripDateRange flags hasExplicitDuration:false for a start-onl
   assert.equal(result.hasExplicitDuration, false)
   assert.equal(result.start, '2026-12-05')
 })
+
+// thread_1794386322652: "next Thursday through Sunday", said on Wednesday 11 November, was planned for the 12th-15th.
+test('"next <weekday>" is the first such day in the following calendar week; "this" and "on" keep the nearest', () => {
+  const wed = { currentDate: new Date('2026-11-11T20:00:00Z'), timeZone: 'America/Los_Angeles' }
+  const r = extractStatedTripDateRange("I'm going to Portland next Thursday through Sunday to visit my friend.", wed)
+  assert.equal(r.start, '2026-11-19')
+  assert.equal(r.end, '2026-11-22')
+  assert.equal(extractStatedTripDateRange('a trip this Thursday through Sunday', wed).start, '2026-11-12')
+  assert.equal(extractStatedTripDateRange('a trip on Saturday', wed).start, '2026-11-14')
+  // Friday: next Monday is already in the following week.
+  assert.equal(extractStatedTripDateRange('a trip next Monday', { currentDate: new Date('2026-11-13T20:00:00Z'), timeZone: 'America/Los_Angeles' }).start, '2026-11-16')
+  assert.equal(extractStatedTripDateRange('a trip next weekend', wed).start, '2026-11-21')
+})

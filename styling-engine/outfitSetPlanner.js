@@ -1047,10 +1047,16 @@ function inferPlanSlotTimeWindow({
   return null
 }
 
-function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '', environment = '' } = {}) {
+function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '', environment = '', atHome = false } = {}) {
   const occasion = normalizeOccasion(rawOccasion)
   const text = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
   if (occasion === 'outdoor_daytime_social' && environment === 'beach_coastal') return 'casual'
+  // A slot the stylist placed at home keeps the occasion she gave it (live thread_1794359258964, 2026-11-10): "Cooking
+  // at Home Evenings", sent as casual and `environment: 'home'`, matched the word "evenings" below and became the
+  // evening-out occasion, whose profile bans knit trousers; the look built from the trousers packed "for relaxed
+  // cooking nights" was rejected and the activity shipped with no outfit. The word match reads a time of day or a meal
+  // as a night out, which a slot at home is not; the evening daypart for its weather is set separately.
+  if (atHome) return occasion
   if ((occasion === 'casual' || occasion === 'city') && textLooksLikeEveningPlanSlot(text)) return 'evening'
   return occasion
 }
@@ -1247,7 +1253,9 @@ export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, 
   // Rain is stated only where it was measured (the hourly slices); the whole-day path has none.
   if (acrossDays.rainDays != null) {
     const rainDays = Number(acrossDays.rainDays) || 0
-    parts.push(rainDays ? `rain at that time on ${rainDays} of ${days.length} day${days.length === 1 ? '' : 's'}` : 'no rain forecast at that time')
+    // A whole-day reading is not "at that time" (tripDaysWeatherSentence).
+    const when = acrossDays.rainWholeDays ? '' : ' at that time'
+    parts.push(rainDays ? `rain${when || ' forecast'} on ${rainDays} of ${days.length} day${days.length === 1 ? '' : 's'}` : `no rain forecast${when}`)
   }
   const uncovered = Array.isArray(acrossDays.uncoveredDates) ? acrossDays.uncoveredDates : []
   if (uncovered.length) parts.push(`${dateSpanText(uncovered)} not forecast yet`)
@@ -1257,6 +1265,22 @@ export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, 
   return `${parts.join('; ')} — ${sourceLabel}${location ? `, ${location}` : ''}${farAhead}`
 }
 
+// A dated slot's hourly slice measures rain as well as temperature, and its label stated only the temperature
+// (live thread_1794273948027, 2026-11-09): a Saturday afternoon "mostly outdoors" read "62°F high / 60°F low" to the
+// shortlist and the composer, the slice had rain in it, and the card then carried "no layer here has tagged rain
+// protection for wet conditions" about weather neither model had been told. Stated the way the several-day sentence
+// above states it, and only where it was measured.
+export function withHourlyRainStated(label = '', precipitation = '') {
+  const text = String(label || '')
+  const value = String(precipitation || '')
+  const rain = value === 'rain' || value === 'mixed' ? 'rain forecast at that time'
+    : value === 'none' ? 'no rain forecast at that time'
+    : ''
+  if (!text || !rain) return text
+  const at = text.indexOf(' — ')
+  return at === -1 ? `${text}; ${rain}` : `${text.slice(0, at)}; ${rain}${text.slice(at)}`
+}
+
 // The whole-day counterpart of the sentence above, for an undated trip activity with no time of day:
 // the same facts (range, coolest and warmest day, days not forecast, far-ahead caveat) from the
 // daily series, so every activity of one trip is described to the same standard. Null when the
@@ -1264,8 +1288,10 @@ export function tripWindowWeatherSentence(acrossDays = {}, { timeWindow = null, 
 function tripDaysWeatherSentence(temperature = {}, { tripStart = '', tripEnd = '', location = '' } = {}) {
   const series = (Array.isArray(temperature.dailySeries) ? temperature.dailySeries : [])
     .filter(day => Number.isFinite(day?.highF) && Number.isFinite(day?.lowF))
-    .map(day => ({ date: String(day.date).slice(0, 10), highF: day.highF, lowF: day.lowF }))
+    .map(day => ({ date: String(day.date).slice(0, 10), highF: day.highF, lowF: day.lowF, ...(typeof day.rain === 'boolean' ? { rain: day.rain } : {}) }))
   if (temperature.source !== 'live' || series.length < 2) return null
+  // Stated only when every day was measured; a partly measured week says nothing rather than undercount.
+  const rainMeasured = series.every(day => typeof day.rain === 'boolean')
   const covered = new Set(series.map(day => day.date))
   const uncoveredDates = []
   if (tripStart && tripEnd) {
@@ -1282,6 +1308,7 @@ function tripDaysWeatherSentence(temperature = {}, { tripStart = '', tripEnd = '
     lowF: Math.min(...series.map(day => day.lowF)),
     highF: Math.max(...series.map(day => day.highF)),
     uncoveredDates,
+    ...(rainMeasured ? { rainDays: series.filter(day => day.rain).length, rainWholeDays: true } : {}),
   }, { location, whenLabel: 'whole days', sourceLabel: `daily forecast${temperature.provider ? ` (${temperature.provider})` : ''}` })
 }
 
@@ -1403,7 +1430,10 @@ export async function resolveSlotWeather(slot = {}, { mood = '', question = '', 
       }
       const hourlyLabel = acrossDays
         ? tripWindowWeatherSentence(acrossDays, { timeWindow: slot.timeWindow, location: targetLocation })
-        : truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season })
+        : withHourlyRainStated(
+            truthfulWeatherLabel({ highF: hourly.highF, lowF: hourly.lowF, source: hourly.weatherSource }, { location: targetLocation, heuristicText: slot.season }),
+            hourly.precipitation
+          )
       if (isIndoorSlot) {
         // Same indoor+transit shape as the daily-path branch below, sourced from the hourly slice
         // instead of the flat day envelope — base stays climate-controlled/permissive, transit*
@@ -5234,7 +5264,10 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       ? `OWNER GUIDANCE — applicable to this bounded roster and these use cases. Follow it unless the owner explicitly changes it in this request: ${applicableOwnerRules.map(rule => `"${rule}"`).join('; ')}`
       : '',
     acceptedSynthesisText
-      ? `OWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for this roster and these use cases; respect each stated boundary: ${acceptedSynthesisText}`
+      // "Without saying so": live thread_1794357777020 printed "Directly respects the lesson to ground the floral
+      // botanical patchwork top…" as a card's reason. WORKING_STYLE already forbids narrating compliance; this line is
+      // where the lesson is handed over.
+      ? `OWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for this roster and these use cases; respect each stated boundary, without saying in a card that you are following a lesson: ${acceptedSynthesisText}`
       : '',
     // Spec 26 Part 6 repeated spec 25's professional-context default here (the owner's 07-16 office run: shawl on
     // Tuesday, double botanical on Wednesday). Removed from both prompts 2026-10-30 (plan prompt audit item 11): a
@@ -6773,7 +6806,7 @@ export function normalizePlanSlots(rawSlots = [], {
       const inferredEnvironment = declaredEnvironment ? '' : proseEnvironment
       const environment = declaredEnvironment || inferredEnvironment
       if (!declaredEnvironment && inferredEnvironment && typeof onDiagnostic === 'function') onDiagnostic('planSlotEnvironmentInferred')
-      const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote, environment })
+      const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote, environment, atHome })
       const eligibilityOccasion = planSlotEligibilityOccasion(occasion, { label, bestFor, coverage, planNote })
       // statedWeather is environment-driven ONLY (spec §3.2/§4.2) — it marks
       // a slot as climate-controlled so live/estimated/stated OUTDOOR weather

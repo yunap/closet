@@ -4527,7 +4527,7 @@ export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
     location: routed.location || body.location || '',
     date: routed.date || '',
     season: routed.season || body.season || '',
-    ...(routed.setting === 'indoor_only' ? { setting: 'indoor only' } : routed.setting === 'not_stated' ? { setting: 'no place or time given' } : {}),
+    ...(routed.setting === 'indoor_only' ? { setting: 'indoor only' } : routed.setting === 'indoor_destination' ? { setting: 'indoors, at a place travelled to' } : routed.setting === 'not_stated' ? { setting: 'no place or time given' } : {}),
     mood: routed.mood || body.mood || '',
     mission: routed.mission || body.mission || 'mix',
     user_weather: userWeather || null,
@@ -4548,6 +4548,8 @@ export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
             }`
           : routed.setting === 'indoor_only'
             ? 'This occasion is spent indoors in one room for its whole duration. Dress for the room: do not supply user_weather or weather_estimate, and add no layer for warmth.'
+            : routed.setting === 'indoor_destination'
+              ? 'This occasion is spent indoors at a place the wearer travels to. Dress for the room; the forecast the tools resolve is for the way there and back, so it decides only whether a coat or layer goes over the outfit for that. Do not invent user_weather.'
             : routed.setting === 'not_stated'
               ? 'No place or time was given for this outfit and no weather was asked about. Dress for the occasion and season: do not supply user_weather or weather_estimate.'
               : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
@@ -4739,7 +4741,15 @@ export async function buildStylistConversationPayload(body) {
     // whether the user or the assistant's prose produced it, and the user's words are read above.
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
     || ''
-  const travelOrPackingRequest = isTravelOrPackingRequest(question, effectiveOccasion)
+  // Whether this is a trip is the router's reading when it read the request, and the word match only when it did not
+  // (live thread_1794273948027, 2026-11-09). "My friends are staying with us… Saturday afternoon we're going to a
+  // winery tasting" matched "going to", the router had called it full_stylist with no place because the wearer is at
+  // home, and the turn was told to stop and ask the user for the forecast of their own town. The router has a
+  // profile for trips (trip_plan); a fresh request it did not give that profile is not one.
+  const routedProfile = String(body?.routedProfile || '').trim()
+  const travelOrPackingRequest = routedProfile
+    ? routedProfile === 'trip_plan' || String(effectiveOccasion || '').toLowerCase() === 'travel'
+    : isTravelOrPackingRequest(question, effectiveOccasion)
   // The router's structured reading of the place outranks the word match (live thread_1791764470904,
   // 2026-10-11): "a trip to Vienna, Virginia… Do some sightseeing and visit museums" failed the
   // activity list below on a plural ("museums"), the turn was marked as missing weather, and she was

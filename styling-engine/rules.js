@@ -5996,7 +5996,12 @@ export function locallyGateWholeWardrobeOutfits(outfits = [], limit = 5, { mode 
     const discouragedProfileCount = profileFits.filter(fit => fit.tier === 'discouraged').length
     if (rejectProfileDiscouraged && discouragedProfileCount) {
       if (advisorMode) {
-        repaired = appendSystemFlag(repaired, 'occasion', 'Contains a piece the occasion/activity profile usually discourages.')
+        // Names the garment (live thread_1794358985721: "Contains a piece the occasion/activity profile usually
+        // discourages." sat on a card with nothing to say which piece, in the engine's words).
+        const discouragedNames = pieces.filter((_, index) => profileFits[index]?.tier === 'discouraged').map(piece => String(piece?.name || '').trim()).filter(Boolean)
+        repaired = appendSystemFlag(repaired, 'occasion', discouragedNames.length
+          ? `${discouragedNames.join(' and ')} ${discouragedNames.length === 1 ? 'is' : 'are'} not what this kind of occasion usually calls for.`
+          : 'One piece here is not what this kind of occasion usually calls for.')
       } else {
         reject(repaired, 'profile-discouraged piece')
         continue

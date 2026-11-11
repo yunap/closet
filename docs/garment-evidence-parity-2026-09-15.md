@@ -619,3 +619,12 @@ One shared filter now serves every serializing path: `stripSoftRankingRules()` i
 for both lists here. The private helper added in §10 was replaced by it. Hard keys are untouched —
 the test pins that `prohibited_footwear`, `register_ceiling`, `required_occasion_tags` and the
 classification fields still reach the model, and that no `preferred_*` / `discouraged_*` key does.
+
+## 12 · One assumed note: care, from fibre (2026-11-10)
+
+Owner, 2026-11-10 ("Yes, as a note"), after cashmere was chosen to cook in on three live runs. §7's rule is unchanged:
+the fact line holds recorded values only. `careNoteText` adds, in the garment-notes channel and nowhere else, the
+usual care of a garment's recorded fibre, labelled "care assumed from fibre, not from this garment's label". It is the
+one note in that channel that is not a saved record, and it says so in its own words. No gate or score reads it.
+Details, scope and the kill switch (`WARDROBE_CARE_NOTE=off`) are in `engine-behaviour-map.md` item 108.
+

@@ -2831,7 +2831,10 @@ test('bounded multi-look ends after one composer pass and discloses a validation
   }
   assert.deepEqual(applyFreeformOutputChecks('Here is the validated set.', toolContext), { block: false })
   assert.deepEqual(stylistToolsForTurn(toolContext), [])
-  assert.match(boundedAtomicMultiLookFinalAnswer('Here is the validated set.', toolContext), /1 of 3 requested outfits is ready/)
+  // 2026-11-10: the shortfall is still disclosed, in her words and with no engine terms (thread_1794359193592).
+  const shortfall = boundedAtomicMultiLookFinalAnswer('Here is the validated set.', toolContext)
+  assert.match(shortfall, /That is 1 of the 3 you asked for: I would not stand behind the others I tried\./)
+  assert.doesNotMatch(shortfall, /could not be validated|bounded|composition pass/)
   assert.match(boundedAtomicMultiLookResponse(toolContext), /I’d start with this direction/)
 })
 
@@ -3385,6 +3388,43 @@ test('adaptive visual evidence rides the bounded multi-look path only', () => {
 // tool resolved an indoor profile with no temperatures. The batch call hit max_tokens; on the retry the
 // hand-off passed no profile (the carry keyed on boundedMultiLook or a highF), so the composer looked
 // up the live home forecast and every card "runs warm for a high of 77°F".
+// Owner, 2026-11-10: "indoor activities should have never gotten the notes meant for an outdoor weather".
+// thread_1794365607999: dinner at someone's house, routed includes_outdoors, read "this outfit runs warm for a high
+// of 66°F, even with the layer off".
+test('an indoor occasion the wearer travels to is judged for the room, and keeps the forecast only for the way there', async () => {
+  const { evaluateOutfitEnvironmentalAdequacy } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
+  const resolver = createStylingContextResolver({
+    weatherResolver: async () => ({ weatherSource: 'live', highF: 65.7, lowF: 59.6, isHot: false, isCold: false, needsRemovableCoolLayer: false }),
+  })
+  const request = extra => resolver({
+    explicitRequest: { occasion: 'city', season: 'current season', location: 'Home', date: new Date('2026-11-13T19:00:00'), ...extra },
+    policy: { mode: 'freeform_action', allowLiveWeather: true },
+  })
+  const indoors = (await request({ statedWeather: 'indoor' })).weatherProfile
+  assert.equal(indoors.isIndoor, true)
+  assert.equal(indoors.atHome, undefined, 'not the at-home profile: there is a way there and back')
+  assert.equal(indoors.transitHighF, 65.7, 'the forecast is kept for the way there')
+  const outdoors = (await request({})).weatherProfile
+  assert.notEqual(outdoors.isIndoor, true)
+
+  // A warm indoor-evening outfit: knit, wool trousers, loafers, a heavy coat for arriving.
+  const warmOutfit = [
+    { id: 1, name: 'merino cowl sweater', category: 'top', fabric_weight: 'medium', fiber_content: '["merino"]', sleeve_type: 'long' },
+    { id: 2, name: 'tweed trousers', category: 'bottom', fabric_weight: 'medium', fiber_content: '["wool"]' },
+    { id: 3, name: 'loafers', category: 'shoes' },
+    { id: 4, name: 'wool coat', category: 'outerwear', fabric_weight: 'heavy', fiber_content: '["wool"]', interior_construction: 'full_lining' },
+  ]
+  const codes = profile => evaluateOutfitEnvironmentalAdequacy(warmOutfit, { weatherProfile: profile, environment: profile.isIndoor ? 'indoor' : 'outdoor', activity: 'none' }).findings.map(finding => finding.code)
+  assert.ok(!codes(indoors).some(code => /OVERSHOOT|UNDERSHOOT|NO_REMOVABLE_COOL_LAYER/i.test(code)), `no warm or cool amount note for the room: ${codes(indoors).join(',')}`)
+
+  const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(toolsSrc, /toolContext\.executionRouterIndoorDestination === true \? \{ statedWeather: 'indoor' \} : \{\}/, 'applied to every tool in the turn, without indoorOnly')
+  const routeSrc = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.match(routeSrc, /toolContext\.executionRouterIndoorDestination = routed\.value\?\.setting === 'indoor_destination'/)
+  const providerSrc = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(providerSrc, /Setting is indoor_destination when the occasion itself is spent indoors at a place the user goes to/)
+})
+
 test('a setting the router fixed reaches the composer, which then looks up no forecast of its own', async () => {
   const lookups = []
   const resolver = createStylingContextResolver({
@@ -5190,7 +5230,8 @@ test('a router-classified indoor-only look on a trip thread is not judged agains
 test('the router must classify the setting, and a single-outfit proposal must carry the stylist note', async () => {
   const { FREEFORM_EXECUTION_ROUTE_SCHEMA } = await import('../styling-engine/provider.js')
   assert.ok(FREEFORM_EXECUTION_ROUTE_SCHEMA.required.includes('setting'))
-  assert.deepEqual(FREEFORM_EXECUTION_ROUTE_SCHEMA.properties.setting.enum, ['indoor_only', 'includes_outdoors', 'not_stated'])
+  // 2026-11-10: indoor_destination, an indoor occasion somewhere the wearer travels to (owner: indoor activities never get outdoor-weather notes).
+  assert.deepEqual(FREEFORM_EXECUTION_ROUTE_SCHEMA.properties.setting.enum, ['indoor_only', 'indoor_destination', 'includes_outdoors', 'not_stated'])
 
   const single = stylistToolsForTurn({ executionProfile: 'single_outfit', allowedToolNames: ['search_wardrobe', 'view_pieces', 'propose_outfit'] })
   assert.deepEqual(single.map(tool => tool.name).sort(), ['propose_outfit', 'search_wardrobe', 'view_pieces'])

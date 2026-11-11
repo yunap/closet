@@ -395,3 +395,35 @@ and composed looks rebuilt on a DB copy return plan lines with no reuse line. Pi
 ## 12 · The plan roster is a choice set again (2026-10-30)
 
 §11 reused the trip's roster call and dropped its packing paragraphs, and with them its only sizing; the plan wording asked for the garments the looks need, so the roster shrank to one look's worth (`thread_1793389062299`: 11 pieces for three mornings). §10's intent — the composer chooses from photos, so it needs alternatives — is restored as wording, not as per-part quotas: the plan roster prompt now asks for more than one candidate for each part a look needs and states the 60-photo limit. Engine map item 94.
+
+## 13 · The composer reads the request and the shortlist's reasons (2026-11-09)
+
+`thread_1794273948027`, read from its captures: the shortlist had the request in the person's words and the composer
+had slot labels. "I'll cook breakfast every morning" reached the composer as two slots' descriptions, and the reason
+the shortlist gave for each garment was written and then dropped. Details and the other three faults found on that
+thread are in `engine-behaviour-map.md` item 102.
+
+- The composer's message opens with `THE REQUEST (their words, oldest first)`, the block the shortlist reads, and its
+  system prompt carries the shortlist's sentence on how to read it.
+- Each slot states `best_for` as a field of its own.
+- `shortlist_reasons` gives, per chosen garment, the shortlist's `piece_jobs` sentence, labelled as that step's reason
+  and not a recorded fact.
+- `piece_assessments` rows whose advisories are all neutral are not sent.
+- A dated slot's weather text states whether its hours have rain forecast.
+- `plan_outfit_set`'s description: a day is cut into the stretches between changes of clothes; something done every
+  day needs a slot on each day; the person's habit (in the day's look, or first in something else) is asked when it is
+  unknown and changes the slots.
+
+Trips are unchanged. Not run live.
+
+## 14 · The reply to a plan, and the same hand-off for a trip (2026-11-09)
+
+After §13's live run (`thread_1794275667026`). Details in `engine-behaviour-map.md` item 103.
+
+- The reply to an at-home plan is asked for what the screen cannot show, as a trip's reply is: what the days ask of the
+  clothes, why each look suits what is done in it, and what is not covered. It is given each look's reason and the
+  notes printed on its card, and must answer a note or admit it.
+- The trip composer is handed the traveller's words and the packer's reason for each piece; the trip packer is handed
+  the words. All-neutral assessment rows are dropped for a trip as well.
+
+Not run live.

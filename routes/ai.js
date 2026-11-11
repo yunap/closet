@@ -53,7 +53,7 @@ import {
 import { validateSubmittedPlanOutfits, describeOutfitStructureGap, capsuleNeutralBasePlan, capsuleOutfitCoreCapacity, slotThermalDemandLabel, validateTripCompositionPartialPlan, TRIP_ROSTER_PHOTO_LIMIT, GEMINI_TRIP_ROSTER_PHOTO_LIMIT } from '../styling-engine/outfitSetPlanner.js'
 
 import { OCCASION_PROFILES, occasionVibe, stripSoftRankingRules } from '../styling-engine/occasions.js'
-import { EXPLORE_FORMULAS_FRAME, EXPLORE_INSTRUCTION, exploreLayerAnchorLine, OUTFIT_VARIETY_RULE } from '../styling-engine/prompts.js'
+import { EXPLORE_FORMULAS_FRAME, EXPLORE_INSTRUCTION, exploreLayerAnchorLine, OUTFIT_VARIETY_RULE, readTheSituation } from '../styling-engine/prompts.js'
 import { colorFamilyLabel, colorTaxonomyEntry } from '../lib/colorTaxonomy.js'
 import {
   garmentKind,
@@ -3602,6 +3602,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
       // TIME-OF-DAY WEATHER removed (owner ruling 2026-09-15): the stated range and the request text, including outing hours, carry
       // the conditions; its garment and layer prescriptions were not neutral facts.
       // COOL-END LAYER removed (2026-09-15): an engine-derived requirement that also quoted the old `opacity: sheer` label format.
+      // A chat turn asking for options has a situation to read; the Use-my-wardrobe screen sends no styling request
+      // and keeps the composer's own visual reason. Same condition as the stylist note below.
+      stylistNote && !composerExperiment
+        ? `READ THE SITUATION FIRST:\n${readTheSituation('Before you compose')}\nOn this turn each outfit's reason says first why it suits what the wearer will be doing, then what makes it work to the eye.`
+        : '',
       `Compose ${requestedLimit} outfits.`,
       // 2026-09-15 (owner ruling): both paragraphs previously pushed toward variety and thermal
       // uniformity as ends in themselves — forcing a weaker alternative merely to look different,
@@ -3951,7 +3956,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         brokenPieces
       })
     }
-    const buildBrokenModelCard = (outfit, rejectionReason = 'rejected by model-output gate', resolutionNote = null) => withLocalFillSource(outfit, {
+    // A look the model composed keeps the name she gave it. ": standard wear" marks an outfit the engine assembled,
+    // and thread_1794359193592 showed her rejected "Graphic Knit Contrast" as "Graphic Knit Contrast: standard wear".
+    const buildBrokenModelCard = (outfit, rejectionReason = 'rejected by model-output gate', resolutionNote = null) => ({
+      ...withLocalFillSource(outfit, {}),
+      label: outfit.label || 'Outfit',
       broken: true,
       diagnosticOnly: true,
       source: 'model-rejected',
@@ -6407,7 +6416,7 @@ export function tripRosterSelectionUserText({
   const tripContext = [contextHeader, journeyLine].filter(Boolean).join('. ')
   const words = String(requestWords || '').trim()
   const headerBlock = trip
-    ? `${tripContext ? `TRIP CONTEXT: ${tripContext}\n\n` : ''}${approachBlock}`
+    ? `${tripContext ? `TRIP CONTEXT: ${tripContext}\n\n` : ''}${approachBlock}${words ? `THE REQUEST (their words, oldest first):\n${words}\n\n` : ''}`
     : `${words ? `THE REQUEST (their words, oldest first):\n${words}\n\n` : ''}${contextHeader ? `${contextHeader}\n\n` : ''}`
   // The sparse fact line carries no owner rules/rejections (that's a separate, source-labelled
   // channel — docs/garment-evidence-parity-2026-09-15.md) — buildPieceText used to fold "RULES
@@ -6557,7 +6566,9 @@ export async function chooseTripRosterWithProvider({ bench, slots, dateRange = {
     planKind,
     constraints,
     // Only what the person typed in this thread, never the assistant's replies (thread_1792781414837).
-    requestWords: trip ? '' : String(toolContext?.userWords || toolContext?.question || '').slice(-4000),
+    // Trips as well (2026-11-09): the packer's prompt already says "when the request states this" and "unless the
+    // request fixes the days", and until now it was never shown the request.
+    requestWords: String(toolContext?.userWords || toolContext?.question || '').slice(-4000),
   })
 
   const { value, usage } = await askStylistStructuredWithUsage({
@@ -6620,6 +6631,18 @@ ${prompts.WORKING_STYLE}`
 // IS shared verbatim is the style constitution, and the mechanical contract (allowed_piece_ids
 // only, exact target_outfits count, read formality/occasions from the catalog rather than trusting
 // allowed_piece_ids alone) — those are true of any fixed-roster composition, not capsule-specific.
+// The first sentence is the plan shortlist's own (choosePlanRosterWithProvider's system prompt), so both steps
+// read the request the same way; the second names the shortlist's reasons for what they are.
+const COORDINATED_PLAN_REQUEST_AND_SHORTLIST = `THE REQUEST. When the request is given in the person's own words, start from it: it says what the days are, who they are with and what matters to them, and it outranks the use-case summaries where they differ. Something the person says they do on every day, or on several, belongs to each of those days, whichever slots mention it.
+
+shortlist_reasons, when given, is why each garment was chosen for this plan by the step before you, written from the same request. They are that step's reasons, not recorded facts: read them to see what a garment was chosen to do, and judge each look yourself from the request, the recorded facts and the photographs.`
+
+// The trip's form of the two sentences above (2026-11-09): the trip composer was handed neither the request nor the
+// packer's reasons, as the plan composer was not.
+const TRIP_REQUEST_AND_PACKING_REASONS = `THE REQUEST. When the request is given in the traveller's own words, start from it: it says what the trip is, who they are with and what matters to them, and it outranks the use-case summaries where they differ.
+
+shortlist_reasons, when given, is why each piece was packed, written by the step that packed the bag from the same request. They are that step's reasons, not recorded facts: read them to see what a piece was packed to do, and judge each look yourself from the request, the recorded facts and the photographs.`
+
 export function tripPlanCompositionSystemPrompt({ planKind = 'trip' } = {}) {
   // plan_outfit_set's one composer prompt (owner, 2026-10-28); only what packing adds is trip-only.
   const trip = planKind === 'trip'
@@ -6633,7 +6656,11 @@ LAYERED LOOKS. An outfit is not only a top, a bottom and a coat for the cold. A 
 
 ${trip ? `${HOW_A_DAY_AWAY_WORKS} When a look would also carry the wearer through another of the trip's activities on the same day, say so in its reason, and what would need to change (usually only the shoes or a layer).
 
-` : ''}${PHYSICAL_WEARABILITY_REALISM_RULES}
+${TRIP_REQUEST_AND_PACKING_REASONS}
+
+` : `${COORDINATED_PLAN_REQUEST_AND_SHORTLIST}
+
+`}${PHYSICAL_WEARABILITY_REALISM_RULES}
 
 STYLE CONSTITUTION — BODY CONTRACT:
 ${prompts.BODY_CONTRACT}
@@ -6816,17 +6843,26 @@ async function composeTripPlanOnce(workbench, toolContext) {
     : []
   // The shared garment fact line and saved-record notes — the same evidence Whole Wardrobe and /ask receive.
   const truthCatalog = tripPlanTruthCatalog(rosterPieces)
+  // The plan composer's hand-off, for a trip (engine map item 102): the traveller's words and the packer's reasons.
+  const requestBlock = coordinatedPlanRequestBlock(String(toolContext?.userWords || toolContext?.question || '').slice(-4000))
+  const packingReasons = coordinatedPlanShortlistReasons(workbench.roster_jobs, rosterIds)
   const promptPayload = {
     instructions: atomicTripCompositionInstructions(workbench.instructions),
     constraints: workbench.constraints,
-    slots: (workbench.slots || []).map(tripComposerSlotView),
+    // Rows whose advisories are all neutral are not sent; a hot or active slot's rows are, as before.
+    slots: (workbench.slots || []).map(slot => {
+      const { piece_assessments, ...rest } = tripComposerSlotView(slot)
+      const assessments = planPieceAssessmentsThatSaySomething(piece_assessments)
+      return { ...rest, ...(assessments.length ? { piece_assessments: assessments } : {}) }
+    }),
     piece_catalog: truthCatalog.length ? truthCatalog : workbench.piece_catalog,
     piece_catalog_conventions: TRIP_GARMENT_FACT_CONVENTIONS,
-    piece_notes: tripPlanPieceNotes(rosterPieces)
+    piece_notes: tripPlanPieceNotes(rosterPieces),
+    ...(packingReasons.length ? { shortlist_reasons: packingReasons } : {}),
   }
   const content = [{
     type: 'text',
-    text: `Compose this fixed trip packing workbench:\n${JSON.stringify(promptPayload)}\n\nThe following thumbnails are the visual evidence for the same fixed roster. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
+    text: `${requestBlock}Compose this fixed trip packing workbench:\n${JSON.stringify(promptPayload)}\n\nThe following thumbnails are the visual evidence for the same fixed roster. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
     cache_control: { type: 'ephemeral' }
   }]
   // Unconditional, whole-roster image attachment — the same policy capsule composition uses, not
@@ -6935,6 +6971,60 @@ export function coordinatedPlanCompositionSchema(targetOutfits = 1) {
   return schema
 }
 
+// What the plan composer is handed besides the slots (thread_1794273948027, 2026-11-09). The request reached the
+// shortlist in the person's own words and the composer only as each slot's label: "I'll cook breakfast every
+// morning" arrived as "Hosting friends & cooking breakfast at home" on two of four days, and a top with extra-long
+// flared sleeves went to the stove. The shortlist's reason for each garment ("for crisp outdoor hours during the
+// winery tasting") was written and then dropped before composition. Both now travel; nothing is gated on either.
+export function coordinatedPlanRequestBlock(requestWords = '') {
+  const words = String(requestWords || '').trim()
+  return words ? `THE REQUEST (their words, oldest first):\n${words}\n\n` : ''
+}
+
+export function coordinatedPlanShortlistReasons(jobs = [], rosterIds = []) {
+  const allowed = new Set((Array.isArray(rosterIds) ? rosterIds : []).map(Number))
+  const seen = new Set()
+  const reasons = []
+  for (const entry of Array.isArray(jobs) ? jobs : []) {
+    // The stored shape is { pieceId, job } (selectTripRosterViaModel); the model's own answer says piece_id.
+    const id = Number(entry?.pieceId ?? entry?.piece_id)
+    const reason = String(entry?.job || '').trim()
+    if (!allowed.has(id) || seen.has(id) || !reason) continue
+    seen.add(id)
+    reasons.push({ id, chosen_for: reason })
+  }
+  return reasons
+}
+
+// A row whose every advisory is neutral says nothing, and on that thread such rows were 26,524 of the composer's
+// 64,814 characters. Rows that say something are sent as before, each with its own id.
+export function planPieceAssessmentsThatSaySomething(assessments = []) {
+  return (Array.isArray(assessments) ? assessments : []).filter(row => Object.entries(row || {})
+    .some(([key, advisory]) => key !== 'id' && advisory && typeof advisory === 'object' && String(advisory.tier || 'neutral') !== 'neutral'))
+}
+
+export function coordinatedPlanComposerSlots(slots = [], pendingSlots = []) {
+  const bestForById = new Map((Array.isArray(pendingSlots) ? pendingSlots : [])
+    .map(slot => [String(slot?.id || ''), String(slot?.bestFor || '').trim()]))
+  // The slot's season, stated beside its label rather than left as calendar_season inside styling_context.
+  return (Array.isArray(slots) ? slots : []).map(slot => {
+    const { id, label, piece_assessments, ...rest } = tripComposerSlotView(slot)
+    const season = seasonPromptLabel(slot?.styling_context?.season || 'current season', slot?.styling_context?.calendarSeason || slot?.calendar_season || '')
+    // The system prompt calls best_for "the lived scenario"; until now it reached the composer only inside
+    // styling_context.requestText.
+    const bestFor = bestForById.get(String(id || '')) || ''
+    const assessments = planPieceAssessmentsThatSaySomething(piece_assessments)
+    return {
+      id,
+      label,
+      ...(bestFor ? { best_for: bestFor } : {}),
+      ...(season !== 'current season' ? { season } : {}),
+      ...rest,
+      ...(assessments.length ? { piece_assessments: assessments } : {}),
+    }
+  })
+}
+
 export async function composeCoordinatedPlanOnce(workbench, toolContext) {
   const targetOutfitCount = (workbench.slots || [])
     .reduce((sum, slot) => sum + Math.max(0, Number(slot?.target_outfits) || 0), 0)
@@ -6945,22 +7035,21 @@ export async function composeCoordinatedPlanOnce(workbench, toolContext) {
   const rosterPieces = rosterIds.length
     ? db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${rosterIds.map(() => '?').join(',')})`).all(...rosterIds).map(parsePiece)
     : []
+  // The same words the shortlist was given (choosePlanRosterWithProvider's requestWords).
+  const requestBlock = coordinatedPlanRequestBlock(String(toolContext?.userWords || toolContext?.question || '').slice(-4000))
+  const shortlistReasons = coordinatedPlanShortlistReasons(toolContext?.pendingPlan?.planRosterJobs, rosterIds)
   const promptPayload = {
     instructions: atomicTripCompositionInstructions(workbench.instructions),
     constraints: workbench.constraints,
-    // The slot's season, stated beside its label rather than left as calendar_season inside styling_context.
-    slots: (workbench.slots || []).map(slot => {
-      const { id, label, ...rest } = tripComposerSlotView(slot)
-      const season = seasonPromptLabel(slot?.styling_context?.season || 'current season', slot?.styling_context?.calendarSeason || slot?.calendar_season || '')
-      return { id, label, ...(season !== 'current season' ? { season } : {}), ...rest }
-    }),
+    slots: coordinatedPlanComposerSlots(workbench.slots, toolContext?.pendingPlan?.slots),
     piece_catalog: rosterPieces.length ? tripPlanTruthCatalog(rosterPieces) : workbench.piece_catalog,
     piece_catalog_conventions: COORDINATED_PLAN_GARMENT_FACT_CONVENTIONS,
     piece_notes: tripPlanPieceNotes(rosterPieces),
+    ...(shortlistReasons.length ? { shortlist_reasons: shortlistReasons } : {}),
   }
   const content = [{
     type: 'text',
-    text: `Compose this plan:\n${JSON.stringify(promptPayload)}\n\nThe following photographs are the visual evidence for every garment chosen for it. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
+    text: `${requestBlock}Compose this plan:\n${JSON.stringify(promptPayload)}\n\nThe following photographs are the visual evidence for every garment chosen for it. Judge silhouette, volume, texture, and physical layering by sight; stored authoritative rules still win.`,
     cache_control: { type: 'ephemeral' },
   }]
   // Every chosen garment's photo, unconditionally, as the trip and capsule composers do (visual grounding).
@@ -7691,6 +7780,8 @@ router.post('/ask', async (req, res) => {
       && !req.body.imageData
     let singleOutfitRoute = null
     let tripPlanRoute = null
+    // The profile the router gave a fresh request; '' when it did not run or the turn is a follow-up.
+    let routedFreshProfile = ''
     const savedPackingApproach = getSavedPackingApproach()
     toolContext.savedPackingApproach = savedPackingApproach
     if (routerEligible) {
@@ -7793,6 +7884,11 @@ router.post('/ask', async (req, res) => {
           // did not hold (it marked the search and not the proposal). resolveToolStylingContext
           // reads this and resolves the turn's weather as indoor for every tool.
           toolContext.executionRouterIndoorOnly = routed.value?.setting === 'indoor_only'
+          // Owner, 2026-11-10 ("indoor activities should have never gotten the notes meant for an outdoor weather";
+          // thread_1794365607999): dinner at someone's house was routed includes_outdoors, the only setting for
+          // "going somewhere", and its card read "runs warm for a high of 66°F". The occasion is indoors; the
+          // forecast is for the way there. Applied to every tool in the turn, as the at-home setting is.
+          toolContext.executionRouterIndoorDestination = routed.value?.setting === 'indoor_destination'
           // Owner ruling 2026-10-19 (thread_1792453320490): a request that gives no place or time —
           // "which tops can I wear under this?" with city and fall picked — is a styling question,
           // not an outing. It was routed includes_outdoors ("anything unclear") and the card was told
@@ -7810,6 +7906,9 @@ router.post('/ask', async (req, res) => {
           // of the evening") — which the router again read as indoor_only — was dressed for today's
           // 96°F outdoor forecast, because the setting was applied to fresh requests only.
           toolContext.executionRouterIndoorOnly = true
+        } else if (routed.value?.setting === 'indoor_destination') {
+          // A follow-up about the same indoor occasion is still indoors.
+          toolContext.executionRouterIndoorDestination = true
         } else if (routed.value?.setting === 'not_stated') {
           // The router keeps a situation the conversation already gave (its setting rule), so a
           // follow-up it reads as not_stated has none to carry: the same styling-question case.
@@ -7832,6 +7931,7 @@ router.post('/ask', async (req, res) => {
         toolContext.freeformDiagnostics ||= {}
         toolContext.freeformDiagnostics.executionRouterProfile = String(compactProfile || '')
         toolContext.freeformDiagnostics.executionRouterLimit = routedLimit
+        if (freshExecutionRequest) routedFreshProfile = String(compactProfile || '')
         if (freshExecutionRequest && compactProfile === 'single_outfit' && routedLimit === 1) {
           singleOutfitRoute = routed.value
         }
@@ -8149,6 +8249,7 @@ router.post('/ask', async (req, res) => {
           season: req.body.season,
           activity: req.body.activity,
           ...(tripPlanRoute ? { tripPlanTurn: true, routedLocation: String(tripPlanRoute.location || '') } : {}),
+          ...(routedFreshProfile ? { routedProfile: routedFreshProfile } : {}),
           // Only an ordinary text follow-up: an attached image or outfit/piece launch keeps the full request.
           tripFollowupEligible: !freshExecutionRequest && !req.body?.image && !req.body?.imageBase64,
           answerInWords: toolContext.answerInWords === true,
