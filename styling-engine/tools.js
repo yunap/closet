@@ -1706,10 +1706,14 @@ export function isWearerHomeLocation(value = '', toolContext = {}) {
 // tool-loop submit_plan_outfits case keeps rejecting it, since it can resubmit (thread_1788584505940).
 // What the writer of an at-home plan's reply is given for each look: its own reason, and the notes the user sees
 // printed on its card (thread_1794275667026: a look described as weather-ready above a card noting no rain protection).
-export function coordinatedPlanOutfitSummary(outfit = {}) {
-  const notes = (Array.isArray(outfit.systemFlags) ? outfit.systemFlags : [])
+export function cardNotes(outfit = {}) {
+  return (Array.isArray(outfit?.systemFlags) ? outfit.systemFlags : [])
     .map(flag => String(flag?.message || '').trim())
     .filter(Boolean)
+}
+
+export function coordinatedPlanOutfitSummary(outfit = {}) {
+  const notes = cardNotes(outfit)
   return {
     slot: outfit.label,
     coverage: outfit.coveragePosition,
@@ -1718,6 +1722,25 @@ export function coordinatedPlanOutfitSummary(outfit = {}) {
     reason: outfit.reason || '',
     ...(notes.length ? { notes } : {}),
   }
+}
+
+// The options a stylist composed that were turned down after she wrote her note, when nothing else about the set
+// changed: every card is one of hers, by label, and at least one is still standing. [] when the delivered set differs
+// in any other way (an engine-assembled card, a renamed card), so her note is not shown beside cards it never saw.
+export function optionsTurnedDownAfterComposition(outfits = [], composedLabels = []) {
+  const composed = new Set((Array.isArray(composedLabels) ? composedLabels : []).map(label => String(label || '').trim()).filter(Boolean))
+  const cards = Array.isArray(outfits) ? outfits : []
+  if (!composed.size || cards.length !== composed.size) return []
+  if (!cards.every(outfit => composed.has(String(outfit?.label || '').trim()))) return []
+  const turnedDown = cards.filter(outfit => outfit?.broken)
+  if (!turnedDown.length || turnedDown.length === cards.length) return []
+  if (!turnedDown.every(outfit => outfit?.source === 'model-rejected')) return []
+  return turnedDown.map(outfit => {
+    const stated = String(outfit?.rejectionReason || '').trim()
+    // Only the second look's own sentence is repeated to the wearer; a gate's wording is not hers.
+    const reason = /^visual critic:\s*/i.test(stated) ? stated.replace(/^visual critic:\s*/i, '').trim() : ''
+    return { label: String(outfit.label || '').trim(), reason }
+  })
 }
 
 function correctUnpermittedColdLayerDecisions(pendingPlan = {}, submittedOutfits = []) {
@@ -4582,7 +4605,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             // payload (StylistChat getTripPlanNotes), so asking the model to present them produced the
             // same list two or three times and no explanation. The final answer is now asked for what
             // the screen cannot show: why this suitcase, how it is worn, and what it does not cover.
-            message: `${undressedPreface}Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list, the trip length and the weather used are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the weather you planned for so it can be corrected, and, where you know the destination, what the place itself is like for these activities and how that shaped the bag (only what you actually know of this specific place; never a guess); (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities, and, for a look with no layer of its own for the cool part of the day, which packed layer to bring; when a look has worn_on it was built for that one day, so say which day and what that day is like, its evening included; (3) say plainly, in your own words, anything the plan does not cover — an activity in not_covered that has fewer outfits ready than planned or that could not be dressed (give its reason when one is stated; when none is, say only that you could not put together an outfit you would stand behind for it, and never guess at a cause or refer to rules, checks or automation), or a packed piece in unused_pieces that no outfit wears — and what you would do about it. Do not present an unworn packed piece as flexibility: say it is a spare, or say which outfit it could swap into. Describe each activity from outfit_summaries, which is what the cards actually show; packing_reasoning and packing_notes are the packer's intent and may name pieces no outfit ended up using. Write in plain words to the wearer: no piece ids or numbers, and no planning vocabulary (slot, roster, capsule, register, validation, coverage gap, combinatorial, representative) or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
+            message: `${undressedPreface}Accepted ${planOutfits.length} plan outfit card${planOutfits.length === 1 ? '' : 's'} across ${pendingPlan.slots.length} slots. The cards, the packing list, the trip length and the weather used are ALREADY displayed to the user. Do not list the packed pieces or the outfits again, and do not call propose_outfit. Write what the screen cannot show, as the stylist who packed this bag: (1) open with what this trip's days and weather ask of a suitcase, in two or three sentences, saying the dates and the weather you planned for so they can be corrected, and, where you know the destination, what the place itself is like for these activities and how that shaped the bag (only what you actually know of this specific place; never a guess); (2) then go activity by activity and say how the packed pieces are worn for it and why, including where one piece is worn for several activities, and, for a look with no layer of its own for the cool part of the day, which packed layer to bring; when a look has worn_on it was built for that one day, so say which day and what that day is like, its evening included; a look's notes are what the user sees printed on that card, so either say how the bag answers a note or say plainly that it does not and what to bring or buy, and never describe a piece as protection against weather its note says the look lacks; (3) say plainly, in your own words, anything the plan does not cover — an activity in not_covered that has fewer outfits ready than planned or that could not be dressed (give its reason when one is stated; when none is, say only that you could not put together an outfit you would stand behind for it, and never guess at a cause or refer to rules, checks or automation), or a packed piece in unused_pieces that no outfit wears — and what you would do about it. Do not present an unworn packed piece as flexibility: say it is a spare, or say which outfit it could swap into. Describe each activity from outfit_summaries, which is what the cards actually show; packing_reasoning and packing_notes are the packer's intent and may name pieces no outfit ended up using. Write in plain words to the wearer: no piece ids or numbers, and no planning vocabulary (slot, roster, capsule, register, validation, coverage gap, combinatorial, representative) or these field names. No additional plan_outfit_set/submit_plan_outfits calls are available for this turn.`,
             ...buildTripExplanationEvidence(pendingPlan, planOutfits, {
               declined: (Array.isArray(toolContext.tripCompositionSlotGaps) ? toolContext.tripCompositionSlotGaps : []).map(gap => ({
                 activity: pendingPlan.slots.find(slot => String(slot.id) === String(gap?.slot_id || ''))?.label || '',
@@ -4597,6 +4620,9 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
                 weather: outfit.slotWeather || '',
                 pieceNames: (outfit.pieces || []).map(piece => piece.name),
                 reason: outfit.reason || '',
+                // What is printed on the card (live thread_1794359258964: both walking looks noted "no layer here has
+                // tagged rain protection for wet conditions" and the reply called the trench protection against rain).
+                ...(cardNotes(outfit).length ? { notes: cardNotes(outfit) } : {}),
                 // The day this look is for, when it names one; `weather` above is then that day's.
                 ...(outfit.wornOnDate ? { worn_on: outfit.wornOnDate } : {}),
                 ...(coolEndLayer ? { cool_end_layer: coolEndLayer } : {}),
@@ -5087,7 +5113,15 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           const sameCards = composedLabels.length > 0 && composedLabels.length === deliveredLabels.length
             && result.structuredOutfits.every(outfit => !outfit?.broken)
             && [...composedLabels].sort().join('\n') === [...deliveredLabels].sort().join('\n')
-          toolContext.boundedStylistNote = boundedMultiLook && sameCards ? String(result.stylistNote || '').trim() : ''
+          // Her note also stands when every delivered card is one she wrote about and the only difference is that
+          // some of her options were turned down afterwards and are shown marked for review (live
+          // thread_1794359193592: a second look rejected one of two options for clashing prints, her note was
+          // dropped, and the reply was "1 of 2 requested outfits is ready; the remaining 1 could not be validated
+          // from this wardrobe in the bounded composition pass"). The reply then says first which option she would
+          // not stand behind, and why when the second look gave a reason in plain words.
+          const reviewOptions = boundedMultiLook && !sameCards ? optionsTurnedDownAfterComposition(result.structuredOutfits, composedLabels) : []
+          toolContext.boundedStylistNote = boundedMultiLook && (sameCards || reviewOptions.length) ? String(result.stylistNote || '').trim() : ''
+          toolContext.boundedOptionsTurnedDown = toolContext.boundedStylistNote ? reviewOptions : []
 
           // 2026-09-16 (owner review, thread_1789546295700): `aiReturnedCount === 0` means the
           // composer produced no model-styled output this turn — timed out, errored, or any other

@@ -3956,7 +3956,11 @@ export async function generateWholeWardrobeOutfitsVisualInternal({
         brokenPieces
       })
     }
-    const buildBrokenModelCard = (outfit, rejectionReason = 'rejected by model-output gate', resolutionNote = null) => withLocalFillSource(outfit, {
+    // A look the model composed keeps the name she gave it. ": standard wear" marks an outfit the engine assembled,
+    // and thread_1794359193592 showed her rejected "Graphic Knit Contrast" as "Graphic Knit Contrast: standard wear".
+    const buildBrokenModelCard = (outfit, rejectionReason = 'rejected by model-output gate', resolutionNote = null) => ({
+      ...withLocalFillSource(outfit, {}),
+      label: outfit.label || 'Outfit',
       broken: true,
       diagnosticOnly: true,
       source: 'model-rejected',

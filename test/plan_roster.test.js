@@ -527,3 +527,63 @@ test('what is appropriate is the stylist\'s to advise: the situation read, the p
   assert.match(providerSrc, /What is appropriate to wear, and what the other people there will be wearing, is never asked/)
 })
 
+// thread_1794359258964: "Cooking at Home Evenings" (casual, at home) was reclassified as an evening out by the word
+// "evenings", and the knit trousers packed for it were then a prohibited bottom.
+test('a slot placed at home keeps its stated occasion whatever its name says about the time of day', async () => {
+  const { normalizePlanSlots } = await import('../styling-engine/outfitSetPlanner.js')
+  const [atHome, dinnerAtHome, out] = normalizePlanSlots([
+    { label: 'Cooking at Home Evenings', occasion: 'casual', activity: 'none', environment: 'home', count: 1 },
+    { label: 'Thursday: cooking dinner for friends', occasion: 'casual', activity: 'none', environment: 'home', count: 1 },
+    { label: 'Dinners', occasion: 'city', activity: 'none', environment: 'indoor', count: 1 },
+  ])
+  assert.equal(atHome.occasion, 'casual')
+  assert.equal(dinnerAtHome.occasion, 'casual')
+  assert.equal(out.occasion, 'evening', 'a dinner out is read as before')
+})
+
+// thread_1794359193592: she composed two options and a note; a second look rejected one for clashing prints; the
+// reply was the app's template and the rejected card was renamed "…: standard wear".
+test('when one of her options is turned down afterwards, her note stands and the reply says first which and why', async () => {
+  const { optionsTurnedDownAfterComposition } = await import('../styling-engine/tools.js')
+  const { boundedAtomicMultiLookResponse, optionsTurnedDownPreface } = await import('../styling-engine/provider.js')
+  const cards = [
+    { label: 'Tonal Textured Tailored' },
+    { label: 'Graphic Knit Contrast', broken: true, source: 'model-rejected', rejectionReason: 'visual critic: The floral top and the chevron skirt fight each other in scale.' },
+  ]
+  const turnedDown = optionsTurnedDownAfterComposition(cards, ['Graphic Knit Contrast', 'Tonal Textured Tailored'])
+  assert.deepEqual(turnedDown, [{ label: 'Graphic Knit Contrast', reason: 'The floral top and the chevron skirt fight each other in scale.' }])
+  assert.deepEqual(optionsTurnedDownAfterComposition([cards[0], { label: 'Soft Column: standard wear', broken: true, source: 'local-fill' }], ['Graphic Knit Contrast', 'Tonal Textured Tailored']), [], 'a card she did not write about: no note')
+  assert.deepEqual(optionsTurnedDownAfterComposition([{ ...cards[1] }], ['Graphic Knit Contrast']), [], 'nothing left standing: no note')
+  assert.equal(optionsTurnedDownAfterComposition([cards[0], { ...cards[1], rejectionReason: 'heel height: prohibited for activity walking' }], ['Graphic Knit Contrast', 'Tonal Textured Tailored'])[0].reason, '', 'a gate\'s wording is not repeated as hers')
+
+  const reply = boundedAtomicMultiLookResponse({
+    generatedOutfits: cards, atomicMultiLookRequestedCount: 2,
+    boundedStylistNote: 'A backyard at 60°F is chilly once you sit down. Tonal Textured Tailored is my pick.',
+    boundedOptionsTurnedDown: turnedDown,
+  })
+  assert.match(reply, /^Looking again at the finished outfits, I would not stand behind “Graphic Knit Contrast”\. The floral top and the chevron skirt fight each other in scale\. It is shown below marked for review/)
+  assert.match(reply, /Tonal Textured Tailored is my pick\.$/)
+  assert.doesNotMatch(reply, /requested outfits|validated|bounded|you asked for/)
+  assert.equal(optionsTurnedDownPreface([]), '')
+})
+
+// thread_1794359258964: both walking looks were noted "no layer here has tagged rain protection for wet conditions";
+// the trip's reply, never shown the notes, called the trench protection against rain. "Next Thursday" was also taken
+// as this Thursday without saying so.
+test('a trip\'s reply is given the notes on its cards and states the dates it planned for', async () => {
+  const { cardNotes } = await import('../styling-engine/tools.js')
+  assert.deepEqual(cardNotes({ systemFlags: [{ type: 'Weather note', message: 'no layer here has tagged rain protection for wet conditions' }, { message: '' }] }), ['no layer here has tagged rain protection for wet conditions'])
+  assert.deepEqual(cardNotes({}), [])
+  const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
+  assert.match(toolsSrc, /\.\.\.\(cardNotes\(outfit\)\.length \? \{ notes: cardNotes\(outfit\) \} : \{\}\),/, 'in the trip\'s outfit summaries')
+  assert.match(toolsSrc, /never describe a piece as protection against weather its note says the look lacks/)
+  assert.match(toolsSrc, /saying the dates and the weather you planned for so they can be corrected/)
+})
+
+// thread_1794358985721: "Contains a piece the occasion/activity profile usually discourages." named no piece.
+test('the occasion note on a card names the garment, in plain words', () => {
+  const rulesSrc = fs.readFileSync(new URL('../styling-engine/rules.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(rulesSrc, /Contains a piece the occasion\/activity profile usually discourages/)
+  assert.match(rulesSrc, /not what this kind of occasion usually calls for\./)
+})
+

@@ -708,6 +708,16 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
         'the same way you would judge any other candidate. When the issue is stated generally — about a kind of garment or combination, not only this piece ("I don\'t like cardigans over long sleeves") — it is also a standing preference: save it with \'store_user_correction\' in her own words as well as making the swap.\n'
       )
     }
+    // 2026-11-10 (owner: "go with your recommendations"; thread_1794359092528): asked "Really? I was thinking of just
+    // wearing jeans", she agreed at once and never said what her own recommendation rested on.
+    if (key === 'STYLIST_SYSTEM') {
+      const anchor = '- Do not reverse a recommendation more than once. If a pairing isn\'t working after two attempts, say clearly "this combination has a structural problem" and suggest a different piece entirely.\n'
+      assert.ok(expected.includes(anchor), 'the line the new rule follows is still there')
+      expected = expected.replace(
+        anchor,
+        `${anchor}- A doubt is not a reason. When the user questions what you recommended, or says they would rather wear something else, say whether you still think your recommendation is right for the occasion and why, say honestly what their choice would cost there (or that it would cost nothing), and then dress them their way if that is what they want. Change your view when they tell you something you did not know, and say that is what changed it.\n`
+      )
+    }
     assert.strictEqual(built[key], expected, `byte drift in ${key}`)
   }
 })

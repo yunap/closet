@@ -1047,10 +1047,16 @@ function inferPlanSlotTimeWindow({
   return null
 }
 
-function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '', environment = '' } = {}) {
+function normalizePlanSlotOccasion(rawOccasion = '', { label = '', bestFor = '', coverage = '', planNote = '', environment = '', atHome = false } = {}) {
   const occasion = normalizeOccasion(rawOccasion)
   const text = [label, bestFor, coverage, planNote].filter(Boolean).join(' ')
   if (occasion === 'outdoor_daytime_social' && environment === 'beach_coastal') return 'casual'
+  // A slot the stylist placed at home keeps the occasion she gave it (live thread_1794359258964, 2026-11-10): "Cooking
+  // at Home Evenings", sent as casual and `environment: 'home'`, matched the word "evenings" below and became the
+  // evening-out occasion, whose profile bans knit trousers; the look built from the trousers packed "for relaxed
+  // cooking nights" was rejected and the activity shipped with no outfit. The word match reads a time of day or a meal
+  // as a night out, which a slot at home is not; the evening daypart for its weather is set separately.
+  if (atHome) return occasion
   if ((occasion === 'casual' || occasion === 'city') && textLooksLikeEveningPlanSlot(text)) return 'evening'
   return occasion
 }
@@ -5253,7 +5259,10 @@ export async function buildPlanSlotWorkbench(slots = [], { constraints = {}, all
       ? `OWNER GUIDANCE — applicable to this bounded roster and these use cases. Follow it unless the owner explicitly changes it in this request: ${applicableOwnerRules.map(rule => `"${rule}"`).join('; ')}`
       : '',
     acceptedSynthesisText
-      ? `OWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for this roster and these use cases; respect each stated boundary: ${acceptedSynthesisText}`
+      // "Without saying so": live thread_1794357777020 printed "Directly respects the lesson to ground the floral
+      // botanical patchwork top…" as a card's reason. WORKING_STYLE already forbids narrating compliance; this line is
+      // where the lesson is handed over.
+      ? `OWNER-ACCEPTED APPLICABLE LESSONS — bounded prompt guidance for this roster and these use cases; respect each stated boundary, without saying in a card that you are following a lesson: ${acceptedSynthesisText}`
       : '',
     // Spec 26 Part 6 repeated spec 25's professional-context default here (the owner's 07-16 office run: shawl on
     // Tuesday, double botanical on Wednesday). Removed from both prompts 2026-10-30 (plan prompt audit item 11): a
@@ -6792,7 +6801,7 @@ export function normalizePlanSlots(rawSlots = [], {
       const inferredEnvironment = declaredEnvironment ? '' : proseEnvironment
       const environment = declaredEnvironment || inferredEnvironment
       if (!declaredEnvironment && inferredEnvironment && typeof onDiagnostic === 'function') onDiagnostic('planSlotEnvironmentInferred')
-      const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote, environment })
+      const occasion = normalizePlanSlotOccasion(String(slot?.occasion || fallbackOccasion || 'city'), { label, bestFor, coverage, planNote, environment, atHome })
       const eligibilityOccasion = planSlotEligibilityOccasion(occasion, { label, bestFor, coverage, planNote })
       // statedWeather is environment-driven ONLY (spec §3.2/§4.2) — it marks
       // a slot as climate-controlled so live/estimated/stated OUTDOOR weather

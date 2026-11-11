@@ -401,8 +401,27 @@ export function boundedAtomicMultiLookFinalAnswer(answerText = '', toolContext =
     ? toolContext.generatedOutfits.filter(outfit => !outfit?.broken).length
     : 0
   if (!requested || ready >= requested) return text
-  const note = `${ready} of ${requested} requested ${requested === 1 ? 'outfit' : 'outfits'} ${ready === 1 ? 'is' : 'are'} ready; the remaining ${requested - ready} could not be validated from this wardrobe in the bounded composition pass.`
+  // Said as she would say it (stylist-conversation-targets.md check 9; live thread_1794359193592 read "1 of 2
+  // requested outfits is ready; the remaining 1 could not be validated from this wardrobe in the bounded composition
+  // pass"). The count is a ceiling (owner ruling 2026-10-27), so fewer is stated, not apologised for.
+  const missing = requested - ready
+  const note = ready
+    ? `That is ${ready} of the ${requested} you asked for: I would not stand behind the other${missing === 1 ? '' : 's'} I tried.`
+    : ''
   return `${text}\n\n${note}`.trim()
+}
+
+// Which of her own options she no longer stands behind, said before her note about the set (tools.js
+// optionsTurnedDownAfterComposition).
+export function optionsTurnedDownPreface(options = []) {
+  const list = (Array.isArray(options) ? options : []).filter(option => option?.label)
+  if (!list.length) return ''
+  const names = list.map(option => `“${option.label}”`)
+  const named = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  const reasons = list.map(option => String(option.reason || '').trim()).filter(Boolean)
+  const why = reasons.length ? ` ${reasons.join(' ')}` : ''
+  const one = list.length === 1
+  return `Looking again at the finished outfits, I would not stand behind ${named}.${why} ${one ? 'It is' : 'They are'} shown below marked for review, and what I say about ${one ? 'it' : 'them'} after this no longer holds.`
 }
 
 export function boundedAtomicMultiLookResponse(toolContext = {}) {
@@ -422,7 +441,11 @@ export function boundedAtomicMultiLookResponse(toolContext = {}) {
   const stylistNote = String(toolContext?.boundedStylistNote || '').trim()
   const unavailableSentence = `I couldn’t verify the forecast${location ? ` for ${location}` : ''}, so these options avoid assuming hot or cold weather; check the temperature before choosing.`
   if (ready && stylistNote) {
-    return boundedAtomicMultiLookFinalAnswer(unavailableWeather ? `${unavailableSentence}\n\n${stylistNote}` : stylistNote, {
+    const turnedDown = optionsTurnedDownPreface(toolContext?.boundedOptionsTurnedDown)
+    const noted = [unavailableWeather ? unavailableSentence : '', turnedDown, stylistNote].filter(Boolean).join('\n\n')
+    // The preface already says which option fell and why; the count line would say it twice.
+    if (turnedDown) return noted
+    return boundedAtomicMultiLookFinalAnswer(noted, {
       ...toolContext,
       atomicMultiLookRequestedCount: requested
     })

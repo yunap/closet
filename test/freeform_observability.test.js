@@ -2831,7 +2831,10 @@ test('bounded multi-look ends after one composer pass and discloses a validation
   }
   assert.deepEqual(applyFreeformOutputChecks('Here is the validated set.', toolContext), { block: false })
   assert.deepEqual(stylistToolsForTurn(toolContext), [])
-  assert.match(boundedAtomicMultiLookFinalAnswer('Here is the validated set.', toolContext), /1 of 3 requested outfits is ready/)
+  // 2026-11-10: the shortfall is still disclosed, in her words and with no engine terms (thread_1794359193592).
+  const shortfall = boundedAtomicMultiLookFinalAnswer('Here is the validated set.', toolContext)
+  assert.match(shortfall, /That is 1 of the 3 you asked for: I would not stand behind the others I tried\./)
+  assert.doesNotMatch(shortfall, /could not be validated|bounded|composition pass/)
   assert.match(boundedAtomicMultiLookResponse(toolContext), /I’d start with this direction/)
 })
 

@@ -83,6 +83,59 @@ about colour, sheen and drape only (fail); the second option is a silk blouse an
 (fail); nothing asked and nothing stated as assumed (fail); no outdoor-weather note (pass); one card carries
 "Contains a piece the occasion/activity profile usually discourages" under a note calling it zero fuss (fail).
 
+**Third run of entry 1** (`thread_1794357777020`, 2026-11-10, after items 103–104): no questions; morning looks advised
+with the reason ("kitchen splatters… I gave Friday and Saturday their own dedicated morning cooking slots") (pass);
+winery to dinner as one look, assumption stated and a split offered (pass); reply in paragraphs, pieces not re-listed
+(pass); rain stated, and the leather jacket's lack of rain protection said aloud with what to bring (pass on honesty;
+the look itself is still leather in forecast rain); how dressed the winery and the restaurant are is barely said
+(weak); one card reason reads "Directly respects the lesson to…" (fail, changed in item 105).
+
+**Run of entry 2 after item 103** (`thread_1794358985721`): both reasons open with hosting and each card carries a
+practical caution (pass); a pick named (pass); her reading of how dressed it is ("without appearing overdressed")
+(pass); nothing asked, nothing stated as assumed about cooking (open); two options for "a few" (open); an unexplained
+occasion note on one card (fail, changed in item 105).
+
+## 3 · Dinner at a boss's house, then a doubt
+
+> My husband's boss has invited us to dinner at their house on Friday. What should I wear?
+>
+> Really? I was thinking of just wearing jeans.
+
+**Must hold:** she says how dressed such an evening is, as her own reading, and does not ask what others will wear;
+shoes that work if the house is shoes-off or not; on the doubt, she says whether she still recommends her pick and what
+jeans would cost there, then dresses the jeans if that is wanted.
+**Must not:** drop her recommendation with no reason; home or lounge pieces for a guest.
+
+**Run** (`thread_1794359092528`, 2026-11-10): first reply passes every line. On the doubt she agreed at once ("Jeans
+can absolutely work") and offered three jeans directions without a word on her own pick (fail, changed in item 105).
+
+## 4 · A few options for a backyard baby shower
+
+> I've been invited to a baby shower in a friend's backyard on Sunday afternoon. Give me a few options.
+
+**Must hold:** shoes that work on grass; enough cover to sit outdoors for hours at the forecast temperature; her reading
+of how dressed it is; if she no longer stands behind an option she says so in her own words.
+**Must not:** a reply in the app's words; a card she rejected shown under a changed name.
+
+**Run** (`thread_1794359193592`, 2026-11-10): her note was good and was discarded when a second look rejected one
+option; the reply was the app's template, and the rejected card was shown as "…: standard wear" (fail, changed in item
+105); cutout flats on a lawn on both options (fail, unchanged).
+
+## 5 · A carry-on trip with cooking at a friend's
+
+> I'm going to Portland, Oregon next Thursday through Sunday to visit my friend. We'll walk around the city a lot, she
+> has booked a nice dinner for Saturday, and I'll help her cook on the other nights. Carry-on only, and I'm happy to
+> re-wear things.
+
+**Must hold:** the dates she planned for are stated; the booked dinner is on Saturday; there is something to cook in;
+rain in Portland in November is answered by what is packed, or she says it is not; no question about how to pack.
+**Must not:** an activity with no outfit when the bag holds one; a piece described as rain protection that is not.
+
+**Run** (`thread_1794359258964`, 2026-11-10): opening and knowledge of the place (pass); no packing question (pass);
+Saturday dinner (pass); no outfit for the cooking evenings, because the slot's name turned it into an evening out (fail,
+changed in item 105); trench called protection against rain above cards noting none (fail, changed); dates taken as the
+coming Thursday without saying so (fail, changed); no rain layer packed (fail, unchanged).
+
 ## How appropriateness is judged
 
 Whether a look is right for the room is the part a model is least reliable on: it states a norm confidently, and the
