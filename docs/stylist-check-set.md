@@ -111,7 +111,8 @@ can absolutely work") and offered three jeans directions without a word on her o
 
 **Second run** (`thread_1794365607999`, 2026-11-10, after item 105): first reply reads the room and does not ask (pass),
 under a "Why This Combination Works" heading with bullets (weak); the card notes "runs warm for a high of 66°F, even
-with the layer off" for a dinner indoors and the reply does not mention it (fail, unchanged). On the doubt: "I still
+with the layer off" for a dinner indoors and the reply does not mention it (fail; an indoor occasion travelled
+to is its own setting as of item 109, and gets no such note). On the doubt: "I still
 think tailored trousers are the safest bet when you haven't been to a boss's home before", then what jeans cost there,
 then two jeans directions (pass).
 

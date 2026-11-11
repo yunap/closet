@@ -1,5 +1,7 @@
 # Handoff — freeform stylist chat re-architecture ("router → stylist")
 
+> **Router setting `indoor_destination` — implemented 2026-11-10** (`engine-behaviour-map.md` item 109). `FREEFORM_EXECUTION_ROUTE_SCHEMA.setting` is now `indoor_only | indoor_destination | includes_outdoors | not_stated`. `indoor_destination` (a restaurant, someone else's home, an office, a theatre: indoors, with only the way there outside) sets `toolContext.executionRouterIndoorDestination`; `resolveToolStylingContext` then applies `statedWeather: 'indoor'` without `indoorOnly` for every tool in the turn, so the room is not judged against the forecast and the forecast is kept for transit. `buildSingleOutfitConversationPayload` states it to the stylist. Not run live.
+
 > **Care note assumed from fibre — implemented 2026-11-10** (`engine-behaviour-map.md` item 108). `garmentNotesEntry` appends `careNoteText` for silk, wool-family and leather garments, labelled as an assumption; it reaches the options composer and the plan and trip shortlists and composers through the existing garment-notes block. `WARDROBE_CARE_NOTE=off` removes it. Not run live.
 
 > **Options without a number are three — implemented 2026-11-10** (`engine-behaviour-map.md` item 107). `FREEFORM_EXECUTION_ROUTER_SYSTEM`: "when options are asked for without a number, use 3" (was 2). Not run live.

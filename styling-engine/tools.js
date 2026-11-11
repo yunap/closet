@@ -775,6 +775,11 @@ export async function resolveToolStylingContext({
       // back, which an occasion with no travel does not have. Weather the USER stated is kept.
       // indoorOnly says the same thing about a forecast restored from the thread's own cards (a trip
       // follow-up, thread_1791444946137): it is not the walk to this room either.
+      // An indoor occasion somewhere the wearer travels to (router setting indoor_destination; owner 2026-11-10).
+      // The same 'indoor' sentinel WITHOUT indoorOnly: the room is not judged against the forecast, and the
+      // forecast stays as the way there and back (profileForEnvironment's transit fields). The at-home line below
+      // comes second so it wins if both were ever set.
+      ...(toolContext.executionRouterIndoorDestination === true ? { statedWeather: 'indoor' } : {}),
       ...(toolContext.executionRouterIndoorOnly === true ? { statedWeather: 'indoor', weatherEstimate: null, indoorOnly: true } : {}),
       // The router read the request as giving no place or time (routes/ai.js, owner ruling
       // 2026-10-19): no outdoor conditions apply to this turn's outfits, and a model-volunteered

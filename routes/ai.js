@@ -7884,6 +7884,11 @@ router.post('/ask', async (req, res) => {
           // did not hold (it marked the search and not the proposal). resolveToolStylingContext
           // reads this and resolves the turn's weather as indoor for every tool.
           toolContext.executionRouterIndoorOnly = routed.value?.setting === 'indoor_only'
+          // Owner, 2026-11-10 ("indoor activities should have never gotten the notes meant for an outdoor weather";
+          // thread_1794365607999): dinner at someone's house was routed includes_outdoors, the only setting for
+          // "going somewhere", and its card read "runs warm for a high of 66°F". The occasion is indoors; the
+          // forecast is for the way there. Applied to every tool in the turn, as the at-home setting is.
+          toolContext.executionRouterIndoorDestination = routed.value?.setting === 'indoor_destination'
           // Owner ruling 2026-10-19 (thread_1792453320490): a request that gives no place or time —
           // "which tops can I wear under this?" with city and fall picked — is a styling question,
           // not an outing. It was routed includes_outdoors ("anything unclear") and the card was told
@@ -7901,6 +7906,9 @@ router.post('/ask', async (req, res) => {
           // of the evening") — which the router again read as indoor_only — was dressed for today's
           // 96°F outdoor forecast, because the setting was applied to fresh requests only.
           toolContext.executionRouterIndoorOnly = true
+        } else if (routed.value?.setting === 'indoor_destination') {
+          // A follow-up about the same indoor occasion is still indoors.
+          toolContext.executionRouterIndoorDestination = true
         } else if (routed.value?.setting === 'not_stated') {
           // The router keeps a situation the conversation already gave (its setting rule), so a
           // follow-up it reads as not_stated has none to carry: the same styling-question case.

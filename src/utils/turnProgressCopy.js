@@ -48,6 +48,7 @@ export function understoodChips(facts = {}, { now = new Date() } = {}) {
   const chips = []
   if (facts.setting === 'indoor_only') chips.push('At home')
   else if (facts.location) chips.push(facts.location)
+  if (facts.setting === 'indoor_destination') chips.push('Indoors')
   const day = dayWords(facts.date, now)
   if (day) chips.push(day)
   const occasion = OCCASION_WORDS[facts.occasion]
