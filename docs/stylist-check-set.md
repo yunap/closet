@@ -276,3 +276,10 @@ The 15 turns again, after engine map item 113's fix.
 **Seen, not changed:** linen in November three times. It looks like those garments' season tags allow it, so this is
 tag data, not a gate.
 
+**Cache check, entry 3 (2026-11-11, 3.7 Flash, low thinking, stable system prompt; $0.17):**
+- The follow-up continued and read 138,306 tokens, 134,682 of them cached (97%): 4.3¢ against 14.2¢ in the fair
+  run, 22 s.
+- First reply: reads the room, and loafers chosen for a shoes-on or shoes-off home (pass).
+- On the doubt she dressed the jeans without saying whether she still stands by her pick (fail). Across four runs
+  on 3.7 Flash the doubt line has passed three times.
+

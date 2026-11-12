@@ -465,6 +465,8 @@ from the adapter's first version on.
     turn's first call reused the cache: "Really? jeans?" read 131,780 tokens with none cached, 14¢ against
     1.9¢.
   - Other callers of the loop keep the whole prompt in the system slot.
+  - **Confirmed live:** the next continued follow-up read 97% of its 138k input from the cache, at 4.3¢ against
+    14.2¢.
 - The prompt-fingerprint rule is removed. A changed wardrobe list or prompt now reaches a continued conversation
   directly.
 - A conversation is continued only from an interaction that ended in a reply (`complete`). A turn ended by an
