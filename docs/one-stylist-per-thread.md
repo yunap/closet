@@ -544,6 +544,12 @@ it. Live test: entries 1 and 3, twice each, 3.7 Flash, about $1.04.
   - **Fixed:** low-thinking calls now get 2,500 tokens of headroom
     (`GEMINI_STYLIST_LOOP_LOW_THINKING_HEADROOM_TOKENS`). Unused tokens are not billed. Covered by
     `test/gemini_call_turn.test.js`.
+  - **The retry after a cut-off now gets more room.** It used to run at the same cap with "give a shorter answer",
+    which cannot help when thinking used the room; in run 1 the retry was cut off at 1,496 tokens too. The retry now
+    gets `maxTokens` plus the larger of `maxTokens` and what the cut-off call wrote.
+  - **A turn cut off twice now says so.** It used to fall back to "my outfit proposals kept getting rejected by
+    validation", which was false. It now says the reply was cut off twice and asks her to ask again
+    (`TRUNCATED_TURN_FALLBACK_ANSWER`).
   - **Rerun live** (entry 3, $0.30): the boss's-dinner turn finished. Its third and fourth calls wrote 1,702 and
     3,209 output tokens, so both would have been cut at the old 1,500 cap.
   - In that run she dressed the dinner from the packed Portland suitcase and said so. That is the open-plans rule

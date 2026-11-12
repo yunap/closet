@@ -529,9 +529,13 @@ export function boundedCapsuleFinalAnswer(answerText = '', toolContext = {}) {
   }
 }
 
-export function freeformToolLoopFallbackAnswer(toolContext = {}) {
+export const TRUNCATED_TURN_FALLBACK_ANSWER = 'My reply was cut off twice before I could finish it, so I stopped rather than show you half an answer. Please ask me again.'
+export function freeformToolLoopFallbackAnswer(toolContext = {}, { reason = '' } = {}) {
   const outfits = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
   if (!outfits.length) {
+    // 2026-11-12: a turn cut off at the output cap twice fell through to the validation message below, which told her
+    // something false about what had happened.
+    if (reason === 'truncation') return TRUNCATED_TURN_FALLBACK_ANSWER
     return 'I ran out of steps before I could finish this one — my outfit proposals kept getting rejected by validation before a card could land. Ask me to try again: I will verify the exact pieces first and keep the piece you asked about pinned as the anchor.'
   }
 
@@ -2191,6 +2195,9 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     : null
   const rebuildMessages = [...currentMessages]
   let continuedThisTurn = false
+  // Raised after a reply is cut off at the output cap. Most cut-offs are thinking, not the reply (2026-11-12: two calls
+  // in a row stopped at 1,496 of 1,500 tokens), so asking for a shorter answer at the same cap cannot fix them.
+  let turnMaxTokens = maxTokens
   if (continuation?.continue && currentMessages.length) {
     providerContinuation = toolContext.savedStylistContinuation.interaction_id
     // The earlier turns are already in the provider's conversation; only the new message is sent, after any
@@ -2260,7 +2267,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target, iter, continuedLevelOptions(providerContinuation)), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries, continuation: providerContinuation,
-        tools: availableTools, maxTokens,
+        tools: availableTools, maxTokens: turnMaxTokens,
       })
     } catch (err) {
       // The stored conversation could not be continued (expired, deleted, or the provider refused it):
@@ -2275,7 +2282,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target, iter, continuedLevelOptions(providerContinuation)), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries: currentMessages, continuation: null,
-        tools: availableTools, maxTokens,
+        tools: availableTools, maxTokens: turnMaxTokens,
       })
     }
     syncedHistoryLength = currentMessages.length
@@ -2321,9 +2328,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         retriedChecks.add('providerTruncation')
         bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterations')
         toolContext._pendingFreeformRetryReason = 'providerTruncation'
+        turnMaxTokens = maxTokens + Math.max(maxTokens, Number(turn.usage?.outputTokens) || 0)
         currentMessages.push({
           role: 'user',
-          content: 'Your last reply was cut off by the token limit before it finished — any tool call or claim in it may be incomplete, so it was discarded. Give a shorter, complete answer this time.'
+          content: 'Your last reply was cut off by the token limit before it finished — any tool call or claim in it may be incomplete, so it was discarded. The limit has been raised; give the complete reply again.'
         })
         continue
       }
@@ -2333,7 +2341,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       // shipped/executed as if it were a normal, complete turn. One retry is already spent, so
       // stop here rather than risk shipping content that may be silently incomplete twice over.
       bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterationsUnrecovered')
-      return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
+      return { answer: freeformToolLoopFallbackAnswer(toolContext, { reason: 'truncation' }), savedCorrections }
     }
 
     // A turn with no text and no tool call (live thread_1791415285620: Gemini spent 574 output
