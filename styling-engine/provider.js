@@ -651,9 +651,13 @@ export const CHAT_STYLIST_THINKING_LEVEL = process.env.CHAT_STYLIST_THINKING_LEV
 // stance; on 3.7 Flash at low she twice skipped the at-home plan's breakfast slots and kept her pick on "Really?
 // jeans?" 2 times in 5, while every medium run did both. Later calls (tool mechanics, the reply) stay at low.
 export const CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL = process.env.CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL || 'medium'
-export function chatThinkingLevelFor(toolContext = {}, target = {}, iteration = 0) {
+// A turn that continues the stored conversation stays at one level. Gemini's cache is kept per thinking level: in the
+// 2026-11-12 runs every call read the previous call's whole input from the cache unless the level changed, and then
+// it read only what an earlier call at its own level had left (a follow-up's medium first call: 55.7k of 143k).
+const continuedLevelOptions = providerContinuation => ({ continued: Boolean(providerContinuation) })
+export function chatThinkingLevelFor(toolContext = {}, target = {}, iteration = 0, { continued = false } = {}) {
   if (!(toolContext.continueThread === true && target.provider === 'gemini' && /^gemini-3\.7-flash(?:-|$)/.test(String(target.model || '')))) return ''
-  return iteration === 0 ? CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL : CHAT_STYLIST_THINKING_LEVEL
+  return iteration === 0 && !continued ? CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL : CHAT_STYLIST_THINKING_LEVEL
 }
 
 
@@ -2253,7 +2257,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     let turn
     try {
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target, iter), captureCallId, iterationIndex: iter,
+        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target, iter, continuedLevelOptions(providerContinuation)), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries, continuation: providerContinuation,
         tools: availableTools, maxTokens,
@@ -2268,7 +2272,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       currentMessages = [...rebuildMessages]
       toolContext.freeformDiagnostics.stylistContinuation = 'continuation_failed'
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target, iter), captureCallId, iterationIndex: iter,
+        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target, iter, continuedLevelOptions(providerContinuation)), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries: currentMessages, continuation: null,
         tools: availableTools, maxTokens,

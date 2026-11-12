@@ -550,6 +550,20 @@ it. Live test: entries 1 and 3, twice each, 3.7 Flash, about $1.04.
     working: the test copy holds a Portland trip planned for Nov 12–15, which covers Friday the 13th.
   - Doubt: "The black trousers were my conservative pick… dark, clean jeans cost you virtually nothing", and a
     jeans swap card. She takes a stance and gives the reason she changed it (pass).
+- **Why follow-ups cached only part of their input:** Gemini keeps its cache separately for each thinking level.
+  In the rerun's calls (ai_call_log 3560–3573), every call read the previous call's whole input from the cache,
+  except where the level changed:
+  - the first turn's second call (low after medium) read 0;
+  - the follow-up's first call (medium after low) read 55.7k of 143k, which is what the first turn's medium call had
+    left;
+  - the follow-up's second call (low) read 136.8k, all of the previous turn's history.
+
+  That one call cost 7.4¢ against about 2¢ fully cached.
+  - **Fixed:** a turn that continues the stored conversation now thinks at low from its first call, so its history
+    reads from the cache. New conversations, and turns that rebuild, still start at medium, which is where the
+    breakfast looks came back.
+  - On the doubt line the level has made no clear difference (low 2 of 5; medium fail, partial, pass).
+  - Not yet rerun live.
 
 ## Decisions (2026-11-11)
 
