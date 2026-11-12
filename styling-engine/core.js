@@ -5001,12 +5001,14 @@ export async function buildStylistConversationPayload(body) {
   } catch (err) {
     console.error('Wardrobe manifest query failed:', err)
   }
-  // A follow-up on a trip plan (owner, 2026-10-07). It answered from the full stylist request, about
-  // 56k tokens against the planning turn's 21k, most of it the wardrobe list — which a question
-  // about an existing plan does not need: THREAD STATE already carries the looks and the suitcase,
-  // and search_wardrobe returns full facts when the list is absent. Live thread_1791421976583's
-  // follow-ups, on the long prompt, kept describing the plan back. TRIP_FOLLOWUP_LEAN_PROMPT=false
-  // restores the long prompt.
+  // A follow-up on a trip plan (owner, 2026-10-07). It gets the trip guidance below and its own tool list
+  // (routes/ai.js). Until 2026-11-11 it also left the wardrobe list out, to save ~35k tokens a turn; that made
+  // its stable prompt differ from the trip's first turn, so a trip thread could never continue its provider
+  // conversation (docs/one-stylist-per-thread.md, live check). The list is now kept, and the trip guidance
+  // sits below the cache breakpoint. Live thread_1791421976583's follow-ups, on the long prompt, kept
+  // describing the plan back; the guidance's "answer from those" and the controller's "Do not describe
+  // again what is already on the cards" are what answer that. TRIP_FOLLOWUP_LEAN_PROMPT=false turns the
+  // trip follow-up treatment off.
   const tripFollowupTurn = process.env.TRIP_FOLLOWUP_LEAN_PROMPT !== 'false'
     && conversationMode !== 'new_request'
     && Array.isArray(packingRoster?.roster_ids) && packingRoster.roster_ids.length > 0
@@ -5025,9 +5027,8 @@ export async function buildStylistConversationPayload(body) {
   // The suitcase as the stylist reads it on a follow-up. The stored roster carries a name, colours
   // and photo filenames per piece — enough for the screen, nothing to judge by. Same thread: "black
   // solid wide leg pants" went into the at-home look on its name; its record says heavy cotton,
-  // elevated, "structured classic". With the wardrobe list omitted on this turn the roster is the only
-  // place a packed piece is described, so each one is given as the shared sparse fact row (and the
-  // tagger's labelled impression) that search and swap results already use. Display copy only:
+  // elevated, "structured classic". Each packed piece is given as the shared sparse fact row (and the
+  // tagger's labelled impression) that search and swap results already use, beside the suitcase itself. Display copy only:
   // threadState keeps the stored shape, which the route reads back as toolContext.packingRosterPieces.
   const rosterFactRows = tripFollowupTurn
     ? (() => {
@@ -5041,7 +5042,7 @@ export async function buildStylistConversationPayload(body) {
   const threadStateForStylist = rosterFactRows.length
     ? { ...threadState, packing_roster: { ...threadState.packing_roster, conventions: SPARSE_CATALOG_CONVENTIONS, roster_pieces: rosterFactRows } }
     : threadState
-  const wardrobeManifestText = !tripFollowupTurn && activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
+  const wardrobeManifestText = activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
     ? buildWardrobeManifest(activeManifestPieces, { groupFor: wardrobeCategoryGroup })
     : ''
 
@@ -5084,6 +5085,19 @@ export async function buildStylistConversationPayload(body) {
     console.warn('Open-plans lookup failed:', err.message)
   }
 
+  // Trip follow-up guidance, below the cache breakpoint so a trip thread's stable prompt matches its first turn.
+  const tripFollowupGuidanceText = tripFollowupTurn
+    ? [
+        'TRIP FOLLOW-UP: This thread holds a trip plan. THREAD STATE lists its looks (current_outfit_set) and everything packed (packing_roster); answer from those.',
+        'current_outfit_set is the plan as it stands now: the plan\'s looks (`in_plan`), each with any swap already made to it, followed by any look added since (`added_after_plan`). `shown_last_turn` marks what your last reply showed.',
+        tripPackedForText,
+        HOW_A_DAY_AWAY_WORKS,
+        '- To change one piece in a look, use `suggest_slot_swaps`. To show a look the plan does not have, use `propose_outfit` (call `view_pieces` on the ids you mean to use).',
+        '- The rest of the wardrobe is reached with `search_wardrobe`. A piece from it is one more thing to pack; say plainly when a piece you suggest is not in the suitcase.',
+        '- The plan on screen stays as it is. A new need (something to wear at the house, one more evening) is answered with a look or with pieces to add to the suitcase, named as additions — never by planning the trip again.',
+      ].join('\n')
+    : ''
+
   const activeWardrobeText = wardrobeManifestText
     ? [
       `WARDROBE MANIFEST — all ${activeManifestPieces.length} active pieces, grouped by category. A "?" suffix marks a low-confidence tag value; [flags] mark trust limits (do not auto-style flagged pieces without checking).`,
@@ -5105,16 +5119,6 @@ export async function buildStylistConversationPayload(body) {
       // stylist who splits a trip into days for plan_outfit_set is told how a day away is lived, as that turn was.
       `- For a trip, before calling plan_outfit_set: ${HOW_A_DAY_AWAY_WORKS}`,
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` for one exact garment. Otherwise include `guidance_applicability` using only explicit owner-stated garment and context terms; use universal only when the owner clearly means every request. Add `firm_rule_proposal` only for an explicit supported prohibition. Never guess scope or store situational trip facts.'
-    ].join('\n')
-    : tripFollowupTurn ? [
-      'This thread holds a trip plan. THREAD STATE lists its looks (current_outfit_set) and everything packed (packing_roster); answer from those. The rest of the wardrobe is not listed here.',
-      'current_outfit_set is the plan as it stands now: the plan\'s looks (`in_plan`), each with any swap already made to it, followed by any look added since (`added_after_plan`). `shown_last_turn` marks what your last reply showed.',
-      tripPackedForText,
-      HOW_A_DAY_AWAY_WORKS,
-      '- To change one piece in a look, use `suggest_slot_swaps`. To show a look the plan does not have, use `propose_outfit` (call `view_pieces` on the ids you mean to use).',
-      '- The rest of the wardrobe is reached with `search_wardrobe`. A piece from it is one more thing to pack; say plainly when a piece you suggest is not in the suitcase.',
-      '- The plan on screen stays as it is. A new need (something to wear at the house, one more evening) is answered with a look or with pieces to add to the suitcase, named as additions — never by planning the trip again.',
-      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
     ].join('\n')
     : [
       'The full wardrobe list is omitted from the prompt to save context tokens.',
@@ -5244,6 +5248,7 @@ export async function buildStylistConversationPayload(body) {
     threadState.packing_roster
       ? 'ACTIVE PACKING ROSTER: threadState.packing_roster is the trip\'s explicit packing set — the suitcase, not just this turn\'s cards. A card edit ("this trail outfit is too summery", "swap the shoes") should restyle from roster_ids first; search_wardrobe marks each result in_packing_roster so you can tell which. Reaching outside the roster for a genuinely needed piece is allowed, but it is a PROPOSED PACKING-SET CHANGE, not a quiet substitution — say plainly what is being added (or, if you know what it replaces, what leaves the suitcase) so the packing list and the card never silently disagree about what was decided.'
       : '',
+    tripFollowupGuidanceText,
     '',
     historicalOutfitContextText,
     openPlansText,

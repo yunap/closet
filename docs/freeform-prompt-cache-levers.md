@@ -461,6 +461,13 @@ written by code, or an extra closing call (see `engine-behaviour-map.md`, 2026-1
   describes a reaction that carries a request ("I like that one. Show me another…") as only a taste
   statement.
 
+> **[superseded 2026-11-11]** Both lean trip prompts are gone ([one-stylist-per-thread.md](one-stylist-per-thread.md)):
+> - The fresh `trip_plan` turn went with the router.
+> - The trip follow-up now keeps the wardrobe list, so its stable prompt matches the thread's first turn and
+>   the Gemini conversation can continue.
+>
+> The saving below now comes from the cache on continued turns, not from leaving the list out.
+
 **The lean trip turn — done the same day (owner: "I meant the trip work you were planning on doing
 earlier").** A fresh trip request is routed to a new profile, `trip_plan`, and gets the same stylist
 instructions and thread state with two subtractions: no wardrobe manifest (`tripPlanTurn` on

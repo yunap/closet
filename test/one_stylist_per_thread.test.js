@@ -111,3 +111,28 @@ test('/ask opts every typed turn into continuation and the reading requirement',
   const provider = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
   assert.doesNotMatch(provider + route, /export async function routeFreeform|FREEFORM_EXECUTION_ROUTE_SCHEMA = /)
 })
+
+// Live check 2026-11-11: trip follow-ups always rebuilt. Their lean prompt left the wardrobe list out, so
+// the stable half never matched the trip's first turn. The list is kept; the trip guidance is per-turn.
+test('a trip follow-up keeps the first turn\'s stable prompt, so the trip conversation can continue', async () => {
+  const { db } = await import('../db.js')
+  db.prepare("INSERT INTO pieces (name, category, status) VALUES ('navy wool coat', 'outerwear', 'active')").run()
+  const coat = Number(db.prepare("SELECT id FROM pieces WHERE name = 'navy wool coat'").get().id)
+  const sessionId = 'thread_trip_continuation'
+  const base = { pieces: [], sessionId, currentDate: '2026-11-11T12:00:00-08:00', timezone: 'America/Los_Angeles' }
+  const first = await buildStylistConversationPayload({ ...base, question: 'Plan my Portland trip.', history: [], conversationMode: 'new_request' })
+  saveStylistConversationState({
+    ...getStylistConversationState(sessionId),
+    packing_roster: { roster_ids: [coat], roster_pieces: [{ id: coat, name: 'navy wool coat' }], slots: [{ label: 'City walking' }] },
+    current_outfit_set: [{ index: 1, label: 'City walking', in_plan: true, piece_ids: [coat] }],
+  }, sessionId)
+  const followUp = await buildStylistConversationPayload({
+    ...base, question: 'What if Saturday turns cold?', conversationMode: 'followup', tripFollowupEligible: true,
+    history: [{ role: 'user', content: 'Plan my Portland trip.' }, { role: 'assistant', content: 'Here is your plan.' }, { role: 'user', content: 'What if Saturday turns cold?' }],
+  })
+  assert.equal(followUp.tripFollowupTurn, true)
+  assert.equal(followUp.wardrobeManifestIncluded, true, 'the wardrobe list is kept on a trip follow-up')
+  assert.equal(stablePromptFingerprint(followUp.system, 'm'), stablePromptFingerprint(first.system, 'm'))
+  assert.match(volatilePromptTail(followUp.system), /TRIP FOLLOW-UP: This thread holds a trip plan/)
+  assert.doesNotMatch(volatilePromptTail(first.system), /TRIP FOLLOW-UP/)
+})

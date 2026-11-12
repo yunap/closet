@@ -353,6 +353,14 @@ These are known check-set failures, seen before on the router's paths.
 - **Trip follow-ups always rebuild.** The lean trip follow-up prompt (`tripFollowupTurn`) leaves out the
   wardrobe manifest, so its stable half never matches the trip's first turn. Closing it means keeping the
   manifest on trip follow-ups and moving the trip guidance below the breakpoint.
+  - **[fixed 2026-11-11, offline]** Done that way. `buildStylistConversationPayload` now keeps the
+    wardrobe list on a trip follow-up, and the trip guidance became `tripFollowupGuidanceText` (what the
+    suitcase was packed for, how a day away works, "the plan on screen stays") below the breakpoint.
+  - The trip follow-up's own tool list is unchanged; it is sent per call.
+  - Trade: a trip follow-up that rebuilds carries the list again, about 35k tokens (the 2026-10-07 lean
+    turn's saving). A continued one reads it from the cache.
+  - Test: `test/one_stylist_per_thread.test.js`, where a trip follow-up fingerprints the same as its first
+    turn. Not run live.
 - The size limit stays provisional at 150,000 tokens. One continued photo turn reached 95,000, so it would
   be hit after two or three more.
 

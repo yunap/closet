@@ -9523,7 +9523,7 @@ test('a trip follow-up states the range the cards record, and is told what new p
 })
 
 // Owner, 2026-10-07: a follow-up on a trip plan answers from a prompt without the wardrobe list.
-test('a text follow-up on a trip plan gets the lean prompt; other turns and the off switch keep the full one', async () => {
+test('a text follow-up on a trip plan gets the trip guidance per turn and keeps the wardrobe list; other turns and the off switch do not', async () => {
   const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
   const { saveStylistConversationState } = await import('../styling-engine/conversationState.js')
   const sessionId = 'trip-followup-lean'
@@ -9536,12 +9536,15 @@ test('a text follow-up on a trip plan gets the lean prompt; other turns and the 
   const lean = await build({ tripFollowupEligible: true })
   const leanSystem = typeof lean.system === 'string' ? lean.system : JSON.stringify(lean.system)
   assert.equal(lean.tripFollowupTurn, true)
-  assert.equal(lean.wardrobeManifestIncluded, false)
-  assert.match(leanSystem, /This thread holds a trip plan\. THREAD STATE lists its looks/)
+  // 2026-11-11 (docs/one-stylist-per-thread.md): the wardrobe list is kept so a trip thread's stable prompt matches its
+  // first turn and the provider conversation can continue; the trip guidance is per-turn, below the breakpoint.
+  assert.equal(lean.wardrobeManifestIncluded, true)
+  const { PROMPT_CACHE_BREAKPOINT } = await import('../styling-engine/provider.js')
+  assert.match(leanSystem.split(PROMPT_CACHE_BREAKPOINT)[1], /TRIP FOLLOW-UP: This thread holds a trip plan\. THREAD STATE lists its looks/)
   assert.match(leanSystem, /packing_roster/)
   const full = await build({})
-  assert.equal(full.tripFollowupTurn, false, 'a turn the route did not mark eligible keeps the full prompt')
-  assert.ok(JSON.stringify(full.system).length > leanSystem.length)
+  assert.equal(full.tripFollowupTurn, false, 'a turn the route did not mark eligible gets no trip guidance')
+  assert.equal(full.system.split(PROMPT_CACHE_BREAKPOINT)[0], leanSystem.split(PROMPT_CACHE_BREAKPOINT)[0], 'the stable half is the same either way')
   process.env.TRIP_FOLLOWUP_LEAN_PROMPT = 'false'
   try {
     assert.equal((await build({ tripFollowupEligible: true })).tripFollowupTurn, false, 'the switch restores the full prompt')
