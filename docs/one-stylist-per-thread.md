@@ -543,7 +543,13 @@ it. Live test: entries 1 and 3, twice each, 3.7 Flash, about $1.04.
   at medium had the 4,000-token headroom, so the failure appeared only after the split.
   - **Fixed:** low-thinking calls now get 2,500 tokens of headroom
     (`GEMINI_STYLIST_LOOP_LOW_THINKING_HEADROOM_TOKENS`). Unused tokens are not billed. Covered by
-    `test/gemini_call_turn.test.js`; not yet rerun live.
+    `test/gemini_call_turn.test.js`.
+  - **Rerun live** (entry 3, $0.30): the boss's-dinner turn finished. Its third and fourth calls wrote 1,702 and
+    3,209 output tokens, so both would have been cut at the old 1,500 cap.
+  - In that run she dressed the dinner from the packed Portland suitcase and said so. That is the open-plans rule
+    working: the test copy holds a Portland trip planned for Nov 12–15, which covers Friday the 13th.
+  - Doubt: "The black trousers were my conservative pick… dark, clean jeans cost you virtually nothing", and a
+    jeans swap card. She takes a stance and gives the reason she changed it (pass).
 
 ## Decisions (2026-11-11)
 

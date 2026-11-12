@@ -293,3 +293,8 @@ Entries 1 and 3, twice each, about $1.04.
 | 3 | First turn failed: "I ran out of steps…", two calls cut at the output cap (fail; fixed, see one-stylist-per-thread.md). Doubt: "Jeans can absolutely work…" (fail) | Doubt: named the cost, no stance (partial) |
 
 Follow-ups continued, but only about 55.7k of 132–145k input tokens were cached.
+
+**Rerun of entry 3 after the headroom fix ($0.30):** the first turn finished (two calls wrote 1,702 and 3,209
+output tokens, above the old cap). It used the packed Portland suitcase, because the test copy's open trip covers
+that Friday, and named the plan. The doubt reply said why the trousers were a cautious pick and that jeans cost
+nothing there, then swapped them in (pass).
