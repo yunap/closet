@@ -298,3 +298,7 @@ Follow-ups continued, but only about 55.7k of 132–145k input tokens were cache
 output tokens, above the old cap). It used the packed Portland suitcase, because the test copy's open trip covers
 that Friday, and named the plan. The doubt reply said why the trousers were a cautious pick and that jeans cost
 nothing there, then swapped them in (pass).
+
+**Rerun of entry 3 with continued turns kept at low ($0.18):** the follow-up read 96% of its first call from the
+cache; the turn cost 5.1¢ against 11.2¢. First answer: turtleneck, tweed trousers, flats, and the wool overcoat on
+the card (pass). Doubt: the risk of jeans named and a dark-denim swap, but no stance on her pick (partial).

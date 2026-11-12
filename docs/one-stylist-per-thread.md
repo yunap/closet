@@ -563,7 +563,13 @@ it. Live test: entries 1 and 3, twice each, 3.7 Flash, about $1.04.
     reads from the cache. New conversations, and turns that rebuild, still start at medium, which is where the
     breakfast looks came back.
   - On the doubt line the level has made no clear difference (low 2 of 5; medium fail, partial, pass).
-  - Not yet rerun live.
+  - **Rerun live** (entry 3, $0.18):
+    - The follow-up's first call read 132k of 137k from the cache (96%) and cost 1.7¢ against 7.4¢. The whole
+      follow-up turn cost 5.1¢ against 11.2¢.
+    - The first turn's second call (low after medium) still read only the cached system prompt, as expected.
+    - The first answer: cashmere turtleneck, tweed trousers, flats and the wool overcoat on the card.
+    - Doubt (low): "You can certainly wear jeans", with the risk named and dark denim swapped in, but no word on
+      whether she still prefers her pick (partial).
 
 ## Decisions (2026-11-11)
 
