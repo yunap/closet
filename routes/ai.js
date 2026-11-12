@@ -81,6 +81,20 @@ import { projectStylingApplicabilityContext, resolveStylingContext, stepOutsideF
 import { reportTurnProgress, startTurnProgressStream } from '../lib/turnProgress.js'
 
 import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine } from '../styling-engine/tools.js'
+import { localIsoDate, openPlansFromOtherThreads, openPlansRouterContext, planSummaryFromToolContext } from '../styling-engine/pastConversations.js'
+
+// Dated plans from the user's other threads, as one clause of the router's compact context
+// (docs/cross-thread-continuity.md). Empty when there are none, so the router input is unchanged.
+export function routerOpenPlansContext(body = {}) {
+  try {
+    const now = body.currentDate ? new Date(body.currentDate) : new Date()
+    const today = localIsoDate(Number.isNaN(now.getTime()) ? new Date() : now, body.timezone || 'America/Los_Angeles')
+    return openPlansRouterContext(openPlansFromOtherThreads({ currentSessionId: body.sessionId || '', today }))
+  } catch (err) {
+    console.warn('Router open-plans lookup failed:', err.message)
+    return ''
+  }
+}
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { randomUUID, createHash } from 'node:crypto'
@@ -1008,8 +1022,12 @@ export function persistFullStylistTurnState({ toolContext, answer, freeformTurnT
     // weather_profile reading 85°F/80°F "stated", hot, for a 38–85°F week.
     delete freshState.weather_profile
   }
+  // A dated plan's kind, place and dates (docs/cross-thread-continuity.md), so other threads can
+  // list it as an open plan. Written only on the turn plan_outfit_set built it; follow-ups keep it.
+  const plan = hasFreshCards ? planSummaryFromToolContext(toolContext) : null
   saveStylistConversationState({
     ...priorConversationState,
+    ...(plan ? { plan } : {}),
     ...(freshState?.current_outfit_set ? { current_outfit_set: freshState.current_outfit_set } : {}),
     ...(freshState?.packing_roster ? { packing_roster: freshState.packing_roster } : {}),
     ...(freshState?.weather_profile ? { weather_profile: freshState.weather_profile } : {}),
@@ -7654,6 +7672,8 @@ router.post('/ask', async (req, res) => {
       // established req.body.location both still take priority over it, per tools.js's merge order.
       location: req.body.location || getHomeLocation(),
       currentDate: req.body.currentDate || '',
+      // This thread's id, so search_past_conversations looks only at the user's OTHER threads.
+      sessionId: req.body.sessionId || '',
       statedTripDateRange,
       history: priorStylistConversationHistory(req.body.history, typedQuestion),
       // Step 3 (retrieval rule): per-turn tracking of which piece ids the model
@@ -7814,7 +7834,8 @@ router.post('/ask', async (req, res) => {
             recentlyDiscussedPieceIds.length
               ? `previous answer discussed ${recentlyDiscussedPieceIds.length} specific verified wardrobe piece(s)`
               : 'no recently discussed wardrobe pieces',
-            savedPackingApproach ? `usual packing approach (not assumed for this trip): "${savedPackingApproach}"` : 'no usual packing approach on record'
+            savedPackingApproach ? `usual packing approach (not assumed for this trip): "${savedPackingApproach}"` : 'no usual packing approach on record',
+            routerOpenPlansContext(req.body),
           ].filter(Boolean).join('; '),
           // Just the immediately preceding turn (docs/deferred-conversational-cache-spec.md's sibling
           // finding: the router was classifying purely from an isolated sentence, so a reply that only
@@ -8197,8 +8218,10 @@ router.post('/ask', async (req, res) => {
           }, toolContext)
           if (toolContext.atomicMultiLookCompleted) {
             const freeformDiagnostics = toolContext.freeformDiagnostics || {}
+            // A thread's dated plan survives a bounded-options turn (docs/cross-thread-continuity.md).
+            const threadPlan = getStylistConversationState(req.body.sessionId || 'default')?.plan
             saveStylistConversationState(
-              boundedConversationStateFromToolContext(toolContext),
+              { ...boundedConversationStateFromToolContext(toolContext), ...(threadPlan ? { plan: threadPlan } : {}) },
               req.body.sessionId || 'default'
             )
             persistFreeformGenerationRun({
@@ -8275,7 +8298,7 @@ router.post('/ask', async (req, res) => {
       // rule said so, "Can you redo the plan…" was full_stylist by that rule ("any change to a plan
       // … that already exist"), the tool was withheld, and the answer was one look.
       const replanRequested = toolContext.freeformDiagnostics?.executionRouterProfile === 'trip_plan'
-      toolContext.allowedToolNames = ['declare_intent', 'search_wardrobe', 'view_pieces', 'get_garment_details', 'suggest_slot_swaps', 'propose_outfit', ...(replanRequested ? ['plan_outfit_set'] : []), 'store_user_correction']
+      toolContext.allowedToolNames = ['declare_intent', 'search_wardrobe', 'view_pieces', 'get_garment_details', 'suggest_slot_swaps', 'propose_outfit', ...(replanRequested ? ['plan_outfit_set'] : []), 'store_user_correction', 'search_past_conversations']
       toolContext.freeformDiagnostics ||= {}
       toolContext.freeformDiagnostics.executionProfile = 'trip_followup'
     }
@@ -8344,7 +8367,7 @@ router.post('/ask', async (req, res) => {
     // An invitation to think gets the same informational tools: she can look at the wardrobe and
     // name garments, but builds no card until the user asks to see one.
     if (payload.restrictToInformationalTools || payload.answerInWords) {
-      toolContext.allowedToolNames = ['search_wardrobe', 'view_pieces', 'get_garment_details']
+      toolContext.allowedToolNames = ['search_wardrobe', 'view_pieces', 'get_garment_details', 'search_past_conversations']
     }
     const { answer, savedCorrections } = await askStylistWithTools({
       ...payload,

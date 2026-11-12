@@ -201,7 +201,7 @@ test('an invitation to think is answered in words: router field, turn instructio
 
   const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
   assert.match(routeSrc, /toolContext\.answerInWords = routed\.value\?\.profile === 'full_stylist' && routed\.value\?\.answer_form === 'words'/)
-  assert.match(routeSrc, /if \(payload\.restrictToInformationalTools \|\| payload\.answerInWords\) \{\s*toolContext\.allowedToolNames = \['search_wardrobe', 'view_pieces', 'get_garment_details'\]/)
+  assert.match(routeSrc, /if \(payload\.restrictToInformationalTools \|\| payload\.answerInWords\) \{\s*toolContext\.allowedToolNames = \['search_wardrobe', 'view_pieces', 'get_garment_details', 'search_past_conversations'\]/)
   const offered = stylistToolsForTurn({ allowedToolNames: ['search_wardrobe', 'view_pieces', 'get_garment_details'] }).map(tool => tool.name)
   assert.ok(!offered.some(name => ['propose_outfit', 'generate_outfits', 'plan_outfit_set', 'suggest_slot_swaps', 'render_preview'].includes(name)))
 })

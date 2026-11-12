@@ -9800,7 +9800,8 @@ test('a trip follow-up cannot re-plan unless the router read a request to plan, 
   const route = readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
   assert.match(route, /const replanRequested = toolContext\.freeformDiagnostics\?\.executionRouterProfile === 'trip_plan'/)
   assert.match(route, /`this thread holds a trip plan \(\$\{compactState\.packing_roster\.roster_ids\.length\} pieces packed\)`/, 'the router is told the thread holds a plan')
-  assert.match(route, /'propose_outfit', \.\.\.\(replanRequested \? \['plan_outfit_set'\] : \[\]\), 'store_user_correction'\]/)
+  // 2026-11-11: search_past_conversations reads earlier threads and builds nothing (cross-thread-continuity.md).
+  assert.match(route, /'propose_outfit', \.\.\.\(replanRequested \? \['plan_outfit_set'\] : \[\]\), 'store_user_correction', 'search_past_conversations'\]/)
   const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
   // General, not a list of cases: the rule said "the user's own home", which left out a home they are staying in.
   assert.match(provider, /inside the home the user is living or staying in, or another single heated or cooled room/)

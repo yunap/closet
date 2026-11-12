@@ -295,6 +295,21 @@ Item 12's review surface is deferred, but its bounded storage, routing and undo 
   taste.
 - **[cleaned up 2026-08-09]** The two identical readers and the unused `tools.js` writer were
   consolidated into `conversationState.js`. Both live callers retain the same thread-only store.
+- **[amended 2026-11-11 — read across threads]** ([cross-thread-continuity.md](cross-thread-continuity.md)).
+  This category is no longer read only by its own thread. Two readers in `pastConversations.js` reach
+  the user's *other* non-archived threads:
+  - **`searchPastConversations`**, the `search_past_conversations` tool, called by the model when the user
+    refers back. It reads `chat_threads` (the user's own messages, and card titles and pieces; never
+    assistant prose or card reasons), the state's `plan`, and `stylist_feedback` rows whose payload names
+    the thread.
+  - **`openPlansFromOtherThreads`**, a one-line-per-plan block in every full-stylist turn, for dated plans
+    that have not ended.
+
+  The new state field `plan` (`kind`, `location`, `start`, `end`, `date_source`) is written by
+  `persistFullStylistTurnState` from `planSummaryFromToolContext` when `plan_outfit_set` builds a dated
+  plan. **Authority across threads: history and context only.** Nothing read this way is preference
+  memory, a rule, a score or a gate, and a verdict found by search is what the user wanted then, not a
+  standing instruction. Within its own thread the category keeps its thread-only authority as above.
 
 ### 8 · Short-lived recency / diversity memory
 
@@ -730,6 +745,8 @@ a complaint into corrected data rather than into prompt text.
 | `getOutfitsForPieceMemory` (`rules.js`) | `/evaluate-piece` (`ai.js/1138`) | prompt text |
 | `getCalibrationMemoryForStylist` (`core.js`) | `/evaluate-piece` (`ai.js`), whole-wardrobe (`core.js`) | prompt text |
 | `getStylistConversationState` (`conversationState.js`) | tool loop and freeform conversation pipeline | **thread-only** |
+| `searchPastConversations` (`pastConversations.js`) | the `search_past_conversations` tool (`tools.js`), model-called; added 2026-11-11 | **history** — the user's own words, cards shown and their verdicts from the user's other threads; no assistant prose |
+| `openPlansFromOtherThreads` (`pastConversations.js`) | full stylist payload (`buildStylistConversationPayload`, `core.js`), below the cache breakpoint; added 2026-11-11 | **context** — one line per other thread's dated plan that has not ended; no weather |
 | `getRecentWholeWardrobeSessionInfluence` (`rules.js`) | whole-wardrobe generation (`ai.js`) | **deterministic suppression** |
 
 **The generic deterministic feedback scorer has been removed.** There is no `SCORE` routing
