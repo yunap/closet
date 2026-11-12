@@ -62,12 +62,13 @@
     },
     "chat_threads": {
       "disposition": "category",
-      "category": 7
+      "category": 7,
+      "note": "also read across threads by searchPastConversations (2026-11-11): the user's own messages and the cards shown, as history; never assistant prose"
     },
     "stylist_conversation_state": {
       "disposition": "category",
       "category": 7,
-      "note": "thread-only context, including normalized resolved weather physics for follow-up precedence"
+      "note": "thread-only context, including normalized resolved weather physics for follow-up precedence; its dated `plan` is read by other threads as open-plan context (2026-11-11)"
     },
     "whole_wardrobe_sessions": {
       "disposition": "category",

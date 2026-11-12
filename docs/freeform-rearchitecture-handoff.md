@@ -2176,6 +2176,38 @@ Three tooling bugs found while measuring, each of which would have corrupted a r
 against every row of a multi-turn thread; and a single-category turn was being reported as proof of
 batching.
 
+## 2026-11-11 — `search_past_conversations` tool and the open-plans block
+
+Spec: [cross-thread-continuity.md](cross-thread-continuity.md).
+
+- **New tool schema `search_past_conversations`** in `STYLIST_TOOLS`, with `query` (string) and `limit`
+  (1–5). It is dispatched to `searchPastConversations` (`pastConversations.js`), which reads the user's
+  other non-archived threads. A result holds the user's own messages, the cards shown (title and pieces,
+  with `still_in_wardrobe`), the user's verdicts and the thread's dated plan. Assistant prose and card
+  reasons are never included.
+- **`toolContext.sessionId`** is set in `/ask` so the current thread is excluded.
+- **Where it is offered:**
+  - The full stylist: all tools.
+  - The trip follow-up list.
+  - The informational / answer-in-words list.
+
+  It is not offered on `single_outfit`, the lean `trip_plan` turn or the compact profiles. The router
+  sends back-references to `full_stylist` (engine map item 111).
+- **New prompt block "OPEN PLANS IN OTHER CONVERSATIONS"** (`openPlansPromptText`) sits below the cache
+  breakpoint in `buildStylistConversationPayload`, after the historical outfit sets. It is empty when no
+  other thread has a dated plan that has not ended.
+- **Borrowed suitcase** (owner ruling 2026-11-11). When `search_past_conversations` returns a plan that has
+  not ended, `adoptOpenPlanSuitcase` sets the turn's `packingRosterIds` / `packingRosterPieces` /
+  `packingRosterSlots` from that thread. `propose_outfit`'s packing-set change disclosure then applies, and
+  the result carries `suitcase_in_force`. It is turn-only: `boundedConversationStateFromToolContext` does
+  not persist a roster change made under it. `toolContext.timezone` is now set in `/ask` for the date test.
+- **Router compact context** gains `open plans in other conversations: …` (`routerOpenPlansContext` in
+  `routes/ai.js`). It is empty when there are none.
+- **Thread state `plan` is kept** by the per-turn state write in `buildStylistConversationPayload` and by
+  the bounded-options write. Before this, both rewrote the state without it.
+- **New lines in the tool list.** One line in each wardrobe-truth tool list (manifest and no-manifest)
+  names the tool. Both lists are above the breakpoint, so the prefix changes once.
+
 ## Gotchas for the next assistant
 
 **Layer-direction ownership landed 2026-08-24.** `evaluateLayerDirections` is now the shared

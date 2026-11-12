@@ -4,6 +4,20 @@ A local wardrobe, outfit, and AI stylist workspace for cataloging clothing, savi
 
 The app is a React/Vite frontend backed by an Express server, SQLite database, local uploads folder, and optional Anthropic/OpenAI model calls.
 
+## Who it is for, and what the Stylist chat is for
+
+Added 2026-11-11. The rest of this README was written when the app had one user; where the two disagree, this section and [docs/README.md](docs/README.md) are current.
+
+**Audience.** Any signed-in user. Each user has their own wardrobe database, style profile and feedback memory. The app has to work for a new user with a small wardrobe, no worn photos and the starter style profile: the tag values a user enters must be enough for correct styling. The owner is the first user, not the only one, so a personal preference is saved as that user's guidance and never shipped as a rule for everyone.
+
+**The job of the Stylist chat.** A real conversation with a stylist who knows the user's wardrobe and gives advice the user can wear. Three things follow from that:
+
+- A question nobody anticipated still gets a proper answer; the chat is not a menu of prepared flows.
+- The stylist behaves as a person would. An ordinary "what should I wear?" gets one recommended outfit, several options come when asked for, and she asks first when a fact that changes the answer is missing.
+- Advice is judged by whether the clothes work for what the user will be doing, not by whether the engine's checks passed.
+
+Sources: the product goal in [AGENTS.md](AGENTS.md), "The problem" in [docs/flows/freeform-stylist-chat.md](docs/flows/freeform-stylist-chat.md), the owner rulings in [docs/stylist-conversation-targets.md](docs/stylist-conversation-targets.md), and [docs/stylist-check-set.md](docs/stylist-check-set.md).
+
 ## Features
 
 - Wardrobe inventory with garment photos, worn photos, tags, notes, favorites, and status.

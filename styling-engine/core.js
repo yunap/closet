@@ -16,6 +16,7 @@ import { resolveOpenAiKey, hasOpenAiKey, noKeyErrorMessage } from '../lib/apiKey
 import { logAiCall, estimateOpenAIImageCostUsd, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { getImageRenderProvider, renderWithGeminiImageModel } from './geminiImage.js'
 import { getStylistConversationState, saveStylistConversationState } from './conversationState.js'
+import { localIsoDate, openPlansFromOtherThreads, openPlansPromptText } from './pastConversations.js'
 import { restoreWeatherProfile, serializeWeatherProfile } from './weather.js'
 
 export { getStylistConversationState, saveStylistConversationState }
@@ -5026,6 +5027,9 @@ export async function buildStylistConversationPayload(body) {
     ...(savedWeatherProfile ? { weather_profile: serializeWeatherProfile(savedWeatherProfile) } : {}),
     ...(currentOutfitSet.length ? { current_outfit_set: currentOutfitSet } : {}),
     ...(packingRoster ? { packing_roster: packingRoster } : {}),
+    // The thread's dated plan (docs/cross-thread-continuity.md) outlives each turn; only a new plan
+    // replaces it (persistFullStylistTurnState). Without this, the first follow-up erased it.
+    ...(restoredState.plan ? { plan: restoredState.plan } : {}),
   }, sessionId)
 
   // 2026-07-12: the pre-model auto-save that stored the RAW question whenever the
@@ -5141,6 +5145,15 @@ export async function buildStylistConversationPayload(body) {
     }
   }
 
+  // Dated plans from the user's other threads (docs/cross-thread-continuity.md). Below the cache
+  // breakpoint: it changes as plans are made and dates pass.
+  let openPlansText = ''
+  try {
+    openPlansText = openPlansPromptText(openPlansFromOtherThreads({ currentSessionId: sessionId, today: localIsoDate(now, timezone) }))
+  } catch (err) {
+    console.warn('Open-plans lookup failed:', err.message)
+  }
+
   const activeWardrobeText = wardrobeManifestText
     ? [
       `WARDROBE MANIFEST — all ${activeManifestPieces.length} active pieces, grouped by category. A "?" suffix marks a low-confidence tag value; [flags] mark trust limits (do not auto-style flagged pieces without checking).`,
@@ -5157,6 +5170,7 @@ export async function buildStylistConversationPayload(body) {
       '- PAIRING/SLOT QUESTIONS ("what goes under X", "which shoes with Y"): answer in prose citing verified IDs. If you also propose a card, the card must be a COMPLETE outfit — shoes plus top+bottom or a dress — so finish the look around the pairing.',
       '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
       '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
+      '- Use `search_past_conversations` when the user refers to an earlier, separate conversation with you; it returns what they said and how they rated the cards.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` for one exact garment. Otherwise include `guidance_applicability` using only explicit owner-stated garment and context terms; use universal only when the owner clearly means every request. Add `firm_rule_proposal` only for an explicit supported prohibition. Never guess scope or store situational trip facts.'
     ].join('\n')
     : tripFollowupTurn ? [
@@ -5183,6 +5197,7 @@ export async function buildStylistConversationPayload(body) {
       '- Use `get_last_outfit_evaluation` to check past critiques.',
       '- Use `get_current_image_inventory` to inspect attached images.',
       '- Use `store_user_correction` to save user corrections/preferences.',
+      '- Use `search_past_conversations` when the user refers to an earlier, separate conversation with you.',
       'Never guess or assume a piece exists without querying the database via tools first.',
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` for one exact garment. Otherwise include `guidance_applicability` using only explicit owner-stated garment and context terms; use universal only when the owner clearly means every request. Add `firm_rule_proposal` only for an explicit supported prohibition. Never guess scope or store situational trip facts.'
     ].join('\n')
@@ -5302,6 +5317,7 @@ export async function buildStylistConversationPayload(body) {
       : '',
     '',
     historicalOutfitContextText,
+    openPlansText,
     threadContextText ? `CURRENT THREAD CONTEXT:\n${threadContextText}` : '',
     '',
     extraContextText ? `OUTFIT CONTEXT UNDER DISCUSSION:\n${extraContextText}` : '',
