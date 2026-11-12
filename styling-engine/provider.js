@@ -1940,7 +1940,14 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
   let interaction
   const geminiRequest = {
     model,
-    ...(continuation ? { previous_interaction_id: continuation } : { system_instruction: plainSystem }),
+    // The system prompt goes on EVERY call. Google's Interactions docs: previous_interaction_id "preserves only the
+    // conversation history (inputs and outputs)"; system instructions, tools and generation config are
+    // interaction-scoped and "you must re-specify these parameters in each new interaction". Until 2026-11-11
+    // this sent system_instruction on a turn's first call only, so every later call in a Gemini tool loop ran
+    // without the stylist's instructions, constitution and wardrobe list (measured: a turn's second call
+    // reported 19k input tokens after a 55k first call; docs/one-stylist-per-thread.md).
+    system_instruction: plainSystem,
+    ...(continuation ? { previous_interaction_id: continuation } : {}),
     input,
     generation_config: {
       max_output_tokens: maxTokens + (loopThinkingLevel === 'low' ? 0 : GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS),
@@ -1948,11 +1955,9 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
     },
     ...(tools.length ? { tools: tools.map(toGeminiFunctionDeclaration) } : {})
   }
-  // Note for comparison purposes: on a continuation call (iteration 2+ within one turn), this wire
-  // request intentionally omits system_instruction and prior history — Gemini's own backend already
-  // has both via previous_interaction_id. That's not missing input, it's a different transport for
-  // the same logical context; compare against the 'normalized' capture (canonicalMessages), not this
-  // one, to see what the model logically had.
+  // On a continuation call this wire request omits prior history, which the backend holds via
+  // previous_interaction_id; compare against the 'normalized' capture (canonicalMessages) to see the
+  // whole logical context. It does NOT omit the system prompt, which is never inherited (above).
   captureWireProviderInput({ provider: 'gemini', model, subflow: 'stylist_tool_loop', iterationIndex, callId: captureCallId, request: geminiRequest })
   try {
     interaction = await ai.interactions.create(geminiRequest)
@@ -2050,9 +2055,9 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
 export const STYLIST_CONTINUATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000 // decision 4
 export const STYLIST_CONTINUATION_MAX_INPUT_TOKENS = 150000 // decision 3, provisional
 
-// The stable half of the stylist system prompt (constitution, profiles, wardrobe manifest) is set
-// once per provider conversation. When it changes — a garment edited, a prompt changed — the stored
-// conversation was built on something no longer true, so it is rebuilt.
+// The stable half of the stylist system prompt (constitution, profiles, wardrobe manifest): the prefix the
+// provider's implicit cache can reuse from one call and one turn to the next. Used to check that two turns'
+// prompts share it (a trip follow-up and its first turn); it no longer decides whether a conversation continues.
 export function stablePromptFingerprint(system = '', model = '') {
   const text = String(system || '')
   const markerAt = text.indexOf(PROMPT_CACHE_BREAKPOINT)
@@ -2060,25 +2065,34 @@ export function stablePromptFingerprint(system = '', model = '') {
   return createHash('sha256').update(`${model}\n${stable}`).digest('hex').slice(0, 32)
 }
 
-// What changes every turn (date, thread state, open plans, feedback, the turn directive). A continued
-// call sends no system prompt, so this rides in the turn's user message instead.
+// What changes every turn (date, thread state, open plans, feedback, the turn directive): the part after
+// the cache breakpoint.
 export function volatilePromptTail(system = '') {
   const text = String(system || '')
   const markerAt = text.indexOf(PROMPT_CACHE_BREAKPOINT)
   return markerAt === -1 ? '' : text.slice(markerAt + PROMPT_CACHE_BREAKPOINT.length).trim()
 }
 
-export function stylistContinuationDecision(saved = null, { provider = '', model = '', fingerprint = '', now = Date.now() } = {}) {
+// No prompt-fingerprint rule: the current system prompt is sent on every call, so a changed wardrobe list or
+// prompt reaches a continued conversation too. (It was needed only while the system prompt was, wrongly, sent on
+// a conversation's first call alone.)
+export function stylistContinuationDecision(saved = null, { provider = '', model = '', now = Date.now() } = {}) {
   if (provider !== 'gemini') return { continue: false, reason: 'provider_without_server_conversation' }
   if (!saved?.interaction_id) return { continue: false, reason: 'no_stored_conversation' }
   if (saved.provider !== provider || saved.model !== model) return { continue: false, reason: 'model_changed' }
-  if (saved.fingerprint !== fingerprint) return { continue: false, reason: 'stable_prompt_changed' }
+  if (saved.complete !== true) return { continue: false, reason: 'last_turn_unfinished' }
   const age = now - Date.parse(saved.last_turn_at || '')
   if (!Number.isFinite(age) || age > STYLIST_CONTINUATION_MAX_AGE_MS) return { continue: false, reason: 'idle_over_7_days' }
   if (Number(saved.last_input_tokens) >= STYLIST_CONTINUATION_MAX_INPUT_TOKENS) return { continue: false, reason: 'size_limit' }
   return { continue: true, reason: 'continued' }
 }
 
+// Fair run 2026-11-11: with the whole prompt in system_instruction, this turn's context (thread state, date,
+// feedback) made each turn's request start differently, so no continued turn's first call ever reused the cache:
+// "Really? jeans?" read 131,780 tokens with none cached (14¢ against 1.9¢). For the chat on Gemini the stable half
+// (constitution, profiles, wardrobe list) is the system prompt on every call, and the turn's context opens the
+// turn's message. The prefix the provider can cache, system prompt and conversation so far, then stays the same
+// from turn to turn; only the new message is new.
 export const TURN_CONTEXT_HEADER = 'TURN CONTEXT — for this turn only. It replaces the turn context sent with earlier messages in this conversation (today\'s date, the thread state, saved feedback and this turn\'s directives):'
 
 export function withTurnContext(content, tail = '') {
@@ -2086,6 +2100,17 @@ export function withTurnContext(content, tail = '') {
   const preface = `${TURN_CONTEXT_HEADER}\n\n${tail}\n\n— end of turn context —\n\nThe user's message:`
   if (Array.isArray(content)) return [{ type: 'text', text: preface }, ...content]
   return `${preface}\n${String(content || '')}`
+}
+
+export function splitPromptForGeminiThread(system = '', messages = []) {
+  const tail = volatilePromptTail(system)
+  const stable = systemToPlainText(String(system || '').split(PROMPT_CACHE_BREAKPOINT)[0]).trim()
+  if (!tail || !messages.length) return { plainSystem: systemToPlainText(system), messages }
+  const last = messages[messages.length - 1]
+  return {
+    plainSystem: stable,
+    messages: [...messages.slice(0, -1), { ...last, content: withTurnContext(last.content, tail) }],
+  }
 }
 
 async function callProviderTurn(provider, ctx) {
@@ -2139,24 +2164,25 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   // process-global AI_PROVIDER constant, without touching this function's several returns.
   toolContext.resolvedProviderTarget = target
 
-  let currentMessages = [...messages]
+  // The chat on Gemini: stable system prompt, turn context in the turn's message (splitPromptForGeminiThread).
+  const geminiThread = toolContext.continueThread === true && target.provider === 'gemini'
+  const threadSplit = geminiThread ? splitPromptForGeminiThread(system, messages) : null
+  const loopPlainSystem = threadSplit ? threadSplit.plainSystem : plainSystem
+  let currentMessages = threadSplit ? [...threadSplit.messages] : [...messages]
   let providerContinuation = null
   let syncedHistoryLength = 0
   // docs/one-stylist-per-thread.md. Only /ask opts in (toolContext.continueThread); the other callers of
   // this loop (outfit-evaluation follow-ups) keep rebuilding every call.
-  const fingerprint = toolContext.continueThread === true ? stablePromptFingerprint(system, target.model) : ''
   const continuation = toolContext.continueThread === true
-    ? stylistContinuationDecision(toolContext.savedStylistContinuation, { provider: target.provider, model: target.model, fingerprint })
+    ? stylistContinuationDecision(toolContext.savedStylistContinuation, { provider: target.provider, model: target.model })
     : null
-  const rebuildMessages = [...messages]
+  const rebuildMessages = [...currentMessages]
   let continuedThisTurn = false
   if (continuation?.continue && currentMessages.length) {
     providerContinuation = toolContext.savedStylistContinuation.interaction_id
-    // The earlier turns are already in the provider's conversation; only the new message is sent, with
-    // the turn context that a continued call cannot carry in a system prompt.
+    // The earlier turns are already in the provider's conversation; only the new message is sent. The
+    // current system prompt, with this turn's context, goes on every call (callGeminiTurn).
     syncedHistoryLength = currentMessages.length - 1
-    const last = currentMessages[currentMessages.length - 1]
-    currentMessages[currentMessages.length - 1] = { ...last, content: withTurnContext(last.content, volatilePromptTail(system)) }
     continuedThisTurn = true
   }
   if (continuation) {
@@ -2211,7 +2237,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     let turn
     try {
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
+        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries, continuation: providerContinuation,
         tools: availableTools, maxTokens,
@@ -2226,7 +2252,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       currentMessages = [...rebuildMessages]
       toolContext.freeformDiagnostics.stylistContinuation = 'continuation_failed'
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
+        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries: currentMessages, continuation: null,
         tools: availableTools, maxTokens,
@@ -2235,12 +2261,15 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     syncedHistoryLength = currentMessages.length
     if (turn.continuation !== undefined) providerContinuation = turn.continuation
     // What the next turn continues from: this call's interaction, and how big the conversation now is.
-    if (fingerprint && target.provider === 'gemini' && providerContinuation) {
+    // `complete`: the interaction ended in a reply, not in tool calls still waiting for their results. A turn that
+    // returns early (a bounded options batch, a plan) leaves its last interaction waiting; live check 2026-11-11,
+    // the next turn continued from one of those with a new message instead of the results it was owed.
+    if (toolContext.continueThread === true && target.provider === 'gemini' && providerContinuation) {
       toolContext.stylistContinuationState = {
         provider: target.provider,
         model: target.model,
-        fingerprint,
         interaction_id: providerContinuation,
+        complete: !turn.hasToolCalls,
         last_input_tokens: Number(turn.usage?.inputTokens) || 0,
       }
     }

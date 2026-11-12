@@ -2242,6 +2242,11 @@ The full stylist's stable prompt gains `READ THE SITUATION FIRST` (`readTheSitua
 
 ## Gotchas for the next assistant
 
+**Gemini interactions do not inherit the system prompt (found 2026-11-11, engine map item 113).**
+`previous_interaction_id` carries the conversation history only; `system_instruction`, `tools` and `generation_config`
+must be sent on every request. `callGeminiTurn` now sends all three every time. Do not "optimise" the system prompt
+away on continuation calls; implicit caching makes the repeat cheap.
+
 **Layer-direction ownership landed 2026-08-24.** `evaluateLayerDirections` is now the shared
 over/under contract for plan submission, `propose_outfit`, and participating slot swaps. Missing
 legacy direction facts are `unknown`: both photos must be seen, then the model may make a

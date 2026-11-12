@@ -449,6 +449,36 @@ Flash at low thinking cost $0.33, the same as medium.
 
 **Still to measure:** 3.7's caching on continued turns.
 
+## The system prompt was never inherited (2026-11-11, engine map item 113)
+
+**The fault.** Reading back stored interactions showed that a continued Gemini call carries the conversation but
+not the system prompt. Google's docs confirm it: system instructions are interaction-scoped. Every Gemini call after
+a turn's first had therefore run without the stylist's instructions, constitution, wardrobe list and turn context,
+from the adapter's first version on.
+
+**Changes to this design:**
+- The system prompt is sent on every call.
+  - **[amended the same day, after the fair run]** For the chat on Gemini it is the stable half only
+    (constitution, profiles, wardrobe list). The turn's context opens the turn's message
+    (`splitPromptForGeminiThread`).
+  - With the turn's context in the system prompt, every turn's request started differently, so no continued
+    turn's first call reused the cache: "Really? jeans?" read 131,780 tokens with none cached, 14¢ against
+    1.9¢.
+  - Other callers of the loop keep the whole prompt in the system slot.
+  - **Confirmed live:** the next continued follow-up read 97% of its 138k input from the cache, at 4.3¢ against
+    14.2¢.
+- The prompt-fingerprint rule is removed. A changed wardrobe list or prompt now reaches a continued conversation
+  directly.
+- A conversation is continued only from an interaction that ended in a reply (`complete`). A turn ended by an
+  options batch or a plan rebuilds the next turn (`last_turn_unfinished`).
+
+**Effect on the measurements above.**
+- Every live score in this document and in the check set was produced with this fault.
+- The "Really? jeans?" follow-up is a continued call, so it never saw item 105's instruction. That may explain why
+  it failed on Flash-Lite every time.
+- Speed is unlikely to change much: latency tracks output tokens (correlation 0.96), not input. Cost per continued
+  call rises slightly, since the system prompt is resent; most of it should come from the cache.
+
 ## Decisions (2026-11-11)
 
 The owner's direction: these conversations should be as good as they can be, and a quick question gets
