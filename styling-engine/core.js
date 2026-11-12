@@ -4359,7 +4359,7 @@ export function freeformToolRoutingInstruction(turnMode = '') {
   // Stated in full here, because the tool descriptions no longer carry it. A fresh request is the
   // only turn shape the bounded exception applies to, which is why it is emitted only for one mode.
   return `${ownerLine}
-BOUNDED MULTI-LOOK EXCEPTION (this turn only): for a fresh request for 2–5 outfit options that share one occasion, activity, location, date and weather context, do NOT call declare_intent and do NOT call search_wardrobe — call generate_outfits directly and exactly once. That call is itself the cards declaration. An ordinary new "what should I wear?" defaults to limit:2; an explicit count 2–5 wins.
+BOUNDED MULTI-LOOK EXCEPTION (this turn only): for a fresh request for 2–5 outfit options that share one occasion, activity, location, date and weather context, do NOT call search_wardrobe — call declare_intent (want:'cards' with your reading of the situation) and then generate_outfits exactly once; both may go in the same response, declare_intent first. Options asked for without a number are 3; an explicit count 2–5 wins. An ordinary new "what should I wear?" with no request for several options is ONE recommended outfit, built with search + propose_outfit.
 One/best/pick-one requests stay on the verified search + propose path; multi-context schedules and capsules use plan_outfit_set; existing-card revisions use suggest_slot_swaps. Never flatten distinct contexts to qualify.`
 }
 
@@ -4593,7 +4593,8 @@ export async function buildStylistConversationPayload(body) {
     mood,
     mission,
     activity,
-    answerInWords = false
+    answerInWords = false,
+    savedPackingApproach = ''
   } = body
 
   // This is semantic conversation history. The transport history includes the current user
@@ -5030,6 +5031,9 @@ export async function buildStylistConversationPayload(body) {
     // The thread's dated plan (docs/cross-thread-continuity.md) outlives each turn; only a new plan
     // replaces it (persistFullStylistTurnState). Without this, the first follow-up erased it.
     ...(restoredState.plan ? { plan: restoredState.plan } : {}),
+    // The provider conversation this thread continues (docs/one-stylist-per-thread.md); replaced by
+    // persistFullStylistTurnState at the end of each turn.
+    ...(restoredState.stylist_continuation ? { stylist_continuation: restoredState.stylist_continuation } : {}),
   }, sessionId)
 
   // 2026-07-12: the pre-model auto-save that stored the RAW question whenever the
@@ -5318,6 +5322,7 @@ export async function buildStylistConversationPayload(body) {
     '',
     historicalOutfitContextText,
     openPlansText,
+    savedPackingApproach ? `USUAL PACKING APPROACH (on record, never assumed for a trip): "${savedPackingApproach}". When the user plans a trip without saying how they are packing for it, ask whether this trip is the same as usual or different.` : '',
     threadContextText ? `CURRENT THREAD CONTEXT:\n${threadContextText}` : '',
     '',
     extraContextText ? `OUTFIT CONTEXT UNDER DISCUSSION:\n${extraContextText}` : '',

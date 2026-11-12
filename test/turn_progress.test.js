@@ -169,7 +169,8 @@ test('the server reports only plain facts: tool arguments are reduced to counts 
   const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
   const toolsSrc = fs.readFileSync(path.join(process.cwd(), 'styling-engine/tools.js'), 'utf8')
   assert.match(routeSrc, /router\.post\('\/ask', async \(req, res\) => \{\n[^\n]*\n\s*startTurnProgressStream\(req, res\)/, '/ask opens the stream before any exit')
-  assert.match(routeSrc, /reportTurnProgress\('understood', \{/)
+  // How the request was read: from the stylist's declare_intent since the router's retirement (2026-11-11).
+  assert.match(toolsSrc, /reportTurnProgress\('understood', \{/)
   assert.match(routeSrc, /reportTurnProgress\('layer_repair', \{ count: repairable\.length \}\)/)
   assert.match(toolsSrc, /reportTurnProgress\('tool', toolProgressFacts\(name, args\)\)/)
   assert.match(toolsSrc, /reportTurnProgress\('attempt_failed', \{ tool: 'generate_outfits' \}\)/)

@@ -80,21 +80,9 @@ import { extractSeasonRequest, resolveCalendarSeason, seasonPromptLabel } from '
 import { projectStylingApplicabilityContext, resolveStylingContext, stepOutsideForecastLine } from '../styling-engine/stylingContext.js'
 import { reportTurnProgress, startTurnProgressStream } from '../lib/turnProgress.js'
 
-import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine } from '../styling-engine/tools.js'
-import { localIsoDate, openPlansFromOtherThreads, openPlansRouterContext, planSummaryFromToolContext } from '../styling-engine/pastConversations.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine, getSavedPackingApproach, savePackingApproach, seasonForReadTurn } from '../styling-engine/tools.js'
+import { planSummaryFromToolContext } from '../styling-engine/pastConversations.js'
 
-// Dated plans from the user's other threads, as one clause of the router's compact context
-// (docs/cross-thread-continuity.md). Empty when there are none, so the router input is unchanged.
-export function routerOpenPlansContext(body = {}) {
-  try {
-    const now = body.currentDate ? new Date(body.currentDate) : new Date()
-    const today = localIsoDate(Number.isNaN(now.getTime()) ? new Date() : now, body.timezone || 'America/Los_Angeles')
-    return openPlansRouterContext(openPlansFromOtherThreads({ currentSessionId: body.sessionId || '', today }))
-  } catch (err) {
-    console.warn('Router open-plans lookup failed:', err.message)
-    return ''
-  }
-}
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
 import { updateAiTelemetryContext, backfillFreeformRunId, normalizeTaggerSource, getAiTelemetryContext, runWithAiTelemetryContext } from '../lib/aiCallTelemetry.js'
 import { randomUUID, createHash } from 'node:crypto'
@@ -1009,6 +997,13 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
 // shaped state. Only overwrites current_outfit_set when this turn actually
 // produced fresh cards — an ordinary prose-only turn leaves the prior set
 // alone, consistent with the "layers onto" merge philosophy above.
+export function clearStylistContinuation(sessionId = 'default') {
+  const state = getStylistConversationState(sessionId)
+  if (!state?.stylist_continuation) return
+  const { stylist_continuation: _dropped, ...rest } = state
+  saveStylistConversationState(rest, sessionId)
+}
+
 export function persistFullStylistTurnState({ toolContext, answer, freeformTurnToken, sessionId = 'default' }) {
   const priorConversationState = getStylistConversationState(sessionId) || {}
   const hasFreshCards = Array.isArray(toolContext.generatedOutfits) && toolContext.generatedOutfits.length > 0
@@ -1027,8 +1022,15 @@ export function persistFullStylistTurnState({ toolContext, answer, freeformTurnT
   // A dated plan's kind, place and dates (docs/cross-thread-continuity.md), so other threads can
   // list it as an open plan. Written only on the turn plan_outfit_set built it; follow-ups keep it.
   const plan = hasFreshCards ? planSummaryFromToolContext(toolContext) : null
+  // The provider conversation the next turn continues (docs/one-stylist-per-thread.md). A turn that did
+  // not run on a provider that keeps one (Anthropic, "Retry with Sonnet") ends the stored one.
+  const { stylist_continuation: _previousContinuation, ...priorWithoutContinuation } = priorConversationState
+  const continuation = toolContext.continueThread === true && toolContext.stylistContinuationState
+    ? { ...toolContext.stylistContinuationState, last_turn_at: new Date().toISOString() }
+    : null
   saveStylistConversationState({
-    ...priorConversationState,
+    ...(toolContext.continueThread === true ? priorWithoutContinuation : priorConversationState),
+    ...(continuation ? { stylist_continuation: continuation } : {}),
     ...(plan ? { plan } : {}),
     ...(freshState?.current_outfit_set ? { current_outfit_set: freshState.current_outfit_set } : {}),
     ...(freshState?.packing_roster ? { packing_roster: freshState.packing_roster } : {}),
@@ -5611,13 +5613,8 @@ export function followUpSeasonLock(toolContext = {}, threadState = {}) {
   return season ? { executionRouterSeason: season, executionRouterSeasonLocked: true } : {}
 }
 
-export function routerSeasonForTurn(season, date, now = new Date()) {
-  const named = extractSeasonRequest(season)
-  if (!named || named === 'current season') return season || ''
-  const isoDay = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? new Date(`${date}T12:00:00`) : null
-  const reference = isoDay && !Number.isNaN(isoDay.getTime()) ? isoDay : now
-  return named === resolveCalendarSeason('current season', reference) ? 'current season' : season
-}
+// Moved to tools.js (seasonForReadTurn) with the router's retirement; kept under its old name for callers.
+export const routerSeasonForTurn = seasonForReadTurn
 
 // How this user usually packs for trips, when they have said so (owner, 2026-10-07: "there are lots
 // of ways trip packing is approached… if there is no real preference why doesn't she ask the
@@ -5625,23 +5622,8 @@ export function routerSeasonForTurn(season, date, now = new Date()) {
 // to a trip on its own: it only lets the stylist ask "same as usual, or different this time?".
 // Per-user global context beside home_location and the profile keys (feedback-and-memory-map.md
 // category 10); written only from the router's `remember_packing_approach`.
-export function getSavedPackingApproach() {
-  try {
-    return String(db.prepare("SELECT value FROM app_meta WHERE key = 'packing_approach'").get()?.value || '').trim()
-  } catch {
-    return ''
-  }
-}
-export function savePackingApproach(text = '') {
-  const value = String(text || '').trim().slice(0, 400)
-  if (!value) return ''
-  try {
-    db.prepare("INSERT INTO app_meta (key, value) VALUES ('packing_approach', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(value)
-  } catch (err) {
-    console.error('Error saving packing approach:', err)
-  }
-  return value
-}
+// Moved to tools.js with the router's retirement (declare_intent now writes it).
+export { getSavedPackingApproach, savePackingApproach }
 
 // One-shot: the pending question is read and cleared together, so an unanswered or abandoned
 // question cannot attach itself to some later message.
@@ -7740,7 +7722,6 @@ router.post('/ask', async (req, res) => {
         : TRIP_ROSTER_PHOTO_LIMIT
     }
     const compactState = getStylistConversationState(req.body.sessionId || 'default') || {}
-    const priorConversationHistory = priorStylistConversationHistory(req.body.history, typedQuestion)
     // docs/bounded-multi-context-continuity-spec.md. Pieces the immediately preceding accepted
     // full_stylist answer actually discussed (cited in prose AND verified that turn) — not raw
     // search candidates. Read-only here: informs the router's contextSummary (§5.4) and, if the
@@ -7750,546 +7731,32 @@ router.post('/ask', async (req, res) => {
     const recentlyDiscussedPieceIds = Array.isArray(compactState.recently_discussed_piece_ids?.piece_ids)
       ? compactState.recently_discussed_piece_ids.piece_ids
       : []
-    const activePieceIdentities = db.prepare("SELECT id, name, photo, worn_photo FROM pieces WHERE status = 'active'").all()
-    const exactNamedPieceIds = exactNamedPieceIdsFromQuestion(currentQuestion, activePieceIdentities)
-    // A garment cited as "ID 127" never has a name for exactNamedPieceIdsFromQuestion to find, and
-    // was previously invisible to the compact path unless it happened to already be in the current
-    // outfit set — see thread_1787387145601 msg 7. Resolve only against real active pieces; an
-    // unresolved mention is caught below by compactGarmentFactSubjectsIncomplete, not silently added.
-    const explicitPieceIdMentions = explicitPieceIdMentionsFromQuestion(currentQuestion)
-    const explicitResolvedPieceIds = explicitPieceIdMentions.filter(id =>
-      activePieceIdentities.some(piece => Number(piece.id) === id)
-    )
-    // Only when the question names no garment itself; see garmentFactFollowUpSubjectIds.
-    const followUpSubjectIds = exactNamedPieceIds.length || explicitResolvedPieceIds.length
-      || namedPieceIdsInQuestion(currentQuestion, activePieceIdentities).length > 1
-      ? []
-      : garmentFactFollowUpSubjectIds(priorConversationHistory, compactState.garment_fact_subject)
-        .filter(id => activePieceIdentities.some(piece => Number(piece.id) === id))
-    const compactContext = compactFreeformContext({
-      body: req.body,
-      state: compactState,
-      namedPieceIds: [...exactNamedPieceIds, ...explicitResolvedPieceIds, ...followUpSubjectIds]
-    })
-    const compactPieceIdSet = new Set(compactContext.pieceIds.map(Number))
-    const compactSavedPhotoCount = activePieceIdentities.filter(piece =>
-      compactPieceIdSet.has(Number(piece.id)) && (piece.photo || piece.worn_photo)
-    ).length
-    // Execution freshness is structural state, not conversational tone. A live fresh-task request
-    // containing the ordinary sentence "This is ordinary sightseeing" was labeled `correction`
-    // by the client and skipped the router entirely, despite having no prior context. Keep the
-    // tone label for full-stylist conversation behavior, but do not let prose classification own
-    // whether a context-free request may reach a bounded execution profile.
+    // docs/one-stylist-per-thread.md (2026-11-11): every typed turn goes to the one stylist. The execution
+    // router that used to read the request first and send it to a separate path (single outfit, a few
+    // options, a compact answer, a lean trip turn) is gone from this route. Its reading of the user's
+    // situation — setting, occasion, activity, season, time of day — is now the stylist's own
+    // declare_intent, applied by applyDeclaredTurnReading (tools.js) with the same locks, and required
+    // before any wardrobe search. Freshness is still structural state (not tone): a fresh request locks
+    // its reading for the turn, a follow-up keeps the thread's.
     const executionContextEvidence = freeformExecutionContextEvidence(req.body, compactState, recentlyDiscussedPieceIds)
-    // An answer to the stylist's own clarifying question continues the fresh request it interrupted:
-    // the only "context" is that one exchange. Live thread_1791362754936: the router chose trip_plan
-    // for the answer turn and the lean path was skipped because the thread now had history.
     const freshExecutionRequest = executionContextEvidence.length === 0
       || (Boolean(pendingClarification) && executionContextEvidence.every(kind => kind === 'history'))
-    const boundedRouterEligible = freshExecutionRequest
-      && !req.body.activeContext
-      && !(Array.isArray(req.body.pieceIds) && req.body.pieceIds.length)
-    // Without this, enabling compact answers bought a router call on every text turn — including
-    // corrections and follow-ups that cannot reach a compact profile at all and pay the router on
-    // top of the full loop. See compactRouterTurnHasContext for the rule and its accepted miss.
-    const compactTurnHasContext = compactRouterTurnHasContext(req.body.conversationMode, compactContext)
-    const compactRouterEligible = compactTurnHasContext
-    if (!compactTurnHasContext) {
-      bumpFreeformDiagnostic(toolContext, 'compactRouterSkippedNoContext')
-    }
-    const routerEligible = (boundedRouterEligible || compactRouterEligible)
-      && !req.body.outfit
-      && !req.body.image
-      && !req.body.imageData
-    let singleOutfitRoute = null
-    let tripPlanRoute = null
-    // The profile the router gave a fresh request; '' when it did not run or the turn is a follow-up.
-    let routedFreshProfile = ''
-    const savedPackingApproach = getSavedPackingApproach()
-    toolContext.savedPackingApproach = savedPackingApproach
-    if (routerEligible) {
-      try {
-        updateAiTelemetryContext({
-          freeformTurnToken,
-          subflow: 'execution_router',
-          iterationIndex: nextFreeformCallIndex(toolContext),
-          isRetry: false,
-          retryReason: '',
-          isNested: false,
-        })
-        const routed = await routeFreeformExecutionProfile({
-          question: currentQuestion,
-          currentDate: req.body.currentDate || '',
-          timezone: req.body.timezone || 'America/Los_Angeles',
-          contextSummary: [
-            compactContext.outfits.length ? `verified current outfit set: ${compactContext.outfits.length} card(s)` : 'no current outfit set',
-            // A fact the router could not otherwise know from one preceding exchange (live
-            // thread_1791444946137: "redo the plan", six turns after the plan was made).
-            Array.isArray(compactState.packing_roster?.roster_ids) && compactState.packing_roster.roster_ids.length
-              ? `this thread holds a trip plan (${compactState.packing_roster.roster_ids.length} pieces packed)`
-              : '',
-            compactContext.pieceIds.length ? `${exactNamedPieceIds.length ? 'exact active garment name resolved' : 'verified garment subjects available'}: ${compactContext.pieceIds.length}` : 'no verified garment subject',
-            compactSavedPhotoCount ? `saved garment photographs available: ${compactSavedPhotoCount} resolved subject(s)` : 'no saved garment photographs for resolved subjects',
-            req.body.activeContext?.type === 'piece' ? `active piece: ${req.body.activeContext.name || req.body.activeContext.id}` : '',
-            // docs/bounded-multi-context-continuity-spec.md §5.4. An informational hint only — the
-            // router still judges continuation-vs-fresh-request itself; this never gates which
-            // profile is reachable. Populated by the full_stylist end-of-turn write below.
-            recentlyDiscussedPieceIds.length
-              ? `previous answer discussed ${recentlyDiscussedPieceIds.length} specific verified wardrobe piece(s)`
-              : 'no recently discussed wardrobe pieces',
-            savedPackingApproach ? `usual packing approach (not assumed for this trip): "${savedPackingApproach}"` : 'no usual packing approach on record',
-            routerOpenPlansContext(req.body),
-          ].filter(Boolean).join('; '),
-          // Just the immediately preceding turn (docs/deferred-conversational-cache-spec.md's sibling
-          // finding: the router was classifying purely from an isolated sentence, so a reply that only
-          // makes sense as an answer to the assistant's own prior question — e.g. naming a garment
-          // while answering "which outfit's layer?" — read like a standalone garment_fact question).
-          // Reuses the same recent-exchange formatting recentReferentPieceIds already relies on.
-          recentExchange: compactRecentHistory(priorConversationHistory, 2),
-          recentUserWords: compactRecentUserWords(priorConversationHistory, 2),
-          explicitActivity: req.body.activity || '',
-          providerOverride: toolContext.providerOverride
-        })
-        recordToolLoopUsage(toolContext, routed.usage)
-        bumpFreeformDiagnostic(toolContext, 'executionRouterCalls')
-        recordFreeformToolIteration(toolContext, ['execution_router'])
-        // How the request was read, shown while the turn works so a misreading is visible in seconds.
-        // The router's own fields only; the client words them.
-        reportTurnProgress('understood', {
-          profile: String(routed.value?.profile || ''),
-          limit: Number(routed.value?.limit) || 0,
-          occasion: String(routed.value?.occasion || ''),
-          activity: String(routed.value?.activity || ''),
-          setting: String(routed.value?.setting || ''),
-          location: String(routed.value?.location || ''),
-          date: String(routed.value?.date || ''),
-          timeOfDay: String(routed.value?.time_of_day || ''),
-          asking: Boolean(String(routed.value?.clarifying_question || '').trim()),
-        })
-        // The router has already resolved the request's structured occasion/activity. Preserve
-        // that result as established turn state even when the selected profile is full_stylist;
-        // otherwise a later search_wardrobe call that omits those optional arguments silently
-        // falls back to route defaults (`casual` / no activity) and retrieves the wrong visual
-        // roster. Occasion remains overridable by an explicit tool argument. Activity is locked to
-        // the router's request-level interpretation so a later model tool call cannot invent walking
-        // and turn it into a footwear gate.
-        //
-        // 2026-09-16 (owner review, thread_1789546295700): season gets the SAME lock, for the same
-        // reason. This run's router correctly resolved `early fall`; the model's own later
-        // generate_outfits call restated season as `warm` (a temperature descriptor, answering the
-        // generate_outfits schema's own "e.g. warm, cool, year-round" wording), and
-        // resolveCalendarSeason (lib/seasonContext.js) maps `warm -> summer` — silently discarding
-        // the correct calendar season and, with it, changing which season-eligibility exclusions
-        // applied (OUT_OF_SEASON['fall']:'warm' vs ['summer']:'cool' exclude opposite tag sets).
-        // Weather already has its own field (`user_weather`/`resolvedWeather`) for describing
-        // temperature — generate_outfits's own resolvedSeason prompt text already appends a
-        // `physicalWeather` phrase derived from the resolved weather profile, not from this string
-        // — so locking season to the router's calendar classification loses no descriptive
-        // information, it only stops a later temperature-vibe word from overwriting the calendar
-        // fact used for season-based eligibility.
-        // A season the user names on a follow-up ("what about in winter?") is the router's to read;
-        // followUpSeasonLock below uses it in place of the thread's established season.
-        if (!freshExecutionRequest) toolContext.followUpRouterSeason = routerSeasonForTurn(routed.value?.season, routed.value?.date) || ''
-        // The router's reading of the user's activity on a follow-up. Not a lock (a follow-up may keep
-        // the thread's activity), but an activity a tool call names has to match this, the thread's
-        // own, or the user's words (resolveToolStylingContext).
-        if (!freshExecutionRequest) toolContext.followUpRouterActivity = normalizeActivity(routed.value?.activity)
-        if (freshExecutionRequest) {
-          toolContext.occasion = normalizeOccasion(routed.value?.occasion)
-          toolContext.activity = normalizeActivity(routed.value?.activity)
-          toolContext.executionRouterActivity = toolContext.activity
-          toolContext.executionRouterActivityLocked = true
-          toolContext.season = routerSeasonForTurn(routed.value?.season, routed.value?.date) || toolContext.season
-          toolContext.executionRouterSeason = toolContext.season
-          toolContext.executionRouterSeasonLocked = true
-          // Third turn-level fact from the router, same authority as activity and season above.
-          // thread_1790928379170 / thread_1790929800547: an evening hosted at home was dressed for
-          // a model-estimated outdoor day, twice, and asking the composer to flag it per tool call
-          // did not hold (it marked the search and not the proposal). resolveToolStylingContext
-          // reads this and resolves the turn's weather as indoor for every tool.
-          toolContext.executionRouterIndoorOnly = routed.value?.setting === 'indoor_only'
-          // Owner, 2026-11-10 ("indoor activities should have never gotten the notes meant for an outdoor weather";
-          // thread_1794365607999): dinner at someone's house was routed includes_outdoors, the only setting for
-          // "going somewhere", and its card read "runs warm for a high of 66°F". The occasion is indoors; the
-          // forecast is for the way there. Applied to every tool in the turn, as the at-home setting is.
-          toolContext.executionRouterIndoorDestination = routed.value?.setting === 'indoor_destination'
-          // Owner ruling 2026-10-19 (thread_1792453320490): a request that gives no place or time —
-          // "which tops can I wear under this?" with city and fall picked — is a styling question,
-          // not an outing. It was routed includes_outdoors ("anything unclear") and the card was told
-          // it lacked a layer for a 53°F low nobody asked about. Occasion and season still apply.
-          toolContext.executionRouterNoSituation = routed.value?.setting === 'not_stated'
-          // Fourth turn-level fact. Live thread_1791327434563: "Tonight I'm going to a guitar concert"
-          // was dressed for "a forecast high of 90°F and low of 58°F" — the 4pm peak and the
-          // early-morning low — while the evening itself ran 89°F down to 64°F.
-          toolContext.executionRouterTimeOfDay = ['morning', 'afternoon', 'evening'].includes(routed.value?.time_of_day)
-            ? routed.value.time_of_day
-            : ''
-        } else if (routed.value?.setting === 'indoor_only') {
-          // A follow-up to an at-home occasion is still at home. Live thread_1791358745720: hosting
-          // at home was dressed indoors on the first turn, and the follow-up ("I'll be cooking most
-          // of the evening") — which the router again read as indoor_only — was dressed for today's
-          // 96°F outdoor forecast, because the setting was applied to fresh requests only.
-          toolContext.executionRouterIndoorOnly = true
-        } else if (routed.value?.setting === 'indoor_destination') {
-          // A follow-up about the same indoor occasion is still indoors.
-          toolContext.executionRouterIndoorDestination = true
-        } else if (routed.value?.setting === 'not_stated') {
-          // The router keeps a situation the conversation already gave (its setting rule), so a
-          // follow-up it reads as not_stated has none to carry: the same styling-question case.
-          toolContext.executionRouterNoSituation = true
-        }
-        // The router's read of HOW to answer (2026-10-23, thread_1792793923755): an invitation to think
-        // ("what other directions can we explore?") is answered in words, not cards. Absent field: cards.
-        toolContext.answerInWords = routed.value?.profile === 'full_stylist' && routed.value?.answer_form === 'words'
-        const routedLimit = Number(routed.value?.limit) || 0
-        const compactProfile = isSavedPhotoWearMechanicsQuestion(currentQuestion, {
-          exactSubjectCount: exactNamedPieceIds.length,
-          savedPhotoCount: compactSavedPhotoCount
-        })
-          ? 'garment_fact'
-          : routed.value?.profile
-        // Keep the router's raw disposition visible in the response debug even when later context
-        // checks conservatively fall through to full_stylist. Previously executionProfile showed
-        // only the path ultimately taken, so profile-vs-limit-vs-context rejection was impossible
-        // to distinguish after a live run.
-        toolContext.freeformDiagnostics ||= {}
-        toolContext.freeformDiagnostics.executionRouterProfile = String(compactProfile || '')
-        toolContext.freeformDiagnostics.executionRouterLimit = routedLimit
-        if (freshExecutionRequest) routedFreshProfile = String(compactProfile || '')
-        if (freshExecutionRequest && compactProfile === 'single_outfit' && routedLimit === 1) {
-          singleOutfitRoute = routed.value
-        }
-        if (freshExecutionRequest && compactProfile === 'trip_plan') {
-          tripPlanRoute = routed.value
-        }
-        // Owner ruling 2026-10-06: "stylist may absolutely ask the question first! in fact she must
-        // if she is missing information or can take different approaches." The router judges that
-        // and writes the question; the request is kept so the answer can be joined to it. Never
-        // twice in a row: an answer to her own question is composed from, not questioned again.
-        // A standing packing preference the user just stated is saved before anything else, so it
-        // holds for this trip and the next.
-        const rememberedPackingApproach = savePackingApproach(routed.value?.remember_packing_approach)
-        if (rememberedPackingApproach) toolContext.savedPackingApproach = rememberedPackingApproach
-        const askFirst = String(routed.value?.clarifying_question || '').trim()
-        if (askFirst && freshExecutionRequest && !pendingClarification && ['single_outfit', 'bounded_multi', 'trip_plan'].includes(compactProfile)) {
-          saveStylistConversationState(
-            { ...compactState, pending_clarification: { request: currentQuestion, question: askFirst } },
-            req.body.sessionId || 'default'
-          )
-          toolContext.freeformDiagnostics.executionProfile = 'clarifying_question'
-          recordFreeformToolIteration(toolContext, ['clarifying_question'])
-          const freeformDiagnostics = toolContext.freeformDiagnostics
-          persistFreeformGenerationRun({
-            sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
-            diagnostics: freeformDiagnostics, turnFailed: false, freeformTurnToken
-          })
-          return res.json({
-            answer: askFirst,
-            savedCorrections: [], renderedBoards: [],
-            provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
-            model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
-            structuredOutfits: [], structuredOutfitsSource: null,
-            structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
-            structuredOutfitsMood: null, structuredOutfitsMission: null,
-            structuredOutfitsActivity: null, debug: freeformDiagnostics, suggestedTitle: null
-          })
-        }
-        if (compactProfile === 'wardrobe_inventory') {
-          const categoryRows = db.prepare("SELECT category, COUNT(*) AS count FROM pieces WHERE status = 'active' GROUP BY category").all()
-          const categoryCounts = Object.fromEntries(categoryRows.map(row => [String(row.category || 'other'), Number(row.count) || 0]))
-          toolContext.freeformDiagnostics ||= {}
-          toolContext.freeformDiagnostics.executionProfile = compactProfile
-          recordFreeformToolIteration(toolContext, ['compact_wardrobe_inventory'])
-          const freeformDiagnostics = toolContext.freeformDiagnostics
-          persistFreeformGenerationRun({
-            sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
-            diagnostics: freeformDiagnostics, turnFailed: false, freeformTurnToken
-          })
-          clearRecentlyDiscussedPieceIds(req.body.sessionId)
-          return res.json({
-            answer: stripPieceIdCitations(formatWardrobeInventoryAnswer(categoryCounts)),
-            savedCorrections: [], renderedBoards: [],
-            provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
-            model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
-            structuredOutfits: [], structuredOutfitsSource: null,
-            structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
-            structuredOutfitsMood: null, structuredOutfitsMission: null,
-            structuredOutfitsActivity: null, debug: freeformDiagnostics, suggestedTitle: null
-          })
-        }
-        if (['existing_card_explanation', 'garment_fact', 'general_advice'].includes(compactProfile)) {
-          const profileHasContext = compactProfileHasContext(compactProfile, compactContext)
-          if (profileHasContext) {
-            // "These shorts" names a category, not an exact piece or ID, so it never reaches
-            // exactNamedPieceIds/explicitResolvedPieceIds — only resolve a subject from elsewhere
-            // when the question alone gave nothing to go on, and only for garment_fact, where an
-            // unresolved vague reference otherwise falls back to every piece in the accumulated
-            // current-card set (thread_1787435527800 msg 16/17). In order: the garment the router
-            // named, the garment the recent exchange names, the previous garment answer's subject.
-            const questionGarmentIds = [...new Set([
-              ...namedPieceIdsInQuestion(currentQuestion, activePieceIdentities),
-              ...explicitResolvedPieceIds
-            ])]
-            const questionNamesGarment = questionGarmentIds.length > 0
-            const cardPieceIds = (compactContext.outfits || []).flatMap(outfit => outfit?.pieceIds || outfit?.piece_ids || [])
-            const onCardReferentIds = cardReferentPieceIds(currentQuestion, req.body.history, activePieceIdentities, cardPieceIds)
-            // A garment named in full still wins; a shortened name is read against the cards' own pieces
-            // before the whole wardrobe (cardReferentPieceIds).
-            const resolveReferent = () => {
-              const fromRouter = routerSubjectPieceIds(routed.value?.subject, activePieceIdentities)
-              if (fromRouter.length) return fromRouter
-              const namedInFull = recentReferentPieceIds(currentQuestion, req.body.history, activePieceIdentities, { fullOnly: true })
-              if (namedInFull.length) return namedInFull
-              if (onCardReferentIds.length) return onCardReferentIds
-              const fromExchange = recentReferentPieceIds(currentQuestion, req.body.history, activePieceIdentities)
-              return fromExchange.length ? fromExchange : followUpSubjectIds
-            }
-            const referentPieceIds = compactProfile === 'garment_fact' && !questionNamesGarment ? resolveReferent() : []
-            const scopedPieceIds = referentPieceIds.length ? referentPieceIds : compactContext.pieceIds
-            const compactPieces = scopedPieceIds.length
-              ? db.prepare(`SELECT * FROM pieces WHERE status = 'active' AND id IN (${scopedPieceIds.map(() => '?').join(',')})`).all(...scopedPieceIds).map(parsePiece)
-              : []
-            // Every requested verified id must resolve. A deleted/resting/ambiguous subject falls
-            // through to the full stylist rather than letting the compact model fill the gap. A
-            // question naming two garments by ID where only one exists is the same kind of
-            // incomplete evidence — see thread_1787387145601 msg 7: paying for a compact call that
-            // can only ever say "I don't have the other one" is a predictably broken answer, not a
-            // narrower one.
-            const pieceScopeComplete = compactProfile !== 'garment_fact'
-              || (compactPieces.length === scopedPieceIds.length
-                && !compactGarmentFactSubjectsIncomplete(currentQuestion, scopedPieceIds))
-            if (pieceScopeComplete) {
-              const answerText = compactFreeformAnswerMessage({
-                profile: compactProfile, question: currentQuestion, context: { ...compactContext, pieceIds: scopedPieceIds },
-                pieces: compactPieces, state: compactState, history: req.body.history
-              })
-              const activeVisualPieceId = Number(req.body?.activeContext?.type === 'piece'
-                ? req.body.activeContext.id
-                : req.body?.pieceId)
-              const preferredVisualIds = questionNamesGarment
-                ? new Set(questionGarmentIds)
-                : (referentPieceIds.length
-                    ? new Set(referentPieceIds)
-                    : (Number.isFinite(activeVisualPieceId) && activeVisualPieceId > 0
-                        ? new Set([activeVisualPieceId])
-                        : null))
-              // A card explanation is about the cards, so its photos come from them: the cards the
-              // question names (or every card), after any garment it names exactly. The active
-              // piece alone was right for garment_fact but left thread_1792563578975 comparing two
-              // outfits with only the cardigan's photo, so it judged the sleeves underneath blind.
-              const cardVisualIds = compactProfile === 'existing_card_explanation'
-                // The garment the question is about leads, so the photo limit never runs out before it
-                // (thread_1793329874358 msg 16: Looks 1-3 took all 8 photos, the shirt asked about got none).
-                ? cardExplanationVisualPieceIds({ question: currentQuestion, outfits: compactContext.outfits, leadPieceIds: [...exactNamedPieceIds, ...onCardReferentIds] })
-                : null
-              const visualPieces = cardVisualIds
-                ? cardVisualIds.map(id => compactPieces.find(piece => Number(piece.id) === id)).filter(Boolean)
-                : preferredVisualIds
-                  ? compactPieces.filter(piece => preferredVisualIds.has(Number(piece.id)))
-                  : compactPieces
-              // thread_1789536455443: existing_card_explanation used to get zero photos (and its
-              // system prompt forbade even claiming to see any) — a suitability/warmth question
-              // about an already-composed card had no visual evidence of construction at all,
-              // only the sparse structured facts. Both compact profiles now get the same visual
-              // evidence a garment_fact question already received.
-              const visualEvidence = (compactProfile === 'garment_fact' || compactProfile === 'existing_card_explanation')
-                ? await compactGarmentVisualEvidence(visualPieces, cardVisualIds
-                    ? { maxImages: Math.max(MAX_STRUCTURAL_OUTFIT_PIECES, visualPieces.length) }
-                    : {})
-                : []
-              // 2026-09-16 (owner review): thread_1789543565383 (capture session
-              // 20260916T072500260Z-p33193-328b5958) shows a real existing_card_explanation call
-              // hit stopReason: max_tokens with maxTokens: 700, storing and presenting a sentence
-              // fragment ("...this outfit can be trusted for an outdoor temperature range of 40°F
-              // to") as a complete answer. Same root cause already diagnosed for the router
-              // (routeFreeformExecutionProfile above, 350->900): Gemini bills thinking tokens out of
-              // this same cap and thinking_level 'low' still lets that vary a lot per request, so a
-              // ceiling sized only for the visible prose can be exhausted by reasoning before any
-              // answer text is written. Raised with headroom, matching the full-turn free-text
-              // ceiling used for a prose answer of comparable length elsewhere in this file.
-              const guarded = await compactAnswerWithTruncationGuard({
-                system: compactFreeformAnswerSystem(compactProfile),
-                messages: [{
-                  role: 'user',
-                  content: visualEvidence.length
-                    ? [{ type: 'text', text: answerText }, ...visualEvidence]
-                    : answerText
-                }],
-                maxTokens: 1500,
-                providerOverride: toolContext.providerOverride,
-                onAttempt: ({ isRetry }) => updateAiTelemetryContext({
-                  freeformTurnToken,
-                  subflow: 'compact_profile',
-                  iterationIndex: nextFreeformCallIndex(toolContext),
-                  isRetry,
-                  retryReason: isRetry ? 'providerTruncation' : '',
-                  isNested: false,
-                })
-              })
-              for (const usage of guarded.usages) recordToolLoopUsage(toolContext, usage)
-              bumpFreeformDiagnostic(toolContext, 'compactAnswerCalls')
-              if (guarded.usages.length > 1) bumpFreeformDiagnostic(toolContext, 'compactAnswerRetries')
-              // A response the provider itself flags as cut off at the token cap is not a completed
-              // answer, however fluent the fragment reads — see callOutcomeFromUsage's identical
-              // reasoning for ai_call_log. compactAnswerWithTruncationGuard already retried once
-              // with a "give a shorter, complete answer" nudge; if it is STILL truncated, its own
-              // returned text is an honest disclosure, not a stored/served sentence fragment.
-              if (guarded.truncated) bumpFreeformDiagnostic(toolContext, 'compactAnswerTruncatedUnrecovered')
-              const answerCall = { text: guarded.text, usage: guarded.usages.at(-1) }
-              recordFreeformToolIteration(toolContext, [`compact_${compactProfile}`])
-              toolContext.freeformDiagnostics ||= {}
-              toolContext.freeformDiagnostics.executionProfile = compactProfile
-              toolContext.freeformDiagnostics.compactVisualImages = visualEvidence.filter(block => block.type === 'image').length
-              const freeformDiagnostics = toolContext.freeformDiagnostics || {}
-              persistFreeformGenerationRun({
-                sessionId: req.body.sessionId || '', occasion: toolContext.occasion,
-                diagnostics: freeformDiagnostics, turnFailed: false, freeformTurnToken
-              })
-              clearRecentlyDiscussedPieceIds(req.body.sessionId)
-              // The garment this answer was about, for a follow-up that names nothing itself.
-              // Replaced on every compact answer, so a card or general answer leaves no subject.
-              const answeredSubjectIds = compactProfile === 'garment_fact' && preferredVisualIds
-                ? [...preferredVisualIds].filter(id => compactPieces.some(piece => Number(piece.id) === id))
-                : []
-              saveStylistConversationState({
-                ...(getStylistConversationState(req.body.sessionId || 'default') || {}),
-                garment_fact_subject: { piece_ids: answeredSubjectIds, question: typedQuestion }
-              }, req.body.sessionId || 'default')
-              return res.json({
-                answer: stripPieceIdCitations(answerCall.text),
-                savedCorrections: [], renderedBoards: [],
-                provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
-                model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
-                structuredOutfits: [], structuredOutfitsSource: null,
-                structuredOutfitsOccasion: null, structuredOutfitsSeason: null,
-                structuredOutfitsMood: null, structuredOutfitsMission: null,
-                structuredOutfitsActivity: null, debug: freeformDiagnostics, suggestedTitle: null
-              })
-            }
-          }
-        }
-        if (String(req.body.conversationMode || 'new_request') === 'new_request' && routed.value?.profile === 'bounded_multi' && routedLimit >= 2 && routedLimit <= 5) {
-          toolContext.turnMode = 'new_request'
-          toolContext.freeformDiagnostics ||= {}
-          toolContext.freeformDiagnostics.executionProfile = 'bounded_multi'
-          recordFreeformToolIteration(toolContext, ['generate_outfits'])
-          // 2026-09-16 (owner review): confirmed via /tmp/wardrobe-dev-unified.log — this exact
-          // shortcut called generate_outfits with no weather at all, was rejected
-          // (weather_context_required), and only succeeded after a second, model-issued call
-          // restated the temperature it had already read in the user's own words. That restatement
-          // is unnecessary: extractStructuredUserWeather (styling-engine/stylingIntent.js) already
-          // extracts literal stated Fahrenheit facts deterministically, and buildSingleOutfitConversationPayload
-          // already uses it for the identical purpose. Only the fields it actually returns are
-          // passed through — no `scope` or any other field is manufactured for either source below.
-          //
-          // This tool call always states `season` explicitly (a required field on generate_outfits),
-          // and resolveWeather (stylingContext.js) deliberately refuses its established-state
-          // weather-profile fallback whenever season provenance is 'explicit_request' — "a current
-          // explicit seasonal brief is a new instruction... must not silently inherit a derived
-          // snapshot from an older card or thread" — so a persisted-weather fallback must be passed
-          // as an explicit `user_weather` arg (which resolveWeather checks first, regardless of
-          // season provenance) to be reachable at all through this call shape.
-          //
-          // Current-turn literal weather always wins. The persisted weather_profile is consulted
-          // ONLY as a continuation fallback — "three more for the same outing" with no fresh number
-          // restated — gated on `!freshExecutionRequest`, the same structural continuation-vs-fresh-
-          // pivot signal already computed above for the router-eligibility decision (not a new
-          // keyword/weather-specific rule). A genuine fresh pivot ("actually, three hiking outfits
-          // tomorrow", no current outfit set) has freshExecutionRequest === true and never inherits a
-          // stale profile.
-          const currentTurnUserWeather = extractStructuredUserWeather(currentQuestion)
-          const continuationHighF = Number(compactState.weather_profile?.high_f)
-          const continuationLowF = Number(compactState.weather_profile?.low_f)
-          const continuationUserWeather = (Number.isFinite(continuationHighF) || Number.isFinite(continuationLowF))
-            ? {
-                ...(Number.isFinite(continuationHighF) ? { high_f: continuationHighF } : {}),
-                ...(Number.isFinite(continuationLowF) ? { low_f: continuationLowF } : {}),
-              }
-            : null
-          const shortcutUserWeather = currentTurnUserWeather
-            || (!freshExecutionRequest ? continuationUserWeather : null)
-          await executeTool('generate_outfits', {
-            occasion: routed.value.occasion,
-            activity: routed.value.activity,
-            season: routed.value.season,
-            mood: routed.value.mood,
-            mission: routed.value.mission,
-            limit: routedLimit,
-            location: routed.value.location,
-            date: routed.value.date,
-            ...(shortcutUserWeather ? { user_weather: shortcutUserWeather } : {})
-          }, toolContext)
-          if (toolContext.atomicMultiLookCompleted) {
-            const freeformDiagnostics = toolContext.freeformDiagnostics || {}
-            // A thread's dated plan survives a bounded-options turn (docs/cross-thread-continuity.md).
-            const threadPlan = getStylistConversationState(req.body.sessionId || 'default')?.plan
-            saveStylistConversationState(
-              { ...boundedConversationStateFromToolContext(toolContext), ...(threadPlan ? { plan: threadPlan } : {}) },
-              req.body.sessionId || 'default'
-            )
-            persistFreeformGenerationRun({
-              sessionId: req.body.sessionId || '',
-              occasion: toolContext.occasion,
-              diagnostics: freeformDiagnostics,
-              turnFailed: false,
-              freeformTurnToken
-            })
-            return res.json({
-              answer: stripPieceIdCitations(boundedAtomicMultiLookResponse(toolContext)),
-              savedCorrections: [],
-              renderedBoards: [],
-              provider: toolContext.resolvedProviderTarget?.provider || AI_PROVIDER,
-              model: toolContext.resolvedProviderTarget?.model || ACTIVE_STYLIST_MODEL,
-              structuredOutfits: toolContext.generatedOutfits,
-              structuredOutfitsSource: toolContext.source,
-              structuredOutfitsOccasion: toolContext.occasion,
-              structuredOutfitsSeason: toolContext.season,
-              structuredOutfitsMood: toolContext.mood,
-              structuredOutfitsMission: toolContext.mission,
-              structuredOutfitsActivity: toolContext.activity,
-              debug: freeformDiagnostics,
-              suggestedTitle: null
-            })
-          }
-        }
-      } catch (routerError) {
-        if (routerError?.usage) recordToolLoopUsage(toolContext, routerError.usage)
-        // This narrow route exists specifically to avoid a full-manifest retry. A compact visual
-        // serialization/provider failure does not mean the full stylist is needed, so surface it
-        // instead of silently converting a failed cheap call into the most expensive path.
-        if (isSavedPhotoWearMechanicsQuestion(currentQuestion, {
-          exactSubjectCount: exactNamedPieceIds.length,
-          savedPhotoCount: compactSavedPhotoCount
-        })) {
-          console.error('[Freeform Compact Garment Fact] Refusing expensive full-stylist fallback:', routerError.message)
-          throw routerError
-        }
-        console.warn('[Freeform Execution Router] Falling back to full stylist:', routerError.message)
-      }
-    }
-    const payload = singleOutfitRoute
-      ? buildSingleOutfitConversationPayload(req.body, singleOutfitRoute)
-      : await buildStylistConversationPayload({
-          ...req.body,
-          occasion: req.body.occasion,
-          season: req.body.season,
-          activity: req.body.activity,
-          ...(tripPlanRoute ? { tripPlanTurn: true, routedLocation: String(tripPlanRoute.location || '') } : {}),
-          ...(routedFreshProfile ? { routedProfile: routedFreshProfile } : {}),
-          // Only an ordinary text follow-up: an attached image or outfit/piece launch keeps the full request.
-          tripFollowupEligible: !freshExecutionRequest && !req.body?.image && !req.body?.imageBase64,
-          answerInWords: toolContext.answerInWords === true,
-        })
-    // The lean trip turn (owner, 2026-10-07; measurements in docs/freeform-prompt-cache-levers.md).
-    // A fresh trip request used the full stylist request — the 273-piece wardrobe list and all 14
-    // tool definitions, ~46k tokens — only to call plan_outfit_set and then write the reply. It now
-    // gets the same instructions and thread state without the wardrobe list, and only the tools a
-    // trip turn uses. Follow-ups on a plan are not fresh and keep the full stylist.
-    if (tripPlanRoute) {
-      toolContext.allowedToolNames = ['declare_intent', 'plan_outfit_set', 'store_user_correction']
-      toolContext.freeformDiagnostics ||= {}
-      toolContext.freeformDiagnostics.executionProfile = 'trip_plan'
-    }
+    toolContext.freshExecutionRequest = freshExecutionRequest
+    toolContext.requireDeclaredReading = true
+    // docs/one-stylist-per-thread.md: continue this thread's provider conversation when it can be continued
+    // (askStylistWithTools decides; stylistContinuationDecision in provider.js).
+    toolContext.continueThread = true
+    toolContext.savedStylistContinuation = compactState.stylist_continuation || null
+    toolContext.savedPackingApproach = getSavedPackingApproach()
+    const payload = await buildStylistConversationPayload({
+      ...req.body,
+      occasion: req.body.occasion,
+      season: req.body.season,
+      activity: req.body.activity,
+      savedPackingApproach: toolContext.savedPackingApproach,
+      // Only an ordinary text follow-up: an attached image or outfit/piece launch keeps the full request.
+      tripFollowupEligible: !freshExecutionRequest && !req.body?.image && !req.body?.imageBase64,
+    })
     // The lean trip follow-up (core.js `tripFollowupTurn`): no wardrobe list, and only the tools a
     // question about an existing plan can use. A turn limited to informational tools keeps its own list.
     if (payload.tripFollowupTurn && !payload.restrictToInformationalTools && !Array.isArray(toolContext.allowedToolNames)) {
@@ -8300,10 +7767,11 @@ router.post('/ask', async (req, res) => {
       // thread's plan to be made again as a whole. Live thread_1791444946137: until the router's
       // rule said so, "Can you redo the plan…" was full_stylist by that rule ("any change to a plan
       // … that already exist"), the tool was withheld, and the answer was one look.
-      const replanRequested = toolContext.freeformDiagnostics?.executionRouterProfile === 'trip_plan'
-      toolContext.allowedToolNames = ['declare_intent', 'search_wardrobe', 'view_pieces', 'get_garment_details', 'suggest_slot_swaps', 'propose_outfit', ...(replanRequested ? ['plan_outfit_set'] : []), 'store_user_correction', 'search_past_conversations']
+      toolContext.allowedToolNames = ['declare_intent', 'search_wardrobe', 'view_pieces', 'get_garment_details', 'suggest_slot_swaps', 'propose_outfit', 'plan_outfit_set', 'store_user_correction', 'search_past_conversations']
       toolContext.freeformDiagnostics ||= {}
       toolContext.freeformDiagnostics.executionProfile = 'trip_followup'
+      // plan_outfit_set is refused here unless declare_intent said replan:true (tools.js).
+      toolContext.tripFollowupTurn = true
     }
     // Pieces already inside verified cards — the thread's current outfit set —
     // count as verified for citation purposes.
@@ -8351,25 +7819,13 @@ router.post('/ask', async (req, res) => {
       ]
         .map(Number).filter(Boolean)
     )]
-    if (singleOutfitRoute) {
-      toolContext.executionProfile = 'single_outfit'
-      toolContext.freeformDiagnostics.executionProfile = 'single_outfit'
-      declareSingleOutfitIntent(toolContext)
-      toolContext.allowedToolNames = ['search_wardrobe', 'view_pieces', 'propose_outfit']
-      toolContext.userWeather = payload.singleOutfitContext?.user_weather || null
-      toolContext.location = payload.singleOutfitContext?.location || toolContext.location
-      toolContext.currentDate = payload.singleOutfitContext?.date || toolContext.currentDate
-      toolContext.season = payload.singleOutfitContext?.season || toolContext.season
-      toolContext.mood = payload.singleOutfitContext?.mood || toolContext.mood
-      toolContext.mission = payload.singleOutfitContext?.mission || toolContext.mission
-    }
     // thread_1788556165595: a plain "what did you use" question about an existing plan reached
     // plan_outfit_set again and produced a second, different capsule. buildStylistConversationPayload
     // already told the model the answer sits in current_outfit_set — this removes the tool that let
     // it ignore that and regenerate instead, mirroring the outfit-critique-followup restriction below.
     // An invitation to think gets the same informational tools: she can look at the wardrobe and
     // name garments, but builds no card until the user asks to see one.
-    if (payload.restrictToInformationalTools || payload.answerInWords) {
+    if (payload.restrictToInformationalTools) {
       toolContext.allowedToolNames = ['search_wardrobe', 'view_pieces', 'get_garment_details', 'search_past_conversations']
     }
     const { answer, savedCorrections } = await askStylistWithTools({
@@ -8452,6 +7908,9 @@ router.post('/ask', async (req, res) => {
         freeformTurnToken: diagnosticsContext.freeformTurnToken || ''
       })
     }
+    // A failed turn leaves its message out of the provider conversation; the next turn rebuilds rather
+    // than continue a conversation that is missing it (docs/one-stylist-per-thread.md).
+    if (diagnosticsContext?.continueThread === true) clearStylistContinuation(req.body.sessionId || 'default')
     const { status, message } = describeAiError(err)
     res.status(status).json({ error: message })
   }

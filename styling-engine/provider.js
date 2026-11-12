@@ -2,6 +2,7 @@
 // DOCUMENTED IN: docs/freeform-rearchitecture-handoff.md — every guard here exists because of a
 // specific live failure recorded there. Read it before loosening or removing one.
 // See AGENTS.md.
+import { createHash } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { GoogleGenAI } from '@google/genai'
@@ -2151,6 +2152,51 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
   }
 }
 
+// docs/one-stylist-per-thread.md — one stylist per thread, continuing the same provider conversation
+// across turns instead of rebuilding it. Gemini's Interactions API keeps the conversation server-side
+// (previous_interaction_id), already chained within a turn; this carries the chain to the next turn.
+// The conversation is rebuilt from stored memory (today's path) when it cannot be continued.
+export const STYLIST_CONTINUATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000 // decision 4
+export const STYLIST_CONTINUATION_MAX_INPUT_TOKENS = 150000 // decision 3, provisional
+
+// The stable half of the stylist system prompt (constitution, profiles, wardrobe manifest) is set
+// once per provider conversation. When it changes — a garment edited, a prompt changed — the stored
+// conversation was built on something no longer true, so it is rebuilt.
+export function stablePromptFingerprint(system = '', model = '') {
+  const text = String(system || '')
+  const markerAt = text.indexOf(PROMPT_CACHE_BREAKPOINT)
+  const stable = markerAt === -1 ? text : text.slice(0, markerAt)
+  return createHash('sha256').update(`${model}\n${stable}`).digest('hex').slice(0, 32)
+}
+
+// What changes every turn (date, thread state, open plans, feedback, the turn directive). A continued
+// call sends no system prompt, so this rides in the turn's user message instead.
+export function volatilePromptTail(system = '') {
+  const text = String(system || '')
+  const markerAt = text.indexOf(PROMPT_CACHE_BREAKPOINT)
+  return markerAt === -1 ? '' : text.slice(markerAt + PROMPT_CACHE_BREAKPOINT.length).trim()
+}
+
+export function stylistContinuationDecision(saved = null, { provider = '', model = '', fingerprint = '', now = Date.now() } = {}) {
+  if (provider !== 'gemini') return { continue: false, reason: 'provider_without_server_conversation' }
+  if (!saved?.interaction_id) return { continue: false, reason: 'no_stored_conversation' }
+  if (saved.provider !== provider || saved.model !== model) return { continue: false, reason: 'model_changed' }
+  if (saved.fingerprint !== fingerprint) return { continue: false, reason: 'stable_prompt_changed' }
+  const age = now - Date.parse(saved.last_turn_at || '')
+  if (!Number.isFinite(age) || age > STYLIST_CONTINUATION_MAX_AGE_MS) return { continue: false, reason: 'idle_over_7_days' }
+  if (Number(saved.last_input_tokens) >= STYLIST_CONTINUATION_MAX_INPUT_TOKENS) return { continue: false, reason: 'size_limit' }
+  return { continue: true, reason: 'continued' }
+}
+
+export const TURN_CONTEXT_HEADER = 'TURN CONTEXT — for this turn only. It replaces the turn context sent with earlier messages in this conversation (today\'s date, the thread state, saved feedback and this turn\'s directives):'
+
+export function withTurnContext(content, tail = '') {
+  if (!tail) return content
+  const preface = `${TURN_CONTEXT_HEADER}\n\n${tail}\n\n— end of turn context —\n\nThe user's message:`
+  if (Array.isArray(content)) return [{ type: 'text', text: preface }, ...content]
+  return `${preface}\n${String(content || '')}`
+}
+
 async function callProviderTurn(provider, ctx) {
   if (provider === 'gemini') return callGeminiTurn(ctx)
   if (provider === 'openai') return callOpenAiTurn(ctx)
@@ -2205,6 +2251,27 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   let currentMessages = [...messages]
   let providerContinuation = null
   let syncedHistoryLength = 0
+  // docs/one-stylist-per-thread.md. Only /ask opts in (toolContext.continueThread); the other callers of
+  // this loop (outfit-evaluation follow-ups) keep rebuilding every call.
+  const fingerprint = toolContext.continueThread === true ? stablePromptFingerprint(plainSystem, target.model) : ''
+  const continuation = toolContext.continueThread === true
+    ? stylistContinuationDecision(toolContext.savedStylistContinuation, { provider: target.provider, model: target.model, fingerprint })
+    : null
+  const rebuildMessages = [...messages]
+  let continuedThisTurn = false
+  if (continuation?.continue && currentMessages.length) {
+    providerContinuation = toolContext.savedStylistContinuation.interaction_id
+    // The earlier turns are already in the provider's conversation; only the new message is sent, with
+    // the turn context that a continued call cannot carry in a system prompt.
+    syncedHistoryLength = currentMessages.length - 1
+    const last = currentMessages[currentMessages.length - 1]
+    currentMessages[currentMessages.length - 1] = { ...last, content: withTurnContext(last.content, volatilePromptTail(system)) }
+    continuedThisTurn = true
+  }
+  if (continuation) {
+    toolContext.freeformDiagnostics ||= {}
+    toolContext.freeformDiagnostics.stylistContinuation = continuation.reason
+  }
   const savedCorrections = []
   const retriedChecks = new Set()
   // docs/activity-and-roster-spec.md Part 4. The model writes its conversational prose — intro, the
@@ -2250,14 +2317,42 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       provider: target.provider, model: target.model, subflow: 'stylist_tool_loop', iterationIndex: iter, callId: captureCallId,
       system, messages: currentMessages, tools: availableTools,
     })
-    const turn = await callProviderTurn(target.provider, {
-      system, plainSystem, model: target.model, captureCallId, iterationIndex: iter,
-      canonicalMessages: currentMessages,
-      unsyncedEntries, continuation: providerContinuation,
-      tools: availableTools, maxTokens,
-    })
+    let turn
+    try {
+      turn = await callProviderTurn(target.provider, {
+        system, plainSystem, model: target.model, captureCallId, iterationIndex: iter,
+        canonicalMessages: currentMessages,
+        unsyncedEntries, continuation: providerContinuation,
+        tools: availableTools, maxTokens,
+      })
+    } catch (err) {
+      // The stored conversation could not be continued (expired, deleted, or the provider refused it):
+      // rebuild it this turn from stored memory, once. Any other failure is the turn's own.
+      if (!(iter === 0 && continuedThisTurn) || err?.isBilling === true) throw err
+      console.warn('[Stylist continuation] continuing the stored conversation failed; rebuilding:', err.message)
+      continuedThisTurn = false
+      providerContinuation = null
+      currentMessages = [...rebuildMessages]
+      toolContext.freeformDiagnostics.stylistContinuation = 'continuation_failed'
+      turn = await callProviderTurn(target.provider, {
+        system, plainSystem, model: target.model, captureCallId, iterationIndex: iter,
+        canonicalMessages: currentMessages,
+        unsyncedEntries: currentMessages, continuation: null,
+        tools: availableTools, maxTokens,
+      })
+    }
     syncedHistoryLength = currentMessages.length
     if (turn.continuation !== undefined) providerContinuation = turn.continuation
+    // What the next turn continues from: this call's interaction, and how big the conversation now is.
+    if (fingerprint && target.provider === 'gemini' && providerContinuation) {
+      toolContext.stylistContinuationState = {
+        provider: target.provider,
+        model: target.model,
+        fingerprint,
+        interaction_id: providerContinuation,
+        last_input_tokens: Number(turn.usage?.inputTokens) || 0,
+      }
+    }
 
     recordToolLoopUsage(toolContext, turn.usage, { cacheSite: 'tool_loop' })
     if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'production') {

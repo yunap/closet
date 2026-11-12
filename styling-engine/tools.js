@@ -22,7 +22,7 @@ import { normalizeOutfitResult } from './outfitResult.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { createStylingContextResolver, projectStylingApplicabilityContext, resolveStylingContext, stepOutsideForecastLine } from './stylingContext.js'
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
-import { extractSeasonRequest } from '../lib/seasonContext.js'
+import { extractSeasonRequest, resolveCalendarSeason } from '../lib/seasonContext.js'
 import {
   resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
   serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
@@ -493,7 +493,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
 }
 
 export function declareBoundedMultiLookIntent(toolContext = {}, { limit, pieceId } = {}) {
-  const requestedCount = Math.max(1, Math.min(5, Number(limit) || 2))
+  const requestedCount = Math.max(1, Math.min(5, Number(limit) || 3))
   const eligible = toolContext.turnMode === 'new_request' && !pieceId && requestedCount >= 2 &&
     !toolContext.declaredIntent
   if (!eligible) return false
@@ -1163,16 +1163,24 @@ export function coldLayerDecisionSchemaProperty() {
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
-    description: "Declare what this turn should produce, when a later operation needs that contract. Required before propose_outfit, generate_outfits or render_preview, which are blocked until the turn declares want:'cards' or want:'image'. A cards declaration must also say whether the user's CURRENT message explicitly requires a removable layer; omission is a validation error, while 'unspecified' leaves the styling choice open. NOT required to answer in prose: an explanation, comparison, critique, garment question or recalled detail needs no declaration, and declaring want:'text' merely to answer costs a whole extra model round-trip for nothing. Re-call to update if the goal changes mid-turn. The declaration is consumed mechanically: it sets the turn's output contract (e.g. how many cards are owed) instead of keyword-guessing from the user's phrasing.",
+    description: "Declare what this turn should produce and how you read the user's situation. Required before search_wardrobe, propose_outfit, generate_outfits, plan_outfit_set or render_preview: list it FIRST, in the same response as your first search if you like. The reading (setting, occasion, activity, season, time_of_day) is applied to every wardrobe tool this turn — weather, footwear and season gates read it — so judge it only from the user's own words, in this message or earlier in the conversation; your own earlier replies are suggestions, not the user's plans. NOT required to answer in prose with no wardrobe tool: an explanation, comparison, critique or recalled detail needs no declaration. A cards declaration must also say whether the user's CURRENT message explicitly requires a removable layer. Re-call to update if the goal or the reading changes mid-turn; the last declaration wins.",
     input_schema: {
       type: "object",
       properties: {
-        want: { type: "string", enum: ["text", "cards", "image"], description: "What the user's message asks this turn to produce: 'text' = advice/answers/critique in prose; 'cards' = composed outfit cards (via propose_outfit / generate_outfits); 'image' = a rendered outfit image (not available in chat — declare it anyway so the gap is handled honestly)." },
+        want: { type: "string", enum: ["text", "cards", "image"], description: "What the user's message asks this turn to produce: 'text' = advice/answers/critique in prose; 'cards' = composed outfit cards (via propose_outfit / generate_outfits / plan_outfit_set); 'image' = a rendered outfit image. Use 'text' when the user is thinking with you — exploring directions, asking how you see a piece, what could go with it or what to consider — and is not asking to see, build or change an outfit; then talk it through and offer to build any of it. Use 'cards' when they ask to see, build, be dressed in, or change outfits, including asking for the outfits just shown to be made another way." },
+        setting: { type: "string", enum: ["includes_outdoors", "indoor_only", "indoor_destination", "not_stated"], description: "Where the clothes will be worn, from the user's own words. indoor_only ONLY when the whole occasion takes place inside the home the user is living or staying in, or another single heated or cooled room, with no travel and no time outdoors (hosting or staying in, working from home). indoor_destination when the occasion is spent indoors at a place the user goes to (a restaurant, someone else's home, an office, a theatre) and the only time outside is getting there and back: the outfit is judged for the room, the weather only for the way there. includes_outdoors when there is real time outside (errands, a barbecue, a market, a walk, sightseeing, a day moving between places, a trip), and for any request that asks about the weather. not_stated when the user has not said where or when the clothes will be worn and does not ask about weather — which pieces go together, how to style a garment. An occasion or season the user picked is the style and season they want, not a place or time. A follow-up that carries on with a situation the user already gave keeps that situation's setting." },
+        occasion: { type: "string", enum: OCCASION_VALUES, description: "The event's social register, not the relationship between attendees. A generic restaurant dinner, including dinner with friends, is city; an explicit dinner date, night out, evening drinks or dressy dinner is evening; coffee, errands, parks and explicitly low-key events are casual." },
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Nature walks, trails, woods and unpaved ground are hiking. Pavement, fairs, museums, sightseeing and city days are walking only when walking is actually part of the request. Travelling to a place, or a dinner there, is not walking: none." },
+        season: { type: "string", description: "The calendar season the outfit is for, when the user names one or names a date in another season ('in winter', 'for March'). Omit otherwise; it is never a temperature word like 'warm'." },
+        date: { type: "string", description: "YYYY-MM-DD when the user names a day, resolved from today's date." },
+        time_of_day: { type: "string", enum: ["", "morning", "afternoon", "evening"], description: "When the outing happens, if said or plainly implied: tonight, dinner, drinks, a concert at night are evening; breakfast, brunch, a morning walk are morning; lunch, an afternoon event are afternoon. Empty when unstated or the day spans." },
+        replan: { type: "boolean", description: "In a thread that already holds a trip plan: true ONLY when the user asks for the plan to be made again as a whole ('redo the plan', 'plan it again for …'). A question about one look, one day or one piece is not a replan, and neither is new information about the trip: answer those from the plan. plan_outfit_set is refused on such a thread without it." },
+        remember_packing_approach: { type: "string", description: "Usually omit. Only when the user states how they ALWAYS or usually pack — a standing preference, not this trip's choice — in their own words. It is kept only so a later trip can be asked 'same as usual?'; it is never applied without asking." },
         outfit_count: { type: "integer", minimum: 1, maximum: 5, description: "When want='cards' and the user asked for a specific number of outfits/looks/ideas, that number. Omit if unspecified." },
         layer_requirement: { type: "string", enum: ["required", "unspecified"], description: "Required whenever want='cards'. Use 'required' only when the user's CURRENT message explicitly asks that the outfit include a removable layer; otherwise use 'unspecified'. 'Unspecified' does not forbid a layer — choose one when the weather facts support it. Never infer this with garment names or use it as a warmth verdict." },
         turn_mode: { type: "string", enum: ["new_request", "followup", "correction", "explanation", "preference_reaction"], description: "Optional: your read of the conversational turn type, recorded for diagnostics." }
       },
-      required: ["want"]
+      required: ["want", "setting"]
     }
   },
   {
@@ -1380,7 +1388,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "generate_outfits",
-    description: "Compose a fresh visual BATCH of 2–5 outfit card options from the saved wardrobe when every look shares one occasion, activity, and weather context. Use only when the user asks for multiple fresh cards, not for ordinary text advice, one/best/pick-one requests, or an outfit already discussed. An ordinary new 'what should I wear?' with no request for several options is ONE recommended outfit: use declare_intent + visual search_wardrobe + propose_outfit, not this tool. When the user asks for options without a number, compose 2; an explicit count from 2 to 5 wins.",
+    description: "Compose a fresh visual BATCH of 2–5 outfit card options from the saved wardrobe when every look shares one occasion, activity, and weather context. Use only when the user asks for multiple fresh cards, not for ordinary text advice, one/best/pick-one requests, or an outfit already discussed. An ordinary new 'what should I wear?' with no request for several options is ONE recommended outfit: use declare_intent + visual search_wardrobe + propose_outfit, not this tool. When the user asks for options without a number, compose 3 (a few options is three); an explicit count from 2 to 5 wins.",
     input_schema: {
       type: "object",
       properties: {
@@ -1411,7 +1419,7 @@ export const STYLIST_TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        packing_approach: { type: "string", description: "For a trip: how the traveller packs, in their own words when they said so for this trip (in the request or in their answer to your question) — for example 'carry-on only, happy to re-wear' or 'something different most days'. It goes to the packer, which sizes the suitcase by it. Let it also set each activity's count (more looks for an activity that recurs on several days when they want variety) and the reuse dial. Omit when they have not said." },
+        packing_approach: { type: "string", description: "For a trip: how the traveller packs, in their own words when they said so for this trip (in the request or in their answer to your question) — for example 'carry-on only, happy to re-wear' or 'something different most days'. It goes to the packer, which sizes the suitcase by it. Let it also set each activity's count (more looks for an activity that recurs on several days when they want variety) and the reuse dial. When the request does not say how they are packing for THIS trip, do not call this tool yet: ask first, in one short question in your own voice, because there are real, different ways to pack and none is the default (packing light and re-wearing a few pieces or something different most days; carry-on or checked; laundry on the trip or not). How someone packs changes from trip to trip, so a usual approach on record is not assumed: ask whether this trip is the same as usual or different. If the request also names no activities, ask about those in the same question." },
         plan_kind: {
           type: "string",
           enum: ["trip", "seasonal_capsule", "coordinated_plan"],
@@ -1777,6 +1785,88 @@ function correctUnpermittedColdLayerDecisions(pendingPlan = {}, submittedOutfits
 
 // What the chat's progress line may say about a tool call (lib/turnProgress.js): its name and plain
 // counts or categories from its arguments, never the arguments themselves.
+export const DECLARED_SETTINGS = ['includes_outdoors', 'indoor_only', 'indoor_destination', 'not_stated']
+
+// A named season is the turn's calendar season unless it is today's own (then 'current season', so the
+// live season stands). Moved from routes/ai.js (was routerSeasonForTurn) with the router's retirement.
+export function seasonForReadTurn(season, date, now = new Date()) {
+  const named = extractSeasonRequest(season)
+  if (!named || named === 'current season') return season || ''
+  const isoDay = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? new Date(`${date}T12:00:00`) : null
+  const reference = isoDay && !Number.isNaN(isoDay.getTime()) ? isoDay : now
+  return named === resolveCalendarSeason('current season', reference) ? 'current season' : season
+}
+
+// How this user usually packs for trips, when they have said so (owner, 2026-10-07: "if there is no real
+// preference why doesn't she ask the user?", and "packing preference might change depending on a trip").
+// Never applied to a trip on its own: it only lets the stylist ask "same as usual, or different this
+// time?". Per-user global context (feedback-and-memory-map.md category 10). Moved from routes/ai.js;
+// written from declare_intent's remember_packing_approach since the router's retirement.
+export function getSavedPackingApproach() {
+  try {
+    return String(db.prepare("SELECT value FROM app_meta WHERE key = 'packing_approach'").get()?.value || '').trim()
+  } catch {
+    return ''
+  }
+}
+export function savePackingApproach(text = '') {
+  const value = String(text || '').trim().slice(0, 400)
+  if (!value) return ''
+  try {
+    db.prepare("INSERT INTO app_meta (key, value) VALUES ('packing_approach', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(value)
+  } catch (err) {
+    console.warn('savePackingApproach failed:', err.message)
+    return ''
+  }
+  return value
+}
+
+// The stylist's reading of the turn (declare_intent), applied with the same authority and the same
+// rules the execution router's reading had (routes/ai.js before 2026-11-11; engine map items 72, 85,
+// 109 and the 2026-09-16 season lock). A fresh request locks occasion, activity and season for the
+// whole turn, so a later tool call cannot invent walking or turn "warm" into summer. A follow-up keeps
+// the thread's established values unless the user named a new season or activity this turn. Setting
+// and time of day apply to every turn; the last declaration wins, so the flags are reset first.
+export function applyDeclaredTurnReading(toolContext = {}, reading = {}, { want = '', outfitCount = null } = {}) {
+  const fresh = toolContext.freshExecutionRequest === true
+  toolContext.executionRouterIndoorOnly = reading.setting === 'indoor_only'
+  toolContext.executionRouterIndoorDestination = reading.setting === 'indoor_destination'
+  toolContext.executionRouterNoSituation = reading.setting === 'not_stated'
+  toolContext.executionRouterTimeOfDay = ['morning', 'afternoon', 'evening'].includes(reading.time_of_day) ? reading.time_of_day : ''
+  const activity = ACTIVITY_VALUES.includes(reading.activity) ? reading.activity : ''
+  const season = String(reading.season || '').trim() ? seasonForReadTurn(reading.season, reading.date) : ''
+  if (fresh) {
+    if (OCCASION_VALUES.includes(reading.occasion)) toolContext.occasion = reading.occasion
+    toolContext.activity = normalizeActivity(activity || 'none')
+    toolContext.executionRouterActivity = toolContext.activity
+    toolContext.executionRouterActivityLocked = true
+    toolContext.season = season || toolContext.season
+    toolContext.executionRouterSeason = toolContext.season
+    toolContext.executionRouterSeasonLocked = true
+  } else {
+    if (activity) toolContext.followUpRouterActivity = normalizeActivity(activity)
+    if (season) {
+      toolContext.followUpRouterSeason = season
+      toolContext.executionRouterSeason = season
+      toolContext.executionRouterSeasonLocked = true
+    }
+  }
+  const remembered = savePackingApproach(reading.remember_packing_approach)
+  if (remembered) toolContext.savedPackingApproach = remembered
+  // The chat shows how the request was read while the turn works (src/utils/turnProgressCopy.js).
+  reportTurnProgress('understood', {
+    profile: want === 'cards' ? (outfitCount >= 2 ? 'bounded_multi' : 'single_outfit') : 'full_stylist',
+    limit: Number(outfitCount) || 0,
+    occasion: String(reading.occasion || ''),
+    activity,
+    setting: reading.setting,
+    location: '',
+    date: String(reading.date || ''),
+    timeOfDay: toolContext.executionRouterTimeOfDay,
+    asking: false,
+  })
+}
+
 export function toolProgressFacts(name, args = {}) {
   const facts = { tool: String(name || '') }
   const categories = [].concat(args?.category || []).map(String).filter(Boolean)
@@ -1882,7 +1972,14 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             message: "declare_intent with want:'cards' also needs layer_requirement:'required' when the user's current message explicitly asks for a removable layer, or layer_requirement:'unspecified' otherwise. Repeat the declaration; omission is not silently treated as unspecified."
           }
         }
-        toolContext.declaredIntent = { want, outfitCount, turnMode, layerRequirement }
+        // docs/one-stylist-per-thread.md: the turn's reading of the user's situation, which the execution
+        // router used to make before the stylist ran. /ask requires it before wardrobe tools.
+        const setting = DECLARED_SETTINGS.includes(args?.setting) ? args.setting : null
+        if (!setting && toolContext.requireDeclaredReading === true) {
+          return { status: "validation_error", message: "declare_intent also needs setting: includes_outdoors, indoor_only, indoor_destination or not_stated, read from the user's own words. Repeat the declaration with it." }
+        }
+        toolContext.declaredIntent = { want, outfitCount, turnMode, layerRequirement, ...(setting ? { setting } : {}), ...(args?.replan === true ? { replan: true } : {}) }
+        if (setting) applyDeclaredTurnReading(toolContext, { ...args, setting }, { want, outfitCount })
         bumpFreeformDiagnostic(toolContext, 'intentDeclared')
         if (want === 'cards') {
           const seededCount = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits.filter(o => !o?.broken).length : 0
@@ -1913,6 +2010,11 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // Broadening re-enters this case with fewer filters. The pass counter keeps that internal:
         // one model-visible search stays one searchCalls bump however many rungs code climbed.
         const relaxationPass = Number(args.__relaxationPass) || 0
+        // The weather and footwear gates below read the turn's reading (docs/one-stylist-per-thread.md);
+        // a search before it would be gated on defaults (engine map item 85's outdoor-day mistake).
+        if (!relaxationPass && toolContext.requireDeclaredReading === true && !toolContext.declaredIntent?.setting) {
+          return { status: "validation_error", message: "Call declare_intent first (it can be in the same response, listed before this search) with want and your reading of the user's setting, occasion, activity and time of day. The search gates on that reading. Then repeat this search." }
+        }
         const relaxedSoFar = Array.isArray(args.__relaxedFilters) ? args.__relaxedFilters : []
         const hardGateExcludedIds = new Set(Array.isArray(args.__hardGateExcludedIds) ? args.__hardGateExcludedIds.map(Number) : [])
         const requestExcludedIds = new Set(Array.isArray(args.__requestExcludedIds) ? args.__requestExcludedIds.map(Number) : [])
@@ -3753,6 +3855,16 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             message: "No cards intent declared for this turn. Call declare_intent({ want: 'cards' }) first, then call plan_outfit_set again."
           }
         }
+        // A trip thread's plan is packed once; this tool packs a new suitcase from scratch and replaces
+        // it. Live thread_1791423893034: "for all 7 days?" (about one at-home look) was answered by
+        // re-planning the whole trip. The router used to withhold this tool unless it read a request to
+        // redo the plan; with the router retired (docs/one-stylist-per-thread.md) the stylist says so.
+        if (toolContext.tripFollowupTurn === true && toolContext.declaredIntent?.replan !== true) {
+          return {
+            status: "validation_error",
+            message: "This thread already holds a trip plan, and plan_outfit_set would replace it with a new suitcase. If the user asked for the plan to be made again as a whole, call declare_intent with replan:true first. Otherwise answer from the plan: suggest_slot_swaps for one piece, propose_outfit for a look the plan does not have."
+          }
+        }
         bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls')
         if (toolContext.capsuleAtomicAttempted) {
           return {
@@ -4921,7 +5033,12 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // Shown to the composer as the stylist's words, beside the user's message. Deliberately not
         // part of requestText: nothing reads it for weather, activity or register.
         const stylistBrief = String(args?.brief || '').trim().slice(0, 1500)
-        const boundedDefaultCount = toolContext.turnMode === 'new_request' && !piece_id ? 2 : 5
+        // The composer's weather and season gates read the turn's reading (docs/one-stylist-per-thread.md).
+        if (toolContext.requireDeclaredReading === true && !toolContext.declaredIntent?.setting) {
+          return { status: "validation_error", message: "Call declare_intent first (want:'cards' with your reading of the user's setting, occasion, activity and time of day; it can be in the same response, listed before this call), then call generate_outfits again." }
+        }
+        // Options asked for without a number are three (owner, 2026-11-10; engine map item 107).
+        const boundedDefaultCount = toolContext.turnMode === 'new_request' && !piece_id ? 3 : 5
         const requestedFromCall = Math.max(1, Math.min(5, Number(limit) || boundedDefaultCount))
         // Calling the narrowly-scoped bounded tool is itself an unambiguous cards declaration. This
         // removes a paid declare_intent round trip while leaving the general composing contract intact.

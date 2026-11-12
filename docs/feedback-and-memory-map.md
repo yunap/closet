@@ -310,6 +310,16 @@ Item 12's review surface is deferred, but its bounded storage, routing and undo 
   plan. **Authority across threads: history and context only.** Nothing read this way is preference
   memory, a rule, a score or a gate, and a verdict found by search is what the user wanted then, not a
   standing instruction. Within its own thread the category keeps its thread-only authority as above.
+- **[amended 2026-11-11 — one stylist per thread]** ([one-stylist-per-thread.md](one-stylist-per-thread.md)).
+  The thread state gains `stylist_continuation`: provider, model, prompt fingerprint, the last Gemini
+  interaction id, its input size and `last_turn_at`.
+  - Written by `persistFullStylistTurnState`, carried through `buildStylistConversationPayload`'s state
+    write, and cleared by `clearStylistContinuation` when a turn fails.
+  - Read by `askStylistWithTools` (via `/ask`) to continue the provider conversation.
+  - **Authority: none of its own.** It is a pointer to a provider-side conversation, which then holds the
+    earlier turns verbatim, including the assistant's own replies, as today's 8-message history window
+    did.
+  - Google keeps a stored interaction up to 55 days (paid tier); the app continues one only within 7 days.
   **[amended 2026-11-11, owner ruling "use its suitcase"]** One exception carries more than context.
   When the search finds a plan that has not ended, `adoptOpenPlanSuitcase` puts that thread's
   `packing_roster` in force for the current turn, so its suitcase gets the same packing-set disclosure
@@ -352,6 +362,12 @@ Item 12's review surface is deferred, but its bounded storage, routing and undo 
   a trip" — so it is never applied to a trip; its only use is to let the stylist ask "same as
   usual, or different this time?". What the packer reads is `plan_outfit_set.packing_approach`,
   which comes from this trip's request or answer. There is no UI to view or clear it yet.
+  **[amended 2026-11-11]** With the router retired from `/ask` ([one-stylist-per-thread.md](one-stylist-per-thread.md)):
+  - **Written** from the stylist's `declare_intent` `remember_packing_approach`, by `savePackingApproach`,
+    which now lives in `tools.js` (`routes/ai.js` re-exports it).
+  - **Read** into the full stylist's per-turn context as "USUAL PACKING APPROACH (on record, never assumed
+    for a trip)".
+  - Authority unchanged.
 - **Authority** — **system prompt.** Stronger and broader than an owner rule: an owner rule is one
   line in a user message, a constitution layer is part of the stylist's standing instructions.
 - Seven active layers at time of writing — `aesthetic_gravity`, `body_contract`, `editorial_shoes`,

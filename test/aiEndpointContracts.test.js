@@ -7495,8 +7495,10 @@ test('bounded multi-look routing is unconditional in the freeform controller pro
     // The guidance is unchanged in substance; it now lives in the volatile controller instead of in
     // the tool schemas. See docs/freeform-prompt-cache-levers.md lever 1.
     assert.match(String(bounded.system), /BOUNDED MULTI-LOOK EXCEPTION/)
-    assert.match(String(bounded.system), /do NOT call declare_intent and do NOT call search_wardrobe/)
-    assert.match(String(bounded.system), /defaults to limit:2/)
+    // 2026-11-11 (docs/one-stylist-per-thread.md): the batch declares the turn's reading first; options
+    // without a number are three (owner, 2026-11-10).
+    assert.match(String(bounded.system), /do NOT call search_wardrobe — call declare_intent/)
+    assert.match(String(bounded.system), /Options asked for without a number are 3/)
     assert.match(String(bounded.system), /Never flatten distinct contexts/)
 
     // …and it is scoped to a fresh request, which the volatile block can do for free.
@@ -9426,48 +9428,6 @@ test('suggest_slot_swaps declares cards intent itself when none was declared, an
 
 // The lean trip turn (owner, 2026-10-07): a fresh trip request carries the stylist's instructions and
 // thread state without the wardrobe list, and is offered only the tools a trip turn uses.
-test('a fresh trip request is routed to trip_plan and gets the stylist prompt without the wardrobe list', async () => {
-  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
-  const { routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
-  const body = { question: 'I am going to Seattle for a long weekend. What should I pack?', history: [], sessionId: 'lean-trip-contract' }
-  const text = payload => (typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system))
-  const full = await buildStylistConversationPayload({ ...body })
-  const lean = await buildStylistConversationPayload({ ...body, tripPlanTurn: true })
-  assert.match(text(full), /WARDROBE MANIFEST/)
-  assert.doesNotMatch(text(lean), /WARDROBE MANIFEST/)
-  assert.equal(lean.wardrobeManifestIncluded, false)
-  assert.ok(text(lean).length < text(full).length)
-  for (const kept of ['Planning a Coordinated Multi-Outfit Set', 'Destination & Weather Clarification', 'Trip Scope Clarification', 'STYLE CONSTITUTION']) {
-    assert.ok(text(lean).includes(kept), `the lean trip prompt keeps "${kept}"`)
-  }
-  assert.match(text(lean), /plan_outfit_set chooses what to pack from the whole wardrobe/)
-
-  let captured = null
-  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
-    captured = call
-    return { profile: 'trip_plan', occasion: 'travel', activity: 'none', setting: 'includes_outdoors', season: '', mood: '', mission: 'mix', limit: 0, location: 'Seattle', date: '', subject: '', clarifying_question: '', time_of_day: '' }
-  }
-  try {
-    const routed = await routeFreeformExecutionProfile({ question: body.question })
-    assert.equal(routed.value.profile, 'trip_plan')
-    assert.match(captured.system, /Choose trip_plan ONLY for a request to pack for/)
-    // thread_1791444946137: "redo the plan" was full_stylist under "any change to a plan … that
-    // already exist", so the follow-up was never offered plan_outfit_set and answered with one look.
-    assert.match(captured.system, /when the user asks for a trip plan this thread already holds to be made again as a whole/)
-    assert.match(captured.system, /a change to, part of a plan or cards that already exist \(one look, one piece, one day\); those are full_stylist/)
-    assert.doesNotMatch(captured.system, /any change to a plan or cards that already exist/)
-    assert.match(captured.system, /Not for a capsule wardrobe/)
-  } finally {
-    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
-  }
-  const routeSrc = (await import('node:fs')).readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
-  assert.match(routeSrc, /allowedToolNames = \['declare_intent', 'plan_outfit_set', 'store_user_correction'\]/)
-  assert.match(routeSrc, /freshExecutionRequest && compactProfile === 'trip_plan'/, 'only a fresh request; follow-ups on a plan keep the full stylist')
-})
-
-// thread_1791360025316: "I don't want to take 3 coats, what are my options?" — her advice about the
-// suitcase's own coats was rejected twice (unverified citation, then "call propose_outfit now") and
-// replaced by one new outfit card.
 test('advice about pieces already in the thread\'s plan is neither an unverified citation nor an unproposed outfit', async () => {
   const { applyFreeformOutputChecks } = await import('../styling-engine/provider.js')
   const advice = [
@@ -9795,25 +9755,25 @@ test('a trip follow-up is sent the whole plan, not the one card the last reply s
 
 // Live thread_1791423893034: "for all 7 days?" about one at-home look re-planned the whole trip with
 // a different suitcase; and a look for time in at a friend's house got an outdoor weather note.
-test('a trip follow-up cannot re-plan unless the router read a request to plan, and time in where the user is staying is indoor', async () => {
+test('a trip follow-up cannot re-plan unless the stylist declares a replan, and time in where the user is staying is indoor', async () => {
+  // Live thread_1791423893034: "for all 7 days?" was answered by re-planning the whole trip. The router used to
+  // withhold plan_outfit_set; with it retired (docs/one-stylist-per-thread.md) the tool refuses without replan:true.
   const { readFileSync } = await import('node:fs')
   const route = readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
-  assert.match(route, /const replanRequested = toolContext\.freeformDiagnostics\?\.executionRouterProfile === 'trip_plan'/)
-  assert.match(route, /`this thread holds a trip plan \(\$\{compactState\.packing_roster\.roster_ids\.length\} pieces packed\)`/, 'the router is told the thread holds a plan')
-  // 2026-11-11: search_past_conversations reads earlier threads and builds nothing (cross-thread-continuity.md).
-  assert.match(route, /'propose_outfit', \.\.\.\(replanRequested \? \['plan_outfit_set'\] : \[\]\), 'store_user_correction', 'search_past_conversations'\]/)
-  const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
-  // General, not a list of cases: the rule said "the user's own home", which left out a home they are staying in.
-  assert.match(provider, /inside the home the user is living or staying in, or another single heated or cooled room/)
-  assert.doesNotMatch(provider, /friend's or relative's house/)
+  assert.match(route, /'suggest_slot_swaps', 'propose_outfit', 'plan_outfit_set', 'store_user_correction', 'search_past_conversations'\]/)
+  assert.match(route, /toolContext\.tripFollowupTurn = true/)
+  const { executeTool, STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+  const toolContext = { tripFollowupTurn: true, requireDeclaredReading: true, freshExecutionRequest: false }
+  await executeTool('declare_intent', { want: 'cards', layer_requirement: 'unspecified', setting: 'includes_outdoors' }, toolContext)
+  const refused = await executeTool('plan_outfit_set', { slots: [{ label: 'Day', occasion: 'casual' }] }, toolContext)
+  assert.equal(refused.status, 'validation_error')
+  assert.match(refused.message, /replan:true/)
+  // General, not a list of cases: "the user's own home" left out a home they are staying in.
+  const setting = STYLIST_TOOLS.find(tool => tool.name === 'declare_intent').input_schema.properties.setting.description
+  assert.match(setting, /inside the home the user is living or staying in, or another single heated or cooled room/)
   const core = readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
   assert.match(core, /The plan on screen stays as it is\. A new need/)
 })
-
-// Live thread_1791434178633: three swaps in a row titled the card "Brushstroke Evening Dress Look —
-// charcoal ribbed knit sheath dress — charcoal wrap midi dress with draped ruching"; and the router
-// was told "For full_stylist use includes_outdoors", so an at-home look on a follow-up could never
-// be judged indoor.
 test('a swapped card takes the stylist\'s title or one suffix only, and the router judges setting on any profile', async () => {
   const { readFileSync } = await import('node:fs')
   const tools = readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')

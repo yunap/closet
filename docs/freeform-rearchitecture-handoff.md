@@ -2208,6 +2208,29 @@ Spec: [cross-thread-continuity.md](cross-thread-continuity.md).
 - **New lines in the tool list.** One line in each wardrobe-truth tool list (manifest and no-manifest)
   names the tool. Both lists are above the breakpoint, so the prefix changes once.
 
+## 2026-11-11 — one stylist per thread: tool schemas and prompt blocks
+
+Spec and as-built: [one-stylist-per-thread.md](one-stylist-per-thread.md).
+
+**Tool schemas:**
+- `declare_intent` gains `setting` (enum, schema-required; required by the handler on `/ask`), `occasion`,
+  `activity`, `season`, `date`, `time_of_day`, `replan` and `remember_packing_approach`.
+  - Their descriptions are the execution router's definitions, moved.
+  - The description now says the reading is required before `search_wardrobe` and the composing tools.
+  - The `want` description carries the router's words-vs-cards rule.
+- `generate_outfits`: options without a number are 3.
+- `plan_outfit_set.packing_approach` carries the router's "ask how they are packing for THIS trip" rule.
+
+**Prompt blocks:**
+- The controller's BOUNDED MULTI-LOOK EXCEPTION now has the stylist declare her reading and then call
+  `generate_outfits` once. It also says options without a number are 3, and an ordinary "what should I
+  wear?" is one outfit.
+- A per-turn "USUAL PACKING APPROACH" line.
+- On a continued conversation the whole volatile half of the system prompt is sent in the user message
+  under `TURN_CONTEXT_HEADER` (`withTurnContext`, `provider.js`).
+
+**Execution:** the execution router no longer runs on `/ask` (engine map item 112).
+
 ## Gotchas for the next assistant
 
 **Layer-direction ownership landed 2026-08-24.** `evaluateLayerDirections` is now the shared

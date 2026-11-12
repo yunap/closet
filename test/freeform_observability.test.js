@@ -179,33 +179,16 @@ test('the assistant\'s own words never become the thread\'s weather; the user\'s
 // thread_1792793923755 (2026-10-23): "what other directions can we explore?" and "let's think about
 // these pants some more…" were invitations to think and got cards. The router now says how to answer
 // (answer_form); a words turn gets an instruction to talk through directions and no card tools.
-test('an invitation to think is answered in words: router field, turn instruction, informational tools only', async () => {
-  const { FREEFORM_EXECUTION_ROUTE_SCHEMA } = await import('../styling-engine/provider.js')
-  assert.ok(FREEFORM_EXECUTION_ROUTE_SCHEMA.required.includes('answer_form'))
-  assert.deepEqual(FREEFORM_EXECUTION_ROUTE_SCHEMA.properties.answer_form.enum, ['cards', 'words'])
-
-  const question = 'ok, what other directions can we explore?'
-  const words = await buildStylistConversationPayload({
-    question, conversationMode: 'followup', sessionId: `words-${Date.now()}`,
-    history: [{ role: 'user', content: question }], answerInWords: true,
-  })
-  assert.equal(words.answerInWords, true)
-  assert.match(words.system, /The user is thinking with you this turn, not asking to see outfits/)
-  assert.match(words.system, /offer to build any of them as cards/)
-  const cards = await buildStylistConversationPayload({
-    question: 'make me an outfit with these pants', conversationMode: 'followup', sessionId: `cards-${Date.now()}`,
-    history: [{ role: 'user', content: 'make me an outfit with these pants' }],
-  })
-  assert.equal(cards.answerInWords, false)
-  assert.doesNotMatch(cards.system, /thinking with you this turn/)
-
-  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
-  assert.match(routeSrc, /toolContext\.answerInWords = routed\.value\?\.profile === 'full_stylist' && routed\.value\?\.answer_form === 'words'/)
-  assert.match(routeSrc, /if \(payload\.restrictToInformationalTools \|\| payload\.answerInWords\) \{\s*toolContext\.allowedToolNames = \['search_wardrobe', 'view_pieces', 'get_garment_details', 'search_past_conversations'\]/)
-  const offered = stylistToolsForTurn({ allowedToolNames: ['search_wardrobe', 'view_pieces', 'get_garment_details'] }).map(tool => tool.name)
-  assert.ok(!offered.some(name => ['propose_outfit', 'generate_outfits', 'plan_outfit_set', 'suggest_slot_swaps', 'render_preview'].includes(name)))
+test('an invitation to think is answered in words: the stylist declares text, and no card can be built', async () => {
+  // 2026-10-23 (thread_1792793923755), moved from the router to declare_intent (docs/one-stylist-per-thread.md).
+  const want = STYLIST_TOOLS.find(tool => tool.name === 'declare_intent').input_schema.properties.want.description
+  assert.match(want, /Use 'text' when the user is thinking with you — exploring directions/)
+  assert.match(want, /offer to build any of it/)
+  const toolContext = { requireDeclaredReading: true, freshExecutionRequest: false, retrievedPieceIds: new Set(), visuallySeenPieceIds: new Set() }
+  await executeTool('declare_intent', { want: 'text', setting: 'not_stated' }, toolContext)
+  const refused = await executeTool('propose_outfit', { pieces: [{ id: 1, role: 'primary_top' }] }, toolContext)
+  assert.notEqual(refused.status, 'success')
 })
-
 test('whole-wardrobe composer labels (shared fact line) expose opacity and explicit base-layer status, and no tagger do-not-pair text', async () => {
   const { sharedGarmentEvidenceLine } = await import('../styling-engine/garmentEvidenceLine.js')
   const lace = sharedGarmentEvidenceLine({ id: 1, name: 'lace top', category: 'top', fabric_category: 'lace', opacity: 'opaque', needs_base: 'no', tuck_behavior: 'wear_over_only' })
@@ -539,16 +522,6 @@ test('a shortened garment name resolves to the piece on the thread\'s cards, and
   assert.deepEqual(cardReferentPieceIds('is it washable?', history, pieces, cardPieceIds), [])
   assert.deepEqual(cardReferentPieceIds(question, history, pieces, []), [])
   assert.deepEqual(cardReferentPieceIds(question, history, pieces, [133, 996795]), [])
-})
-
-test('the route resolves a garment answer\'s subject before falling back to every card piece, and stores it', () => {
-  const routeSrc = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
-  const start = routeSrc.indexOf('const resolveReferent = () => {')
-  assert.ok(start > 0)
-  const body = routeSrc.slice(start, routeSrc.indexOf('}', routeSrc.indexOf('return fromExchange', start)))
-  assert.ok(body.indexOf('routerSubjectPieceIds') < body.indexOf('recentReferentPieceIds'))
-  assert.match(body, /followUpSubjectIds/)
-  assert.match(routeSrc, /garment_fact_subject: \{ piece_ids: answeredSubjectIds, question: typedQuestion \}/)
 })
 
 test('garment_fact weighs the wearer\'s words and its own earlier replies against the evidence', async () => {
@@ -1360,23 +1333,25 @@ test('freeform prompt ownership leaves tool mechanics in tool descriptions and o
   assert.doesNotMatch(base, /want:"text"|outfit_index|piece_ids/)
   assert.doesNotMatch(base, /BOUNDED MULTI-LOOK EXCEPTION/, 'the exception is a fresh-request rule only')
   assert.match(bounded, /BOUNDED MULTI-LOOK EXCEPTION/)
-  assert.match(bounded, /do NOT call declare_intent and do NOT call search_wardrobe/)
+  // docs/one-stylist-per-thread.md: the batch still skips the search, but declares the turn's reading first.
+  assert.match(bounded, /do NOT call search_wardrobe — call declare_intent \(want:'cards' with your reading of the situation\) and then generate_outfits exactly once/)
+  assert.match(bounded, /Options asked for without a number are 3/)
   assert.match(bounded, /One\/best\/pick-one requests stay on the verified search \+ propose path/)
   assert.match(bounded, /multi-context schedules and capsules use plan_outfit_set/)
   assert.match(bounded, /existing-card revisions use suggest_slot_swaps/)
 
   const tool = name => STYLIST_TOOLS.find(candidate => candidate.name === name)
   // The declaration is required by the operations that consume it, not by every turn: a prose
-  // answer needs none, and declaring want:'text' merely to answer buys a second round-trip for
-  // nothing (measured at $0.0134 against a ~$0.04 follow-up).
-  assert.match(tool('declare_intent').description, /Required before propose_outfit, generate_outfits or render_preview/)
-  assert.match(tool('declare_intent').description, /NOT required to answer in prose/)
+  // answer with no wardrobe tool needs none (a declaration costs a round-trip, measured at $0.0134
+  // against a ~$0.04 follow-up). Since 2026-11-11 it also carries the turn's reading, so search needs it.
+  assert.match(tool('declare_intent').description, /Required before search_wardrobe, propose_outfit, generate_outfits, plan_outfit_set or render_preview/)
+  assert.match(tool('declare_intent').description, /NOT required to answer in prose with no wardrobe tool/)
   assert.match(tool('suggest_slot_swaps').description, /change ONE slot/)
   assert.match(tool('suggest_slot_swaps').description, /you make the choice/, 'the stylist, not a ranking, picks the replacement (2026-10-06)')
   assert.match(tool('render_preview').description, /card produced this turn by index, or explicit piece_ids/)
   // Owner ruling 2026-10-02 (supersedes 2026-08-18): an ordinary request is ONE recommended outfit, not a batch of two.
   assert.match(tool('generate_outfits').description, /ordinary new 'what should I wear\?' with no request for several options is ONE recommended outfit/)
-  assert.match(tool('generate_outfits').description, /asks for options without a number, compose 2/)
+  assert.match(tool('generate_outfits').description, /asks for options without a number, compose 3/)
   assert.match(tool('plan_outfit_set').description, /multiple use-case slots/)
   // Grew from ~700 to ~890 chars when lever 1 moved the bounded exception out of the tool schemas.
   // That is the trade working: ~48 tokens of volatile text at full input price (~$0.00014/call)
@@ -1873,18 +1848,6 @@ test('wardrobe inventory compact completion formats exact active database counts
   assert.doesNotMatch(answer, /enough|missing|should|recommend/i)
 })
 
-test('wardrobe inventory profile returns after the router instead of entering declare_intent', () => {
-  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
-  const inventoryBranch = routeSrc.slice(
-    routeSrc.indexOf("compactProfile === 'wardrobe_inventory'"),
-    routeSrc.indexOf("['existing_card_explanation', 'garment_fact', 'general_advice'].includes(compactProfile)")
-  )
-  assert.match(inventoryBranch, /SELECT category, COUNT\(\*\)/)
-  assert.match(inventoryBranch, /compact_wardrobe_inventory/)
-  assert.match(inventoryBranch, /return res\.json/)
-  assert.doesNotMatch(inventoryBranch, /askStylistWithUsage|buildStylistConversationPayload|declare_intent/)
-})
-
 test('exact saved garment names seed compact fact context without guessing ambiguous identity', () => {
   const pieces = [
     { id: 264, name: 'black abstract print short tee' },
@@ -1905,14 +1868,6 @@ test('exact named saved-photo tuck questions deterministically use the bounded v
   assert.equal(isSavedPhotoWearMechanicsQuestion('What should I wear with my white scoop neck sleeveless top?', evidence), false)
   assert.equal(isSavedPhotoWearMechanicsQuestion('Does my white scoop neck sleeveless top look good tucked in?', { exactSubjectCount: 1, savedPhotoCount: 0 }), false)
   assert.equal(isSavedPhotoWearMechanicsQuestion('Does this top look good tucked in?', { exactSubjectCount: 0, savedPhotoCount: 1 }), false)
-})
-
-test('saved-photo presence is exposed to the router without leaking garment identity or image data', () => {
-  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
-  assert.match(routeSrc, /SELECT id, name, photo, worn_photo FROM pieces/)
-  assert.match(routeSrc, /saved garment photographs available: \$\{compactSavedPhotoCount\} resolved subject\(s\)/)
-  assert.match(routeSrc, /compactGarmentVisualEvidence\(visualPieces[,)]/)
-  assert.match(routeSrc, /Refusing expensive full-stylist fallback/)
 })
 
 test('view_pieces limits photographs to visible evidence rather than invented fiber or preference', () => {
@@ -2592,7 +2547,8 @@ test('every freeform run row is attributed to its thread, on success and on fail
     const next = routeSrc.indexOf(marker, at + 1)
     sites.push(routeSrc.slice(at, next === -1 ? at + 260 : Math.min(next, at + 260)))
   }
-  assert.ok(sites.length >= 5, `expected every persist call site to be found, got ${sites.length}`)
+  // Two since the router's shortcut paths were retired (docs/one-stylist-per-thread.md): the turn and its catch block.
+  assert.ok(sites.length >= 2, `expected every persist call site to be found, got ${sites.length}`)
   sites.forEach((site, index) => {
     assert.match(site, /sessionId: req\.body\.sessionId/,
       `persistFreeformGenerationRun call site ${index + 1} must pass the request's real thread ID`)
@@ -2621,53 +2577,49 @@ test('the /ask route records diagnostics from its catch block, not only on succe
   assert.match(routeSrc, /catch \(err\) \{[\s\S]{0,900}persistFreeformGenerationRun\(\{[\s\S]{0,300}turnFailed: true/)
 })
 
-test('compact answer profiles are unconditional, bounded, and return before the full manifest payload', () => {
-  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
-  // Default-on since 2026-08-19: no flag may gate these profiles.
-  assert.doesNotMatch(routeSrc, /WARDROBE_FREEFORM_/, 'freeform feature flags are removed, not re-added')
-  assert.match(routeSrc, /\['existing_card_explanation', 'garment_fact', 'general_advice'\]/)
-  const compactStart = routeSrc.indexOf("if (['existing_card_explanation', 'garment_fact', 'general_advice'].includes(compactProfile))")
-  const boundedStart = routeSrc.indexOf("if (String(req.body.conversationMode || 'new_request') === 'new_request'", compactStart)
-  const payloadStart = routeSrc.indexOf('const payload = singleOutfitRoute')
-  assert.ok(compactStart > 0 && compactStart < payloadStart, 'compact answer must return before full manifest payload assembly')
-  assert.ok(boundedStart > compactStart && boundedStart < payloadStart, 'compact and bounded execution profiles must remain separate branches')
-  const compactBlock = routeSrc.slice(compactStart, boundedStart)
-  // 2026-09-16 (owner review): the direct askStylistWithUsage call here was wrapped in
-  // compactAnswerWithTruncationGuard (routes/ai.js), which retries once on a provider-reported
-  // token-cap truncation and returns an honest disclosure rather than a stored fragment; the
-  // underlying askStylistWithUsage call now lives inside that helper, not inline here.
-  assert.match(compactBlock, /await compactAnswerWithTruncationGuard/)
-  assert.doesNotMatch(compactBlock, /askStylistWithTools|search_wardrobe|generate_outfits/)
-  assert.match(compactBlock, /compactFreeformAnswerMessage/)
-  assert.match(routeSrc, /profile !== 'general_advice' && pieces\.length/, 'general advice must not receive cards, garment facts, or established wardrobe context')
+test('a fresh request\'s declared reading becomes the turn\'s established occasion, activity and season', async () => {
+  const toolContext = { freshExecutionRequest: true, requireDeclaredReading: true, occasion: 'casual', season: 'current season' }
+  const result = await executeTool('declare_intent', { want: 'cards', layer_requirement: 'unspecified', setting: 'includes_outdoors', occasion: 'evening', activity: 'walking', season: 'winter', time_of_day: 'evening' }, toolContext)
+  assert.equal(result.status, 'success')
+  assert.equal(toolContext.occasion, 'evening')
+  assert.equal(toolContext.activity, 'walking')
+  assert.equal(toolContext.executionRouterActivity, 'walking')
+  assert.equal(toolContext.executionRouterActivityLocked, true)
+  assert.equal(toolContext.executionRouterSeason, 'winter')
+  assert.equal(toolContext.executionRouterSeasonLocked, true)
+  assert.equal(toolContext.executionRouterTimeOfDay, 'evening')
+  // A follow-up does not lock activity; a season the user names does replace the thread's.
+  const followUp = { freshExecutionRequest: false, requireDeclaredReading: true, activity: 'none', executionRouterSeason: 'fall', executionRouterSeasonLocked: true }
+  await executeTool('declare_intent', { want: 'text', setting: 'not_stated', activity: 'hiking', season: 'summer' }, followUp)
+  assert.equal(followUp.executionRouterActivityLocked, undefined)
+  assert.equal(followUp.followUpRouterActivity, 'hiking')
+  assert.equal(followUp.executionRouterSeason, 'summer')
+  assert.equal(followUp.executionRouterNoSituation, true)
 })
 
-test('the execution router bypasses the full manifest controller only after bounded composition succeeds', () => {
-  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
-  assert.match(routeSrc, /routed\.value\?\.profile === 'bounded_multi'/)
-  assert.match(routeSrc, /if \(toolContext\.atomicMultiLookCompleted\) \{[\s\S]{0,1200}return res\.json/)
-  const routerBlock = routeSrc.slice(
-    routeSrc.indexOf('if (routerEligible)'),
-    routeSrc.indexOf('const payload = singleOutfitRoute')
-  )
-  assert.doesNotMatch(routerBlock, /buildStylistConversationPayload|askStylistWithTools/)
-  assert.match(routerBlock, /saveStylistConversationState\([\s\S]*boundedConversationStateFromToolContext/)
-  assert.match(routerBlock, /catch \(routerError\) \{/)
-  assert.match(routerBlock, /Falling back to full stylist/)
-  assert.match(routerBlock, /Refusing expensive full-stylist fallback/)
-  assert.match(routerBlock, /executionRouterProfile = String\(compactProfile \|\| ''\)/)
-  assert.match(routerBlock, /executionRouterLimit = routedLimit/)
+test('on /ask the reading is required before a wardrobe search, and a declaration must carry a setting', async () => {
+  const toolContext = { requireDeclaredReading: true, freshExecutionRequest: true }
+  const refused = await executeTool('search_wardrobe', { category: ['top'] }, toolContext)
+  assert.equal(refused.status, 'validation_error')
+  assert.match(refused.message, /declare_intent first/)
+  const noSetting = await executeTool('declare_intent', { want: 'text' }, toolContext)
+  assert.equal(noSetting.status, 'validation_error')
+  const composeRefused = await executeTool('generate_outfits', { limit: 3 }, { requireDeclaredReading: true, turnMode: 'new_request' })
+  assert.equal(composeRefused.status, 'validation_error')
+  assert.match(composeRefused.message, /declare_intent first/)
+  // Outside /ask (direct callers, other flows) nothing changes.
+  const direct = await executeTool('declare_intent', { want: 'text' }, {})
+  assert.equal(direct.status, 'success')
 })
 
-test('a new-request router result remains established occasion/activity context for full stylist tools', () => {
-  const routeSrc = fs.readFileSync(path.join(process.cwd(), 'routes/ai.js'), 'utf8')
-  const routerStart = routeSrc.indexOf('const routed = await routeFreeformExecutionProfile')
-  const boundedStart = routeSrc.indexOf("routed.value?.profile === 'bounded_multi'", routerStart)
-  const contextBridge = routeSrc.slice(routerStart, boundedStart)
-  assert.match(contextBridge, /toolContext\.occasion = normalizeOccasion\(routed\.value\?\.occasion\)/)
-  assert.match(contextBridge, /toolContext\.activity = normalizeActivity\(routed\.value\?\.activity\)/)
-  assert.match(contextBridge, /toolContext\.executionRouterActivity = toolContext\.activity/)
-  assert.match(contextBridge, /toolContext\.executionRouterActivityLocked = true/)
+test('the last declaration wins: a later setting replaces the earlier one\'s weather mode', async () => {
+  const toolContext = { requireDeclaredReading: true, freshExecutionRequest: true }
+  await executeTool('declare_intent', { want: 'text', setting: 'indoor_only' }, toolContext)
+  assert.equal(toolContext.executionRouterIndoorOnly, true)
+  await executeTool('declare_intent', { want: 'cards', layer_requirement: 'unspecified', setting: 'indoor_destination' }, toolContext)
+  assert.equal(toolContext.executionRouterIndoorOnly, false)
+  assert.equal(toolContext.executionRouterIndoorDestination, true)
+  assert.equal(toolContext.executionRouterNoSituation, false)
 })
 
 test('persistFreeformGenerationRun stores aggregate provider usage for cost audits', () => {
@@ -3313,7 +3265,8 @@ test('bounded generate call declares its own cards contract only inside the narr
 
   const ordinaryWhatToWear = { turnMode: 'new_request' }
   assert.equal(declareBoundedMultiLookIntent(ordinaryWhatToWear), true)
-  assert.deepEqual(ordinaryWhatToWear.declaredIntent, { want: 'cards', outfitCount: 2, turnMode: 'new_request', layerRequirement: 'unspecified' })
+  // No count given is three (owner, 2026-11-10: a few options is three).
+  assert.deepEqual(ordinaryWhatToWear.declaredIntent, { want: 'cards', outfitCount: 3, turnMode: 'new_request', layerRequirement: 'unspecified' })
 
   // The four shapes that must still fall through to the verified serial path.
   for (const [context, call] of [
@@ -3419,10 +3372,9 @@ test('an indoor occasion the wearer travels to is judged for the room, and keeps
 
   const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
   assert.match(toolsSrc, /toolContext\.executionRouterIndoorDestination === true \? \{ statedWeather: 'indoor' \} : \{\}/, 'applied to every tool in the turn, without indoorOnly')
-  const routeSrc = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
-  assert.match(routeSrc, /toolContext\.executionRouterIndoorDestination = routed\.value\?\.setting === 'indoor_destination'/)
-  const providerSrc = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
-  assert.match(providerSrc, /Setting is indoor_destination when the occasion itself is spent indoors at a place the user goes to/)
+  // The stylist's own reading sets it (declare_intent, docs/one-stylist-per-thread.md), with the router's definition.
+  assert.match(toolsSrc, /toolContext\.executionRouterIndoorDestination = reading\.setting === 'indoor_destination'/)
+  assert.match(STYLIST_TOOLS.find(tool => tool.name === 'declare_intent').input_schema.properties.setting.description, /indoor_destination when the occasion is spent indoors at a place the user goes to/)
 })
 
 test('a setting the router fixed reaches the composer, which then looks up no forecast of its own', async () => {

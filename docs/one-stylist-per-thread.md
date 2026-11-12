@@ -1,8 +1,8 @@
 # One stylist per thread
 
-**Status:** Proposal, 2026-11-11. Not implemented. Owner asked for the write-up after the cross-thread
-work ([cross-thread-continuity.md](cross-thread-continuity.md)) shipped in PR #350. Its four design decisions are
-made under "Decisions".
+**Status:** active — built 2026-11-11 on `feat/one-stylist-per-thread` (owner: "build it"). Offline suite green;
+**not yet verified live**. Keep-or-revert follows the check-set run described under "Build". The design below is as
+proposed; what was built, and what moved where, is in "As built".
 
 ## The question
 
@@ -214,6 +214,71 @@ and no traffic criteria.
 
 **Keep or revert:** keep if the check-set answers are at least as good and quick answers are not slower
 than today's ~7 s; otherwise revert the commit.
+
+## As built (2026-11-11)
+
+**`/ask`** (`routes/ai.js`).
+- The execution-router call and every routed branch are gone: single outfit, bounded options shortcut,
+  compact answers, wardrobe inventory, router-written clarifying question, and the lean trip turn. Every
+  typed turn builds the full stylist payload.
+- `toolContext.freshExecutionRequest` keeps the structural freshness test.
+- `requireDeclaredReading` and `continueThread` are set.
+- The usual packing approach is passed into the payload.
+
+**The reading** (`declare_intent`, `applyDeclaredTurnReading` in `tools.js`).
+- New fields: `setting` (required), `occasion`, `activity`, `season`, `date`, `time_of_day`, `replan`
+  and `remember_packing_approach`, carrying the router's own definitions.
+- It sets the same `toolContext` fields the router set (`executionRouterIndoorOnly`,
+  `…IndoorDestination`, `…NoSituation`, `…TimeOfDay`, the activity and season locks), read by
+  `resolveToolStylingContext` as before.
+- A fresh request locks occasion, activity and season. A follow-up takes a named season or activity only.
+- The last declaration wins.
+- On `/ask`, `search_wardrobe` and `generate_outfits` refuse without a declared setting.
+
+**Moved with the router's retirement, so no ruling is lost:**
+- **"A few options" is three** (engine map item 107). It is now in the `generate_outfits` description, its
+  default count, `declareBoundedMultiLookIntent`, and the per-turn controller.
+- **The trip packing question.** It is now in `plan_outfit_set`'s `packing_approach` description, and the
+  usual approach on record is a per-turn line.
+- **No whole-trip replan on a trip follow-up** (`thread_1791423893034`). `plan_outfit_set` is offered, but
+  refuses without `declare_intent` `replan:true`.
+- **The bounded exception in the controller.** It now declares the reading first, and states that an
+  ordinary "what should I wear?" is one outfit.
+
+**Continuation** (`provider.js`).
+- `stylistContinuationDecision` decides from these: provider Gemini, same model, same
+  `stablePromptFingerprint` (the text before `PROMPT_CACHE_BREAKPOINT`), last turn within 7 days, last
+  input under 150,000 tokens.
+- When it continues, `askStylistWithTools` chains the stored interaction id, sends only the new user
+  message, and prefixes it with `withTurnContext` (the volatile half of the system prompt).
+- If the continued call fails, it rebuilds once in the same turn. A billing failure is not retried.
+- Each call records `toolContext.stylistContinuationState`. `persistFullStylistTurnState` stores it as
+  thread state `stylist_continuation`, with `last_turn_at`, or removes it after a turn on another
+  provider. The catch block clears it.
+- `freeformDiagnostics.stylistContinuation` records the reason on every turn.
+
+**Not changed:**
+- Anthropic and OpenAI rebuild every turn, as before.
+- Other callers of `askStylistWithTools` (outfit-evaluation follow-ups) do not opt in.
+- A turn answered locally (the explicit-prohibition fast path) is not added to the provider conversation.
+  Its rule is saved to memory, which the next turn's context carries.
+
+**Left in place until the keep-or-revert decision.** These are unreachable from `/ask` but still
+unit-tested:
+- `routeFreeformExecutionProfile` and `FREEFORM_EXECUTION_ROUTER_SYSTEM`;
+- the compact-answer helpers (`compactFreeformContext`, `compactFreeformAnswerSystem`, …);
+- `buildSingleOutfitConversationPayload`;
+- core's `tripPlanTurn` and `answerInWords` branches.
+
+If the build is kept, they are deleted in one follow-up commit. If it is reverted, one commit restores the
+route.
+
+**Tests.**
+- Removed with their paths: `test/bounded_multi_context_continuity_e2e.test.js`, and eight route-shape tests
+  in `freeform_observability` and `aiEndpointContracts`.
+- Re-pointed to `declare_intent`: the occasion/activity/season lock, the indoor-destination setting, answer
+  in words, and the trip replan guard.
+- New: `test/one_stylist_per_thread.test.js`.
 
 ## Decisions (2026-11-11)
 
