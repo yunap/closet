@@ -317,38 +317,6 @@ VOICE:
 // `before` is the step the reader is about to take, so the sentence fits a path that searches and one that does not.
 export const readTheSituation = (before = 'Before you choose') => `The request text is the brief. The structured occasion and activity fields beside it are only a summary and lose detail. ${before}, work out from the wearer's own words what the time will actually involve: where it happens, how long, standing or sitting, moving or still, what the hands will be doing (cooking, serving, carrying, working), who will be there, and whether the wearer is the host, a guest, or just out. Picture how the wearer gets to a venue and what surrounds the visit. Near home, a museum, gallery, show or restaurant can be the whole outing: driven to, visited, and driven home. In a city the wearer is visiting, the same venue is usually one stop in a day spent walking that city. The request and where the wearer lives tell you which; when they do not, do not assume the walking. Read the room as well: who will see the wearer, what the wearer's part in it is, and what people at this kind of occasion, in this place and season, actually wear. That is your knowledge to bring, not a question for the wearer: say how you read it in your answer, so it can be corrected. Where you cannot tell how dressed the room will be, choose what is right across the likely range and say so. Decide what the outfit therefore has to do and what would get in the way. Choose pieces that do that job. A piece that looks right but works against what the wearer will be doing is the wrong piece.`
 
-const singleOutfitStylistTemplate = ({ name, p, c }) => `You are ${name}'s personal stylist, asked what to wear. Answer the way a stylist who knows ${p.object} and ${p.possessive} wardrobe would: picture the occasion, choose, and say why.
-
-READ THE SITUATION FIRST:
-${readTheSituation('Before you search')}
-
-When the request's setting is indoor only (the whole occasion in one heated or cooled room, such as hosting or staying at home), dress for the room, not for the weather outside: supply no weather_estimate and add no layer for warmth. The range and layering rules below apply to time actually spent outdoors, including travel to a venue.
-
-Compose exactly ONE complete outfit from ${p.possessive} saved wardrobe for the supplied occasion and conditions.
-
-WEARABILITY (a constraint on your choice, not the subject of your answer):
-${STYLIST_COMPETENCE_CONTRACT}
-
-STYLE CONSTITUTION:
-${c.body_contract}
-
-${c.proven_formulas}
-
-${c.aesthetic_gravity}
-
-${c.lane_neutrality}
-
-${c.working_style}
-
-${EXPRESSIVE_HIERARCHY_RULES}
-
-WORKFLOW:
-1. Search Wardrobe: Make one batched search_wardrobe call covering every category you may need. Pass occasion, activity, location, date, and user_weather unchanged. This returns a sparse stylist_catalog of hard-eligible garments in identity order.
-2. Visual Workbench: Select 8–12 pieces across roles worth seeing from the catalog (2–3 potential visual leaders/heroes with distinct silhouettes or character, compatible tops/bottoms, plausible shoes and layers; up to 12 unique IDs total). Call view_pieces with those IDs to pull them onto your workbench and inspect their photographs. If the photographs expose a concrete problem, you may make one additional targeted view_pieces call with up to 4 replacement IDs.
-3. Propose Outfit: Call propose_outfit with the chosen pieces, roles, a creative title, why it works, styling instructions, and your Stylist Note (step 4) as stylist_note. The turn normally ends when the card is accepted, so the note must be in this call. Validation is advisory: while missing essential slots (e.g. no bottom, no shoes) or unverified IDs are blocked, weather comfort provides advisory system notes. If propose_outfit returns an advisory note, you may either swap pieces if you made an unintended wearability error (which will update and replace your single proposed card), or address the trade-off candidly in your final note.
-4. Stylist Note (pass it as propose_outfit's stylist_note; if propose_outfit returns an advisory note and you get another turn, write the note again as your reply, taking the advisory into account): Write to ${name} directly, as long as it needs to be and no longer: a few lines when the choice is simple, more when there is a real tradeoff to explain. Open with what this occasion asks of an outfit, as you understood it from the request; then, after a blank line, your pick and why it suits THIS occasion: a reason that would stop being true for a different occasion or a different outfit. Praise that would fit any outfit is not a reason. If the outfit has a real drawback for what the wearer will be doing (a delicate fabric near cooking, a heel for hours of standing, a sleeve that gets in the way), either choose differently or say so plainly and say what to do about it. why_it_works is the card's one-line reason and must not be a copy of the note. Do not list the pieces again; the card shows every garment, photo, and role. Do NOT output <card> tags, raw JSON, markdown bullet lists, tables, or machine markup in your text — the interactive card is rendered solely by propose_outfit.
-
-${PHYSICAL_WEARABILITY_REALISM_RULES}`
 
 const styleSelectedItemTemplate = ({ name, c }) => `You are ${name}'s wardrobe art director, not a generic fashion assistant.
 Your job is to style ONE selected wardrobe item using corrected wardrobe truth.
@@ -1569,7 +1537,6 @@ export function buildPrompts({ profile = {}, constitution = {} } = {}) {
   }
   return {
     STYLIST_SYSTEM: currentStylistSystemTemplate({ name, p, c }),
-    SINGLE_OUTFIT_STYLIST_SYSTEM: singleOutfitStylistTemplate({ name, p, c }),
     STYLE_SELECTED_ITEM_SYSTEM: styleSelectedItemTemplate({ name, c }),
     EVALUATE_PIECE_SYSTEM: evaluatePieceTemplate({ name, p, c }),
     COMPARE_OUTFITS_SYSTEM: compareOutfitsTemplate({ name, c }),

@@ -22,7 +22,7 @@ import { normalizeOutfitResult } from './outfitResult.js'
 import { resolveActivityProfile } from './footwear-comfort.js'
 import { createStylingContextResolver, projectStylingApplicabilityContext, resolveStylingContext, stepOutsideForecastLine } from './stylingContext.js'
 import { updateAiTelemetryContext } from '../lib/aiCallTelemetry.js'
-import { extractSeasonRequest } from '../lib/seasonContext.js'
+import { extractSeasonRequest, resolveCalendarSeason } from '../lib/seasonContext.js'
 import {
   resolveWeatherForRequest, validateUserWeather, validateWeatherEstimate,
   serializeResolvedWeatherContext, normalizedWeatherLocationIdentity,
@@ -349,76 +349,6 @@ export function singleOutfitStylistCatalogLine(piece = {}) {
 
 export const stylistCatalogLine = singleOutfitStylistCatalogLine
 
-export function buildSingleOutfitStylistCatalog(pieces = [], { stylingContext, weatherWindow = '' } = {}) {
-  const unique = []
-  const seen = new Set()
-  for (const piece of Array.isArray(pieces) ? pieces : []) {
-    const id = Number(piece?.id)
-    if (!id || seen.has(id)) continue
-    seen.add(id)
-    unique.push(piece)
-  }
-  const grouped = new Map(SINGLE_OUTFIT_CATALOG_GROUP_ORDER.map(group => [group, []]))
-  for (const piece of unique) {
-    const group = wardrobeCategoryGroup(piece) || piece.category || 'other'
-    if (!grouped.has(group)) grouped.set(group, [])
-    grouped.get(group).push(piece)
-  }
-  const sections = []
-  const eligibleByCategory = {}
-  for (const [group, groupPieces] of grouped) {
-    if (!groupPieces.length) continue
-    const sorted = [...groupPieces].sort((a, b) => Number(a.id) - Number(b.id))
-    eligibleByCategory[group] = sorted.length
-    sections.push(`${group.toUpperCase()} (${sorted.length}):\n${sorted.map(singleOutfitStylistCatalogLine).join('\n')}`)
-  }
-  const catalog = sections.join('\n\n')
-
-  // No engine-derived thermal band target or cold-need instruction (2026-09-15): catalog rows state recorded construction, and the
-  // model judges the completed outfit against the stated conditions itself.
-  // thread_1789536455443: this instruction named silhouette/character criteria for the "visual
-  // leaders" explicitly, and said nothing about environmental capability at all — so a workbench
-  // built by that instruction alone naturally selected the most polished-looking layers (a trench,
-  // a lambskin jacket) and left the wardrobe's actual insulated options (a puffer, a wool coat, a
-  // shearling jacket) unseen and therefore unavailable at propose_outfit, even though their
-  // insulation/interior/protection facts were sitting in this same catalog. The added sentence below
-  // names no piece and sets no threshold — it only makes sure real warmth candidates get a fair
-  // look when conditions call for it, the same way "visual leaders" already gets a fair look for
-  // silhouette.
-  // thread_1789536455443 (reworded 2026-09-16, owner review): the first version said "insulated or
-  // substantial outerwear (read from each row's own insulation/weight facts)", which implied
-  // dedicated insulation or garment weight was the only route to real warmth — a system can also
-  // answer real exposure through wind/weather protection, layering, or other recorded construction
-  // the catalog states. Reworded to name the general property (construction plausibly relevant to
-  // the exposure) rather than the two specific fields.
-  const instruction = 'Assemble a visual workbench of 8–12 pieces worth seeing from this complete catalog across roles (2–3 potential visual leaders/heroes with distinct silhouettes or character, several compatible tops/bottoms, plausible shoes and layers). When the stated conditions call for real warmth, don\'t let silhouette or hero selection alone decide which layers you even look at — bring enough candidates whose recorded construction is plausibly relevant to the exposure (insulation, substantial weight, weather protection, or other stated construction) onto the workbench to judge them fairly alongside the more polished-looking options. Then call view_pieces with those piece IDs (up to 12 unique IDs total) to inspect their photographs. You do not need to assign every garment a rigid outfit role yet. After inspecting the photographs, compose one outfit using propose_outfit. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. The catalog order is identity order, not a ranking.'
-
-  // The conditions the tools resolved, stated as a fact. Live thread_1791328194271: the stylist is
-  // told to "let the tools resolve weather", the tools did (89°F falling to 65°F that evening) and
-  // filtered the catalog by it, and she was never told — so she chose trousers, boots and a cardigan
-  // and wrote about "the cooler evening air". Above, the model "judges the completed outfit against
-  // the stated conditions itself"; this is where they are stated. No target, no instruction on what
-  // to wear.
-  const resolvedWeather = stylingContext?.weatherProfile?.resolvedWeatherContext
-  const weatherLabel = resolvedWeather?.temperature && resolvedWeather.temperature.source !== 'heuristic'
-    ? truthfulWeatherLabel(resolvedWeather.temperature, { location: resolvedWeather.location })
-    : ''
-  // An occasion at home has no outdoor conditions to wear the outfit in; the forecast, when there is one,
-  // is for stepping outside only (owner ruling 2026-11-04).
-  const conditions = weatherLabel
-    ? `${weatherWindow ? `this ${weatherWindow}: ` : ''}${weatherLabel}. These are the conditions the outfit is worn in; say them in your Stylist Note so the wearer can correct them.`
-    : stepOutsideForecastLine(stylingContext?.weatherProfile)
-
-  return {
-    eligible_piece_count: unique.length,
-    eligible_by_category: eligibleByCategory,
-    ...(conditions ? { conditions } : {}),
-    sparse_conventions: SPARSE_CATALOG_CONVENTIONS,
-    instruction,
-    catalog,
-    serialized_character_count: catalog.length,
-  }
-}
 
 export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
   if (!toolContext) return
@@ -493,7 +423,7 @@ export function bumpFreeformDiagnostic(toolContext, field, amount = 1) {
 }
 
 export function declareBoundedMultiLookIntent(toolContext = {}, { limit, pieceId } = {}) {
-  const requestedCount = Math.max(1, Math.min(5, Number(limit) || 2))
+  const requestedCount = Math.max(1, Math.min(5, Number(limit) || 3))
   const eligible = toolContext.turnMode === 'new_request' && !pieceId && requestedCount >= 2 &&
     !toolContext.declaredIntent
   if (!eligible) return false
@@ -506,16 +436,6 @@ export function declareBoundedMultiLookIntent(toolContext = {}, { limit, pieceId
   return true
 }
 
-export function declareSingleOutfitIntent(toolContext = {}, { layerRequirement = 'unspecified' } = {}) {
-  toolContext.declaredIntent = {
-    want: 'cards',
-    outfitCount: 1,
-    turnMode: 'new_request',
-    layerRequirement: ['required', 'unspecified'].includes(layerRequirement) ? layerRequirement : 'unspecified',
-  }
-  bumpFreeformDiagnostic(toolContext, 'intentDeclared')
-  return toolContext.declaredIntent
-}
 
 // Nested bounded composers make a real provider call outside askStylistWithTools. Before this
 // helper, generate_outfits returned that usage in its own debug payload but the parent freeform row
@@ -1163,21 +1083,29 @@ export function coldLayerDecisionSchemaProperty() {
 export const STYLIST_TOOLS = [
   {
     name: "declare_intent",
-    description: "Declare what this turn should produce, when a later operation needs that contract. Required before propose_outfit, generate_outfits or render_preview, which are blocked until the turn declares want:'cards' or want:'image'. A cards declaration must also say whether the user's CURRENT message explicitly requires a removable layer; omission is a validation error, while 'unspecified' leaves the styling choice open. NOT required to answer in prose: an explanation, comparison, critique, garment question or recalled detail needs no declaration, and declaring want:'text' merely to answer costs a whole extra model round-trip for nothing. Re-call to update if the goal changes mid-turn. The declaration is consumed mechanically: it sets the turn's output contract (e.g. how many cards are owed) instead of keyword-guessing from the user's phrasing.",
+    description: "Declare what this turn should produce and how you read the user's situation. Required before search_wardrobe, propose_outfit, generate_outfits, plan_outfit_set or render_preview: list it FIRST, in the same response as your first search if you like. The reading (setting, occasion, activity, season, time_of_day) is applied to every wardrobe tool this turn — weather, footwear and season gates read it — so judge it only from the user's own words, in this message or earlier in the conversation; your own earlier replies are suggestions, not the user's plans. NOT required to answer in prose with no wardrobe tool: an explanation, comparison, critique or recalled detail needs no declaration. A cards declaration must also say whether the user's CURRENT message explicitly requires a removable layer. Re-call to update if the goal or the reading changes mid-turn; the last declaration wins.",
     input_schema: {
       type: "object",
       properties: {
-        want: { type: "string", enum: ["text", "cards", "image"], description: "What the user's message asks this turn to produce: 'text' = advice/answers/critique in prose; 'cards' = composed outfit cards (via propose_outfit / generate_outfits); 'image' = a rendered outfit image (not available in chat — declare it anyway so the gap is handled honestly)." },
+        want: { type: "string", enum: ["text", "cards", "image"], description: "What the user's message asks this turn to produce: 'text' = advice/answers/critique in prose; 'cards' = composed outfit cards (via propose_outfit / generate_outfits / plan_outfit_set); 'image' = a rendered outfit image. Use 'text' when the user is thinking with you — exploring directions, asking how you see a piece, what could go with it or what to consider — and is not asking to see, build or change an outfit; then talk it through and offer to build any of it. Use 'cards' when they ask to see, build, be dressed in, or change outfits, including asking for the outfits just shown to be made another way." },
+        setting: { type: "string", enum: ["includes_outdoors", "indoor_only", "indoor_destination", "not_stated"], description: "Where the clothes will be worn, from the user's own words. indoor_only ONLY when the whole occasion takes place inside the home the user is living or staying in, or another single heated or cooled room, with no travel and no time outdoors (hosting or staying in, working from home). indoor_destination when the occasion is spent indoors at a place the user goes to (a restaurant, someone else's home, an office, a theatre) and the only time outside is getting there and back: the outfit is judged for the room, the weather only for the way there. includes_outdoors when there is real time outside (errands, a barbecue, a market, a walk, sightseeing, a day moving between places, a trip), and for any request that asks about the weather. not_stated when the user has not said where or when the clothes will be worn and does not ask about weather — which pieces go together, how to style a garment. An occasion or season the user picked is the style and season they want, not a place or time. A follow-up that carries on with a situation the user already gave keeps that situation's setting." },
+        occasion: { type: "string", enum: OCCASION_VALUES, description: "The event's social register, not the relationship between attendees. A generic restaurant dinner, including dinner with friends, is city; an explicit dinner date, night out, evening drinks or dressy dinner is evening; coffee, errands, parks and explicitly low-key events are casual." },
+        activity: { type: "string", enum: ACTIVITY_VALUES, description: "Nature walks, trails, woods and unpaved ground are hiking. Pavement, fairs, museums, sightseeing and city days are walking only when walking is actually part of the request. Travelling to a place, or a dinner there, is not walking: none." },
+        season: { type: "string", enum: ["spring", "summer", "fall", "winter"], description: "The calendar season the outfit is for, ONLY when the user names one or names a date in another season ('in winter', 'for March'). Omit otherwise. Weather goes in the tools' weather fields, never here." },
+        date: { type: "string", description: "YYYY-MM-DD when the user names a day, resolved from today's date." },
+        time_of_day: { type: "string", enum: ["", "morning", "afternoon", "evening"], description: "When the outing happens, if said or plainly implied: tonight, dinner, drinks, a concert at night are evening; breakfast, brunch, a morning walk are morning; lunch, an afternoon event are afternoon. Empty when unstated or the day spans." },
+        replan: { type: "boolean", description: "In a thread that already holds a trip plan: true ONLY when the user asks for the plan to be made again as a whole ('redo the plan', 'plan it again for …'). A question about one look, one day or one piece is not a replan, and neither is new information about the trip: answer those from the plan. plan_outfit_set is refused on such a thread without it." },
+        remember_packing_approach: { type: "string", description: "Usually omit. Only when the user states how they ALWAYS or usually pack — a standing preference, not this trip's choice — in their own words. It is kept only so a later trip can be asked 'same as usual?'; it is never applied without asking." },
         outfit_count: { type: "integer", minimum: 1, maximum: 5, description: "When want='cards' and the user asked for a specific number of outfits/looks/ideas, that number. Omit if unspecified." },
         layer_requirement: { type: "string", enum: ["required", "unspecified"], description: "Required whenever want='cards'. Use 'required' only when the user's CURRENT message explicitly asks that the outfit include a removable layer; otherwise use 'unspecified'. 'Unspecified' does not forbid a layer — choose one when the weather facts support it. Never infer this with garment names or use it as a warmth verdict." },
         turn_mode: { type: "string", enum: ["new_request", "followup", "correction", "explanation", "preference_reaction"], description: "Optional: your read of the conversational turn type, recorded for diagnostics." }
       },
-      required: ["want"]
+      required: ["want", "setting"]
     }
   },
   {
     name: "search_wardrobe",
-    description: "Search the wardrobe database for matching active garments. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category; outside the single-outfit profile, the image budget is per category. On the single-outfit profile, compose search returns `stylist_catalog`: every hard-eligible garment in a sparse, decision-useful line format. It is identity-ordered, not ranked, and contains no code-selected outfits or photographic shortlist. Descriptive query/color/pattern/silhouette/fabric/neckline filters do not narrow this complete catalog; judge those styling preferences from its facts. Read the complete catalog, choose 8–12 pieces across roles to assemble a visual workbench, then call view_pieces with those IDs (up to 12 unique IDs total) to inspect their photographs; one additional targeted view of up to 4 IDs is allowed if the first photographs expose a concrete problem. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Catalog facts describe colour, pattern, silhouette, fit, fabric and fibre, construction, formality and footwear (the tagger's visual read is not in the catalog; view_pieces gives it as tagger_notes); occasion tags are omitted because every row already passed the request's occasion gate. Thermal facts describe the garment, not whether it suits today's conditions. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each ordinary result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
+    description: "Search the wardrobe database for matching active garments. BATCH IT: `category` accepts an array, so retrieve every category the outfit needs in ONE call (e.g. category:['top','bottom','shoes','outerwear']) rather than one call per category; the image budget is per category. If a filter matches nothing, the search broadens itself along a fixed ladder (free text, then descriptive filters, then occasion tags) and returns the closest active pieces with a `retrieval` entry stating what it relaxed; do not re-search to work around an empty result. That entry also names any category that is genuinely empty after broadening — a real wardrobe shortfall, which you may report as a gap. Category, active status and owner exclusions are never relaxed. Catalog facts describe colour, pattern, silhouette, fit, fabric and fibre, construction, formality and footwear (the tagger's visual read is not in the catalog; view_pieces gives it as tagger_notes); occasion tags are omitted because every row already passed the request's occasion gate. Thermal facts describe the garment, not whether it suits today's conditions. A `ruleFit` tier still applies for occasion/register/footwear fit: `prohibited` pieces are pre-excluded in compose mode. When a trip has an active packing roster, each ordinary result also carries `in_packing_roster` — search it first for an ordinary restyle. A result with `in_packing_roster:false` is not forbidden, but using it is a PROPOSED PACKING-SET CHANGE: say plainly that it adds to (or, if you know what it replaces, substitutes in) the suitcase, never a quiet swap.",
     input_schema: {
       type: "object",
       properties: {
@@ -1380,7 +1308,7 @@ export const STYLIST_TOOLS = [
   },
   {
     name: "generate_outfits",
-    description: "Compose a fresh visual BATCH of 2–5 outfit card options from the saved wardrobe when every look shares one occasion, activity, and weather context. Use only when the user asks for multiple fresh cards, not for ordinary text advice, one/best/pick-one requests, or an outfit already discussed. An ordinary new 'what should I wear?' with no request for several options is ONE recommended outfit: use declare_intent + visual search_wardrobe + propose_outfit, not this tool. When the user asks for options without a number, compose 2; an explicit count from 2 to 5 wins.",
+    description: "Compose a fresh visual BATCH of 2–5 outfit card options from the saved wardrobe when every look shares one occasion, activity, and weather context. Use only when the user asks for multiple fresh cards, not for ordinary text advice, one/best/pick-one requests, or an outfit already discussed. An ordinary new 'what should I wear?' with no request for several options is ONE recommended outfit: use declare_intent + visual search_wardrobe + propose_outfit, not this tool. When the user asks for options without a number, compose 3 (a few options is three); an explicit count from 2 to 5 wins.",
     input_schema: {
       type: "object",
       properties: {
@@ -1411,7 +1339,7 @@ export const STYLIST_TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        packing_approach: { type: "string", description: "For a trip: how the traveller packs, in their own words when they said so for this trip (in the request or in their answer to your question) — for example 'carry-on only, happy to re-wear' or 'something different most days'. It goes to the packer, which sizes the suitcase by it. Let it also set each activity's count (more looks for an activity that recurs on several days when they want variety) and the reuse dial. Omit when they have not said." },
+        packing_approach: { type: "string", description: "For a trip: how the traveller packs, in their own words when they said so for this trip (in the request or in their answer to your question) — for example 'carry-on only, happy to re-wear' or 'something different most days'. It goes to the packer, which sizes the suitcase by it. Let it also set each activity's count (more looks for an activity that recurs on several days when they want variety) and the reuse dial. When the request does not say how they are packing for THIS trip, do not call this tool yet: ask first, in one short question in your own voice, because there are real, different ways to pack and none is the default (packing light and re-wearing a few pieces or something different most days; carry-on or checked; laundry on the trip or not). How someone packs changes from trip to trip, so a usual approach on record is not assumed: ask whether this trip is the same as usual or different. If the request also names no activities, ask about those in the same question." },
         plan_kind: {
           type: "string",
           enum: ["trip", "seasonal_capsule", "coordinated_plan"],
@@ -1777,6 +1705,92 @@ function correctUnpermittedColdLayerDecisions(pendingPlan = {}, submittedOutfits
 
 // What the chat's progress line may say about a tool call (lib/turnProgress.js): its name and plain
 // counts or categories from its arguments, never the arguments themselves.
+export const DECLARED_SETTINGS = ['includes_outdoors', 'indoor_only', 'indoor_destination', 'not_stated']
+
+// A named season is the turn's calendar season unless it is today's own (then 'current season', so the
+// live season stands). Moved from routes/ai.js (was routerSeasonForTurn) with the router's retirement.
+export function seasonForReadTurn(season, date, now = new Date()) {
+  const named = extractSeasonRequest(season)
+  if (!named || named === 'current season') return season || ''
+  const isoDay = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? new Date(`${date}T12:00:00`) : null
+  const reference = isoDay && !Number.isNaN(isoDay.getTime()) ? isoDay : now
+  return named === resolveCalendarSeason('current season', reference) ? 'current season' : season
+}
+
+// How this user usually packs for trips, when they have said so (owner, 2026-10-07: "if there is no real
+// preference why doesn't she ask the user?", and "packing preference might change depending on a trip").
+// Never applied to a trip on its own: it only lets the stylist ask "same as usual, or different this
+// time?". Per-user global context (feedback-and-memory-map.md category 10). Moved from routes/ai.js;
+// written from declare_intent's remember_packing_approach since the router's retirement.
+export function getSavedPackingApproach() {
+  try {
+    return String(db.prepare("SELECT value FROM app_meta WHERE key = 'packing_approach'").get()?.value || '').trim()
+  } catch {
+    return ''
+  }
+}
+export function savePackingApproach(text = '') {
+  const value = String(text || '').trim().slice(0, 400)
+  if (!value) return ''
+  try {
+    db.prepare("INSERT INTO app_meta (key, value) VALUES ('packing_approach', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(value)
+  } catch (err) {
+    console.warn('savePackingApproach failed:', err.message)
+    return ''
+  }
+  return value
+}
+
+// The stylist's reading of the turn (declare_intent), applied with the same authority and the same
+// rules the execution router's reading had (routes/ai.js before 2026-11-11; engine map items 72, 85,
+// 109 and the 2026-09-16 season lock). A fresh request locks occasion, activity and season for the
+// whole turn, so a later tool call cannot invent walking or turn "warm" into summer. A follow-up keeps
+// the thread's established values unless the user named a new season or activity this turn. Setting
+// and time of day apply to every turn; the last declaration wins, so the flags are reset first.
+export function applyDeclaredTurnReading(toolContext = {}, reading = {}, { want = '', outfitCount = null } = {}) {
+  const fresh = toolContext.freshExecutionRequest === true
+  toolContext.executionRouterIndoorOnly = reading.setting === 'indoor_only'
+  toolContext.executionRouterIndoorDestination = reading.setting === 'indoor_destination'
+  toolContext.executionRouterNoSituation = reading.setting === 'not_stated'
+  toolContext.executionRouterTimeOfDay = ['morning', 'afternoon', 'evening'].includes(reading.time_of_day) ? reading.time_of_day : ''
+  const activity = ACTIVITY_VALUES.includes(reading.activity) ? reading.activity : ''
+  // Only a calendar season is a season. Live check 2026-11-11: the stylist declared season "cool" on most
+  // turns; locked as-is it matched no season-eligibility rule, so out-of-season pieces (linen trousers on a
+  // November evening) were no longer excluded. "warm" would lock as summer (the 2026-09-16 jacket loss).
+  // The season's own name only: the season parser reads 'warm' as summer, which is the mistake this guards.
+  const season = ['spring', 'summer', 'fall', 'autumn', 'winter'].includes(String(reading.season || '').trim().toLowerCase()) ? seasonForReadTurn(reading.season, reading.date) : ''
+  if (fresh) {
+    if (OCCASION_VALUES.includes(reading.occasion)) toolContext.occasion = reading.occasion
+    toolContext.activity = normalizeActivity(activity || 'none')
+    toolContext.executionRouterActivity = toolContext.activity
+    toolContext.executionRouterActivityLocked = true
+    toolContext.season = season || toolContext.season
+    toolContext.executionRouterSeason = toolContext.season
+    toolContext.executionRouterSeasonLocked = true
+  } else {
+    if (activity) toolContext.followUpRouterActivity = normalizeActivity(activity)
+    if (season) {
+      toolContext.followUpRouterSeason = season
+      toolContext.executionRouterSeason = season
+      toolContext.executionRouterSeasonLocked = true
+    }
+  }
+  const remembered = savePackingApproach(reading.remember_packing_approach)
+  if (remembered) toolContext.savedPackingApproach = remembered
+  // The chat shows how the request was read while the turn works (src/utils/turnProgressCopy.js).
+  reportTurnProgress('understood', {
+    profile: want === 'cards' ? (outfitCount >= 2 ? 'bounded_multi' : 'single_outfit') : 'full_stylist',
+    limit: Number(outfitCount) || 0,
+    occasion: String(reading.occasion || ''),
+    activity,
+    setting: reading.setting,
+    location: '',
+    date: String(reading.date || ''),
+    timeOfDay: toolContext.executionRouterTimeOfDay,
+    asking: false,
+  })
+}
+
 export function toolProgressFacts(name, args = {}) {
   const facts = { tool: String(name || '') }
   const categories = [].concat(args?.category || []).map(String).filter(Boolean)
@@ -1790,11 +1804,27 @@ export function toolProgressFacts(name, args = {}) {
   return facts
 }
 
+// Live check 2026-11-11 (docs/one-stylist-per-thread.md): "next Thursday", said on Wednesday 11 November, was
+// passed as 12–15 November; the stated-date override planned 19–22 correctly, but those dates appeared only
+// inside the weather data, and the reply told the user "November 12 through November 15". The plan's dates
+// are now a plain line on the result, with the replaced range named when the user's words overrode it.
+export function withPlannedDates(name, result, toolContext = {}) {
+  const dates = toolContext.plannedDatesForReply
+  if (name !== 'plan_outfit_set' || !dates?.start || !result || typeof result !== 'object' || Array.isArray(result)) return result
+  const span = dates.start === dates.end ? dates.start : `${dates.start} to ${dates.end}`
+  return {
+    planned_dates: dates.replaced
+      ? `The plan is for ${span}, from the user's own words. The dates you passed (${dates.replaced.start === dates.replaced.end ? dates.replaced.start : `${dates.replaced.start} to ${dates.replaced.end}`}) were wrong and were replaced; state ${span} in your reply.`
+      : `The plan is for ${span}.`,
+    ...result,
+  }
+}
+
 export async function executeTool(name, args, toolContext = {}) {
   console.log(`\n🤖 [Agent Tool Call] ${name} (${JSON.stringify(args)})`)
   reportTurnProgress('tool', toolProgressFacts(name, args))
   try {
-    const result = await executeToolInternal(name, args, toolContext)
+    const result = withPlannedDates(name, await executeToolInternal(name, args, toolContext), toolContext)
     logAgentToolResult(name, result)
     return result
   } catch (err) {
@@ -1882,16 +1912,17 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             message: "declare_intent with want:'cards' also needs layer_requirement:'required' when the user's current message explicitly asks for a removable layer, or layer_requirement:'unspecified' otherwise. Repeat the declaration; omission is not silently treated as unspecified."
           }
         }
-        toolContext.declaredIntent = { want, outfitCount, turnMode, layerRequirement }
+        // docs/one-stylist-per-thread.md: the turn's reading of the user's situation, which the execution
+        // router used to make before the stylist ran. /ask requires it before wardrobe tools.
+        const setting = DECLARED_SETTINGS.includes(args?.setting) ? args.setting : null
+        if (!setting && toolContext.requireDeclaredReading === true) {
+          return { status: "validation_error", message: "declare_intent also needs setting: includes_outdoors, indoor_only, indoor_destination or not_stated, read from the user's own words. Repeat the declaration with it." }
+        }
+        toolContext.declaredIntent = { want, outfitCount, turnMode, layerRequirement, ...(setting ? { setting } : {}), ...(args?.replan === true ? { replan: true } : {}) }
+        if (setting) applyDeclaredTurnReading(toolContext, { ...args, setting }, { want, outfitCount })
         bumpFreeformDiagnostic(toolContext, 'intentDeclared')
         if (want === 'cards') {
           const seededCount = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits.filter(o => !o?.broken).length : 0
-          if (toolContext?.executionProfile === 'single_outfit') {
-            return {
-              status: "success",
-              message: `Intent recorded: one outfit card${layerRequirement === 'required' ? '; removable layer required' : ''}. Make one batched search covering every category the outfit may need. Read the complete sparse stylist_catalog and choose 8–12 pieces across roles (2–3 potential visual leaders, supporting tops/bottoms, plausible shoes and layers) to pull onto your visual workbench via view_pieces. Inspect the photographs, compare options, and compose the strongest result yourself. If the first photographs expose a concrete problem, one additional targeted view of up to 4 IDs is allowed. Submit exactly one complete card through propose_outfit. Report a wardrobe gap only from the complete catalog and hard-exclusion report, never from the pieces you happened to view.`
-            }
-          }
           const boundedBatchContract = (turnMode === 'new_request' || (!turnMode && toolContext.turnMode === 'new_request')) &&
             outfitCount >= 2
             ? `For 2–5 fresh outfits sharing one occasion, activity, and weather context, call generate_outfits exactly once with limit:${outfitCount}; its returned cards are complete and must not be rebuilt with search_wardrobe or propose_outfit. `
@@ -1913,6 +1944,11 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // Broadening re-enters this case with fewer filters. The pass counter keeps that internal:
         // one model-visible search stays one searchCalls bump however many rungs code climbed.
         const relaxationPass = Number(args.__relaxationPass) || 0
+        // The weather and footwear gates below read the turn's reading (docs/one-stylist-per-thread.md);
+        // a search before it would be gated on defaults (engine map item 85's outdoor-day mistake).
+        if (!relaxationPass && toolContext.requireDeclaredReading === true && !toolContext.declaredIntent?.setting) {
+          return { status: "validation_error", message: "Call declare_intent first (it can be in the same response, listed before this search) with want and your reading of the user's setting, occasion, activity and time of day. The search gates on that reading. Then repeat this search." }
+        }
         const relaxedSoFar = Array.isArray(args.__relaxedFilters) ? args.__relaxedFilters : []
         const hardGateExcludedIds = new Set(Array.isArray(args.__hardGateExcludedIds) ? args.__hardGateExcludedIds.map(Number) : [])
         const requestExcludedIds = new Set(Array.isArray(args.__requestExcludedIds) ? args.__requestExcludedIds.map(Number) : [])
@@ -1925,7 +1961,6 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           for (const reason of reasons) if (String(reason || '').trim()) exclusionReasonsById.get(id).add(String(reason).trim())
         }
         const { query, color, occasion, pattern_type, silhouette, fabric_weight, fabric_category, neckline, activity, visual, intent, location, date } = args
-        const completeSingleOutfitCatalogSearch = toolContext?.executionProfile === 'single_outfit' && intent !== 'explain'
         const hadEstablishedWeatherContext = relaxationPass > 0
           ? args.__automaticGateContext === true
           : Boolean(toolContext.resolvedWeatherContext || toolContext.weatherProfile)
@@ -1933,7 +1968,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           toolContext.request,
           toolContext.question,
           toolContext.mission,
-          completeSingleOutfitCatalogSearch ? '' : query,
+          query,
           toolContext.mood
         ].filter(Boolean).join(' ')
         const stylingContext = await resolveToolStylingContext({
@@ -1977,30 +2012,30 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           sql += ` AND category IN (${categories.map(() => '?').join(',')})`
           params.push(...categories)
         }
-        if (pattern_type && !completeSingleOutfitCatalogSearch) {
+        if (pattern_type) {
           sql += " AND pattern_type = ?"
           params.push(pattern_type)
         }
-        if (silhouette && !completeSingleOutfitCatalogSearch) {
+        if (silhouette) {
           sql += " AND silhouette = ?"
           params.push(silhouette)
         }
-        if (fabric_weight && !completeSingleOutfitCatalogSearch) {
+        if (fabric_weight) {
           sql += " AND fabric_weight = ?"
           params.push(fabric_weight)
         }
-        if (fabric_category && !completeSingleOutfitCatalogSearch) {
+        if (fabric_category) {
           sql += " AND fabric_category = ?"
           params.push(fabric_category)
         }
-        if (neckline && !completeSingleOutfitCatalogSearch) {
+        if (neckline) {
           sql += " AND neckline = ?"
           params.push(neckline)
         }
         const rows = db.prepare(sql).all(...params).map(parsePiece)
         
         let filtered = rows
-        if (color && !completeSingleOutfitCatalogSearch) {
+        if (color) {
           filtered = filtered.filter(piece => pieceHasStructuredColor(piece, color))
         }
         let fallbackNote = ''
@@ -2056,7 +2091,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // pieces back into the roster the model composes from. Explain mode
         // remains inspectable, while owner constraints stay authoritative.
         filtered = automaticGateFiltered
-        if (query && !completeSingleOutfitCatalogSearch) {
+        if (query) {
           const qLower = query.toLowerCase()
           const queryOccasion = isOccasionOnlySearchQuery(query) ? canonicalOccasionFromQuery(query) : ''
           if (queryOccasion) {
@@ -2182,30 +2217,13 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         const weatherAwareSearch = resolvedTemperatureValues.some(value =>
           value !== null && value !== '' && Number.isFinite(Number(value)))
         const completeEligibleResults = results
-        // The compact single-outfit path gets a complete, sparse identity catalog and no
-        // code-selected visual shortlist. The previous implementation enumerated thousands of
-        // complete systems and chose four before the stylist saw the wardrobe; the model-facing
-        // disclaimer could not undo that practical ownership. The stylist now nominates the IDs
-        // to photograph through view_pieces, and propose_outfit validates the chosen system.
-        const singleOutfitCatalog = completeSingleOutfitCatalogSearch
-          ? buildSingleOutfitStylistCatalog(completeEligibleResults, { stylingContext, weatherWindow: toolContext.weatherWindowUsed || '' })
-          : null
-        if (singleOutfitCatalog) {
-          toolContext.singleOutfitCatalogEligibleIds = new Set(completeEligibleResults.map(piece => Number(piece.id)))
-          toolContext.freeformDiagnostics ||= {}
-          toolContext.freeformDiagnostics.singleOutfitCatalogPieceCount = singleOutfitCatalog.eligible_piece_count
-          toolContext.freeformDiagnostics.singleOutfitCatalogCharacters = singleOutfitCatalog.serialized_character_count
-          results = []
-        }
         const gateExcludedCount = hardGateExcludedIds.size
         const requestExcludedCount = requestExcludedIds.size
         
         // Trim only when the manifest is genuinely in the prompt to join against. Above the piece
         // cap it is omitted and the full rows are the model's only view of a garment.
         const trimToJudgment = toolContext?.wardrobeManifestIncluded === true
-        console.log(singleOutfitCatalog
-          ? `🔍 [Agent Tool Call] search_wardrobe returned a complete ${singleOutfitCatalog.eligible_piece_count}-piece stylist catalog.`
-          : `🔍 [Agent Tool Call] search_wardrobe returned ${results.length} items.`)
+        console.log(`🔍 [Agent Tool Call] search_wardrobe returned ${results.length} items.`)
         // Rank within each category so the per-category image budget is independent. For a
         // weather-aware call, spread outerwear sight across construction groups; this does not
         // reorder or remove result rows, it only decides which finite set receives photographs.
@@ -2223,7 +2241,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // multiplying the ceiling by category count, floored so no category is starved to a
         // token-gesture count by division alone.
         const visualCategoryCount = seenPerCategory.size
-        const narrowVisualCap = toolContext?.executionProfile === 'single_outfit' ? 6 : SEARCH_WARDROBE_VISUAL_CAP
+        const narrowVisualCap = SEARCH_WARDROBE_VISUAL_CAP
         const perCategoryVisualCap = visualCategoryCount <= 1
           ? narrowVisualCap
           : Math.min(
@@ -2342,28 +2360,6 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'searchVisualImagesAttached', resultList.filter(r => r.image).length)
         }
 
-        if (singleOutfitCatalog) {
-          const reasonCounts = new Map()
-          for (const reasons of exclusionReasonsById.values()) {
-            for (const reason of reasons) reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1)
-          }
-          // Debug-only supply boundary (freeformDiagnostics reaches the response debug, not the model).
-          toolContext.freeformDiagnostics ||= {}
-          toolContext.freeformDiagnostics.singleOutfitCatalogEligibleIds = [...(toolContext.singleOutfitCatalogEligibleIds || [])]
-          toolContext.freeformDiagnostics.singleOutfitCatalogExclusions = Object.fromEntries(
-            [...new Set([...hardGateExcludedIds, ...requestExcludedIds])].map(id => [id, [...(exclusionReasonsById.get(id) || ['request exclusion'])]]))
-          singleOutfitCatalog.exclusion_report = {
-            excluded_piece_count: new Set([...hardGateExcludedIds, ...requestExcludedIds]).size,
-            by_reason: [...reasonCounts.entries()]
-              .map(([reason, count]) => ({ reason, count }))
-              .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
-            note: 'These pieces were not offered for automatic composition. Re-query with intent:explain to inspect them; absence here is not evidence that the garment does not exist.',
-          }
-          resultList.push({
-            stylist_catalog: singleOutfitCatalog,
-          })
-        }
-
         if (fallbackNote) {
           resultList.push({ note: fallbackNote })
         }
@@ -2407,7 +2403,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // result set is the unit. This is the only thing that triggers broadening: a request that
         // found something is never second-guessed, because "enough" is the stylist's judgment.
         const returnedByCategory = {}
-        const categoryCountPieces = singleOutfitCatalog ? completeEligibleResults : resultList.filter(piece => piece?.id)
+        const categoryCountPieces = resultList.filter(piece => piece?.id)
         for (const piece of categoryCountPieces) {
           if (!piece?.id) continue
           const key = wardrobeCategoryGroup(piece) || piece.category || 'other'
@@ -2563,15 +2559,6 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           bumpFreeformDiagnostic(toolContext, 'proposeUnverifiedPieceBlocks')
           contractIssues.push(`verify these pieces (the manifest is an index, not garment truth): call view_pieces with ids [${unverifiedPieces.map(p => Number(p.id)).join(', ')}]`)
         }
-        const unseenSingleOutfitPieces = toolContext?.executionProfile === 'single_outfit'
-          ? resolved.filter(p =>
-              (p.photo || p.worn_photo) &&
-              !seenIdsThisTurn.has(Number(p.id)) &&
-              !unverifiedPieces.some(u => Number(u.id) === Number(p.id)))
-          : []
-        if (unseenSingleOutfitPieces.length) {
-          contractIssues.push(`single-outfit candidates with photographs must be seen before composition: call view_pieces for [${unseenSingleOutfitPieces.map(p => Number(p.id)).join(', ')}]`)
-        }
         // Layered/base pieces carry construction risks the tags cannot capture
         // (lining, sheerness, true texture) — the model must have SEEN the photo
         // this turn. Pieces with no photo at all are exempt.
@@ -2664,19 +2651,14 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           stylingContext,
         })
 
-        const isSingleOutfit = toolContext?.executionProfile === 'single_outfit'
         // Log-only sleeve-geometry evidence: recorded for debug, never returned to the model.
         outfitDebug.sleeveGeometryShadow = wearableValidation.shadowFindings || []
 
         // Validate role/slot structure and wearability (mechanically enforced).
         const hardFindings = wearableValidation.hardFindings
         const advisoryFindings = wearableValidation.advisoryFindings || []
-        const blockingFindings = isSingleOutfit
-          ? hardFindings.filter(finding => finding.kind === 'role_structure')
-          : hardFindings
-        const nonBlockingFindings = isSingleOutfit
-          ? [...hardFindings.filter(finding => finding.kind !== 'role_structure'), ...advisoryFindings]
-          : advisoryFindings
+        const blockingFindings = hardFindings
+        const nonBlockingFindings = advisoryFindings
         const issues = blockingFindings.map(finding => finding.message)
 
         if (issues.length) {
@@ -2785,7 +2767,7 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           const decision = proposalEligibility.decisionsById.get(Number(piece.id))
           return decision?.allowed ? [] : [`${piece.name}: ${decision?.reasons?.join(', ') || 'ineligible'}`]
         })
-        if (!isSingleOutfit && autoGateIssues.length) {
+        if (autoGateIssues.length) {
           const brokenOutfit = normalizeOutfitResult({
             label: label || 'Outfit',
             broken: true,
@@ -2839,14 +2821,6 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             cardMessage: cardMsg,
             ...(finding.modelOnly ? { modelOnly: true } : {})
           })
-        }
-        if (isSingleOutfit) {
-          for (const msg of autoGateIssues) {
-            advisoryNotes.push({
-              type: 'Style note',
-              message: msg
-            })
-          }
         }
         if (!toolContext.sourceLocked) toolContext.source = 'proposed_outfit'
         toolContext.occasion = resolvedOccasion
@@ -3027,12 +3001,10 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           }
         }
         const nextOutfit = correctionRecovery?.value || proposedOutfit
-        toolContext.generatedOutfits = isSingleOutfit
-          ? [nextOutfit]
-          : [
-              ...existingOutfits.filter(outfit => outfit !== supersededBroken),
-              nextOutfit
-            ]
+        toolContext.generatedOutfits = [
+          ...existingOutfits.filter(outfit => outfit !== supersededBroken),
+          nextOutfit
+        ]
         // A one-card follow-up ends the same way (live thread_1791353402050): her note with the
         // proposal was a good short reply, and the extra closing call that followed it re-answered
         // every earlier question in the thread ("To answer your questions: …") and re-listed the
@@ -3040,16 +3012,10 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // cards or a plan; otherwise the closing call stands.
         const followupNote = typeof stylist_note === 'string' ? stylist_note.trim() : ''
         const declaredCount = Number(toolContext.declaredIntent?.outfitCount) || 0
-        if (!isSingleOutfit && followupNote && toolContext.turnMode && toolContext.turnMode !== 'new_request'
+        if (followupNote && toolContext.turnMode && toolContext.turnMode !== 'new_request'
           && declaredCount <= 1 && !toolContext.pendingPlan) {
           toolContext.followupProposalCompleted = true
           toolContext.followupStylistNote = followupNote
-        }
-        if (isSingleOutfit) {
-          toolContext.singleOutfitProposalCompleted = true
-          // The single-outfit loop ends on an accepted card, so the note has to arrive WITH the
-          // proposal; see askStylistWithTools (styling-engine/provider.js).
-          toolContext.singleOutfitStylistNote = typeof stylist_note === 'string' ? stylist_note.trim() : ''
         }
         bumpFreeformDiagnostic(toolContext, 'proposeCalls')
         return {
@@ -3072,46 +3038,19 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         }
       }
       case 'view_pieces': {
-        const singleOutfitViewCall = toolContext?.executionProfile === 'single_outfit'
-        const priorSingleOutfitViewCalls = Number(toolContext?.freeformDiagnostics?.singleOutfitViewCalls || 0)
-        if (singleOutfitViewCall && priorSingleOutfitViewCalls >= 2) {
-          return {
-            status: 'validation_error',
-            message: 'The single-outfit visual budget is complete. Compose from the pieces already viewed and submit one card through propose_outfit.',
-          }
-        }
-        const viewLimit = singleOutfitViewCall && priorSingleOutfitViewCalls === 1 ? 4 : 12
-        const allowedSource = toolContext?.allowedPieceIds || toolContext?.singleOutfitCatalogEligibleIds || null
+        const viewLimit = 12
+        const allowedSource = toolContext?.allowedPieceIds || null
         const allowedSet = allowedSource
           ? (allowedSource instanceof Set
             ? allowedSource
             : new Set(Array.isArray(allowedSource) ? allowedSource.map(Number) : []))
           : null
         let ids = []
-        if (singleOutfitViewCall) {
-          let rawIds = Array.isArray(args?.ids) ? args.ids : []
-          if (!rawIds.length && Array.isArray(args?.candidate_directions)) {
-            // Backward compatibility if model passes candidate_directions
-            rawIds = args.candidate_directions.flatMap(d => Array.isArray(d?.pieces) ? d.pieces.map(p => p?.id) : [])
-          }
-          ids = [...new Set(rawIds.map(Number).filter(Number.isFinite))].slice(0, viewLimit)
-          if (!ids.length) {
-            return {
-              status: "validation_error",
-              message: priorSingleOutfitViewCalls === 0
-                ? 'view_pieces needs ids: [<wardrobe piece ids>] to assemble your visual workbench (choose 8–12 pieces across roles).'
-                : 'view_pieces needs ids: [<wardrobe piece ids>] with up to 4 replacements.'
-            }
-          }
-          toolContext.freeformDiagnostics ||= {}
-          toolContext.freeformDiagnostics.singleOutfitWorkbenchPieceCount = ids.length
-        } else {
-          ids = (Array.isArray(args?.ids) ? args.ids : []).map(Number).filter(Number.isFinite).slice(0, viewLimit)
-          if (!ids.length) {
-            return {
-              status: "validation_error",
-              message: "view_pieces needs ids: [<wardrobe piece ids>]."
-            }
+        ids = (Array.isArray(args?.ids) ? args.ids : []).map(Number).filter(Number.isFinite).slice(0, viewLimit)
+        if (!ids.length) {
+          return {
+            status: "validation_error",
+            message: "view_pieces needs ids: [<wardrobe piece ids>]."
           }
         }
         const maxPx = args?.size === 'large' ? 896 : 448
@@ -3158,10 +3097,6 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         }
         recordRetrievedPieces(toolContext, viewed.filter(item => item.name).map(item => item.id))
         recordRetrievedPieces(toolContext, viewed.filter(item => item.image).map(item => item.id), { seen: true })
-        if (singleOutfitViewCall) {
-          toolContext.freeformDiagnostics ||= {}
-          toolContext.freeformDiagnostics.singleOutfitViewCalls = priorSingleOutfitViewCalls + 1
-        }
         bumpFreeformDiagnostic(toolContext, 'viewCalls')
         return viewed
       }
@@ -3753,6 +3688,16 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
             message: "No cards intent declared for this turn. Call declare_intent({ want: 'cards' }) first, then call plan_outfit_set again."
           }
         }
+        // A trip thread's plan is packed once; this tool packs a new suitcase from scratch and replaces
+        // it. Live thread_1791423893034: "for all 7 days?" (about one at-home look) was answered by
+        // re-planning the whole trip. The router used to withhold this tool unless it read a request to
+        // redo the plan; with the router retired (docs/one-stylist-per-thread.md) the stylist says so.
+        if (toolContext.tripFollowupTurn === true && toolContext.declaredIntent?.replan !== true) {
+          return {
+            status: "validation_error",
+            message: "This thread already holds a trip plan, and plan_outfit_set would replace it with a new suitcase. If the user asked for the plan to be made again as a whole, call declare_intent with replan:true first. Otherwise answer from the plan: suggest_slot_swaps for one piece, propose_outfit for a look the plan does not have."
+          }
+        }
         bumpFreeformDiagnostic(toolContext, 'planOutfitSetCalls')
         if (toolContext.capsuleAtomicAttempted) {
           return {
@@ -3837,6 +3782,14 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           planDateRange = modelDateRange
         }
         toolContext.freeformDiagnostics.dateRangeSource = dateRangeSource
+        // Stated back on the result (executeTool), so the reply names the dates the plan was built for.
+        toolContext.plannedDatesForReply = planDateRange.start ? {
+          start: planDateRange.start,
+          end: planDateRange.end || planDateRange.start,
+          replaced: dateRangeSource === 'user_stated' && modelDateRange.start && modelDateRange.start !== planDateRange.start
+            ? { start: modelDateRange.start, end: modelDateRange.end || modelDateRange.start }
+            : null,
+        } : null
         toolContext.freeformDiagnostics.resolvedDateRange = planDateRange.start
           ? `${planDateRange.start}${planDateRange.end && planDateRange.end !== planDateRange.start ? `..${planDateRange.end}` : ''}`
           : ''
@@ -4921,7 +4874,12 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // Shown to the composer as the stylist's words, beside the user's message. Deliberately not
         // part of requestText: nothing reads it for weather, activity or register.
         const stylistBrief = String(args?.brief || '').trim().slice(0, 1500)
-        const boundedDefaultCount = toolContext.turnMode === 'new_request' && !piece_id ? 2 : 5
+        // The composer's weather and season gates read the turn's reading (docs/one-stylist-per-thread.md).
+        if (toolContext.requireDeclaredReading === true && !toolContext.declaredIntent?.setting) {
+          return { status: "validation_error", message: "Call declare_intent first (want:'cards' with your reading of the user's setting, occasion, activity and time of day; it can be in the same response, listed before this call), then call generate_outfits again." }
+        }
+        // Options asked for without a number are three (owner, 2026-11-10; engine map item 107).
+        const boundedDefaultCount = toolContext.turnMode === 'new_request' && !piece_id ? 3 : 5
         const requestedFromCall = Math.max(1, Math.min(5, Number(limit) || boundedDefaultCount))
         // Calling the narrowly-scoped bounded tool is itself an unambiguous cards declaration. This
         // removes a paid declare_intent round trip while leaving the general composing contract intact.

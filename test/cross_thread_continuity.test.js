@@ -182,18 +182,6 @@ test('the full stylist sees another thread\'s open plan, and nothing when there 
   assert.equal(getStylistConversationState('thread_portland').plan?.location, 'Portland, OR')
 })
 
-test('the router\'s compact context names other threads\' open plans, and nothing when there are none', async () => {
-  const { routerOpenPlansContext } = await import('../routes/ai.js')
-  assert.equal(
-    routerOpenPlansContext({ sessionId: 'thread_current', currentDate: '2026-11-11T12:00:00-08:00', timezone: 'America/Los_Angeles' }),
-    'open plans in other conversations: Trip to Portland, OR 2026-11-12 to 2026-11-15'
-  )
-  assert.equal(routerOpenPlansContext({ sessionId: 'thread_portland', currentDate: '2026-11-11T12:00:00-08:00' }), '')
-  assert.equal(routerOpenPlansContext({ sessionId: 'thread_current', currentDate: '2026-11-20T12:00:00-08:00' }), '')
-  const route = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
-  assert.match(route, /'no usual packing approach on record',\s*routerOpenPlansContext\(req\.body\),\s*\]\.filter\(Boolean\)\.join\('; '\)/)
-})
-
 test('finding an open plan puts its suitcase in force for the turn, and only for the turn', async () => {
   const { boundedConversationStateFromToolContext } = await import('../routes/ai.js')
   addThread('thread_rome', { title: 'Rome trip', messages: [{ role: 'user', text: 'Rome next week.' }] })

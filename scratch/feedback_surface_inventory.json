@@ -68,7 +68,7 @@
     "stylist_conversation_state": {
       "disposition": "category",
       "category": 7,
-      "note": "thread-only context, including normalized resolved weather physics for follow-up precedence; its dated `plan` is read by other threads as open-plan context (2026-11-11)"
+      "note": "thread-only context, including normalized resolved weather physics for follow-up precedence; its dated `plan` is read by other threads as open-plan context (2026-11-11); `stylist_continuation` points at the provider conversation the next turn continues (2026-11-11)"
     },
     "whole_wardrobe_sessions": {
       "disposition": "category",

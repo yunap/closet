@@ -156,6 +156,11 @@ router sends a request that refers to an earlier, separate conversation to `full
 - **E, the trip day.** The block reached her and she did not use it on Flash-Lite. One run; no wording
   change was tried.
 
+**[amended 2026-11-11, later the same day]** The execution router was retired from `/ask`
+([one-stylist-per-thread.md](one-stylist-per-thread.md)). The router-context line and its rule are
+removed: `routerOpenPlansContext` and `openPlansRouterContext` are deleted. Every typed turn now reaches
+the full stylist, which already sees the open-plans block. The routing problem in case B no longer exists.
+
 ## Authority
 
 Both are **history and context**, not preference memory. Nothing here becomes a rule, a score or a gate,

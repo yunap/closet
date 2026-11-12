@@ -81,6 +81,8 @@ const ASSEMBLED_KEYS = [
 test('legacy profile + constitution reproduce every pre-refactor prompt byte-for-byte', () => {
   const built = buildPrompts({ profile: LEGACY_PROFILE, constitution: LEGACY_CONSTITUTION })
   for (const key of ASSEMBLED_KEYS) {
+    // Retired with the single-outfit route on 2026-11-11 (docs/one-stylist-per-thread.md); its frozen snapshot stays.
+    if (key === 'SINGLE_OUTFIT_STYLIST_SYSTEM') continue
     assert.ok(typeof snapshot[key] === 'string', `snapshot missing ${key}`)
     // 2026-08-18: one deliberate post-refactor composer instruction prevents its private roster
     // comparison from leaking into user-facing card prose. Keep the frozen pre-refactor fixture
@@ -221,12 +223,6 @@ test('legacy profile + constitution reproduce every pre-refactor prompt byte-for
     //    instruction tied to the structured evidence the tool already returns.
     // Delta (1) is applied further down, inside the 2026-09-10 STYLIST_SYSTEM block — it edits a
     // sentence that block creates, so it cannot run before it.
-    if (key === 'SINGLE_OUTFIT_STYLIST_SYSTEM') {
-      expected = expected.replace(
-        ' When conditions call for substantial warmth (sub-50°F / breezy), pull 2–3 insulating coats (warmth:warm or very warm) OR middle layer knits (cardigans or vests tagged outerwear (layer_top), warmth:moderate) onto your workbench so you have the visual pieces required for an appropriately warm system.',
-        " When the search result's thermal_guidance indicates a substantial cold-side need, bring enough plausible layer candidates onto the workbench to judge their construction and compatibility from their photographs, rather than settling on the first one."
-      )
-    }
     // 2026-09-01: the shoes `fabric_category` enum had no `knit` value, so a knitted/flyknit upper
     // was tagged inconsistently as `mesh` or `woven` depending on the photo — in one real wardrobe
     // the word "knit" appears in four shoe names split across both. That made the wet/cold footwear
@@ -808,7 +804,7 @@ test('the missing-layer repair prompt carries every ratified constitution layer'
   // The control that keeps this honest: the conversational stylist prompts carry all five, so this
   // is the repository rule for a stylist prompt and not a bar invented for this one template.
   for (const key of STYLIST_LAYERS) {
-    for (const promptKey of ['STYLIST_SYSTEM', 'SINGLE_OUTFIT_STYLIST_SYSTEM', 'STYLE_SELECTED_ITEM_SYSTEM']) {
+    for (const promptKey of ['STYLIST_SYSTEM', 'STYLE_SELECTED_ITEM_SYSTEM']) {
       assert.ok(built[promptKey].includes(`__SENTINEL_${key.toUpperCase()}__`),
         `${promptKey} carries ${key}, which is why the repair prompt must too`)
     }

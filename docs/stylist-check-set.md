@@ -203,3 +203,51 @@ norm varies by place, age and circle. The lines above that concern it are scored
 by a model, and a reading that is wrong for this wearer's circle is recorded as that wearer's context, not as a rule
 for everyone.
 
+## Run 2026-11-11 — one stylist per thread (Flash-Lite)
+
+The first run on the one-stylist build ([one-stylist-per-thread.md](one-stylist-per-thread.md)).
+- Stylist `gemini-3.5-flash-lite`, composers `gemini-3.7-flash`.
+- Entries 2, 3 and 7 were rerun after the continuation and season fixes; their rerun is scored.
+- Scored from the reply and the cards; card notes were not read.
+- The earlier runs above were on `gemini-3.7-flash`, so this is not a like-for-like model comparison.
+
+| Entry | Result |
+|---|---|
+| 1 | Six looks, including at-home mornings, a Friday walking look in wool sneakers, and separate winery and dinner looks; no weather question; nothing cashmere or silk for the stove (pass). The reply layers a plaid fleece coat over the winery look that is not on its card (fail). |
+| 2 | Three options; the reply says the host moves between kitchen and living room, but states no assumption about cooking or serving (weak). Follow-up "a little warmer" swapped the second card's top, continued in 8 s (pass). |
+| 3 | First reply reads the room ("polished, respectful… without feeling overly formal"), cutout flats, a coat for the way (pass). On the doubt she dresses the jeans without saying whether she still stands by her pick (fail, both runs; item 105's passing run was on 3.7 Flash). |
+| 4 | Three options; the third has cutout flats for a lawn (fail, unchanged); before the season fix, linen trousers in November (not rerun). |
+| 5 | Dates stated as 19–22 November (pass); Saturday dinner, a cooking-evenings look, no packing question (pass); rain not mentioned (weak). Follow-up "if it turns cold" adds the packed trench, no replan (pass). |
+| 6 | Three options with layers for sitting outside; no fire-pit caution and no reading of how dressed the dinner is (fail, as before). |
+| 7 | After the season fix: three options, each with a layer (lambskin jacket, bouclé jacket, vest), the evening's mid-50s to mid-60s stated, ankle boots and loafers (pass); the reading of the room is thin (weak, as before). Follow-up "why that jacket?" answered in 4 s from the conversation (pass). |
+
+**Second one-stylist run (2026-11-11, Flash-Lite, after the router code was deleted):**
+
+| Entry | Result |
+|---|---|
+| 1 | No weather question; rain stated, with a raincoat on the Friday look; winery look in a sweater with a trench and closed boots; dinner as its own look (pass). One breakfast look for every morning, not one per day with an outing (fail). Linen trousers on Sunday at home in November (weak). |
+| 3 | Reads the room (pass); pointed heels, nothing said about a shoes-off house (weak). On the doubt she dresses the jeans with no word on her own pick (fail, unchanged on Flash-Lite). |
+| 5 | The reply says 12–15 November, while the plan was built for 19–22 (fail, fixed offline: the plan's dates are now stated on its result). Cooking look, Saturday dinner, rain stated, no packing question (pass). Follow-up continued, swapped in a packed sweater, no replan (pass). |
+
+## Run 2026-11-11 — one stylist per thread on 3.7 Flash
+
+The same 15 turns, with the chat stylist on `gemini-3.7-flash` at medium thinking.
+- $1.80 against $0.78 on Flash-Lite for the same turns.
+- Scored from the reply and the cards.
+
+| Entry | Result |
+|---|---|
+| 1 | Seven looks: separate Friday and Saturday breakfast looks, with the reason (heat, movement, kitchen splatters); rain and temperatures stated, raincoat on the market look; winery in a cashmere sweater with closed flat shoes; dinner on its own (pass). Nothing cashmere or silk at the stove (pass). Each look's pieces are narrated again in the reply (weak). |
+| 2 | Three options; she says she no longer stands behind one (clashing prints) and keeps two; reasons are about serving and moving around; a pick named (pass). Follow-up "a little warmer": a fine wool turtleneck under the same vest, continued (pass). |
+| 3 | Reads the room ("polished respect and relaxed warmth"); flats chosen with a shoes-off house in mind (pass). **On the doubt she says why she led with the dress, what jeans risk there, then how to wear them, and offers to build it (pass: the first pass of this line on the one-stylist build).** |
+| 4 | Three options; temperatures stated; shoes chosen "that will not pierce the lawn" (flats, clogs, boots); a favourite named (pass). Reading of how dressed a shower is, thin (weak). |
+| 5 | "Thursday, November 19 through Sunday, November 22" (pass); the overcoat is said not to be rainwear, with an umbrella suggested (pass); a cooking look and the Saturday dinner (pass); jeans for the nice dinner (weak). Follow-up "if it turns cold": a packed knit in place of the silk, no replan (pass). |
+| 6 | Mid-50s evening and sitting still by a fire stated as the problem; three options with real layers and boots for a patio (pass). No caution about fabric near a fire pit; no reading of how dressed the dinner is (fail, as before). |
+| 7 | Three options with a layer each, the evening's 57°F stated, flat shoes for blocks (pass); linen trousers in the second option (fail); the cardigan option says it gives less wind resistance (pass). Follow-up "why that jacket?": the tweed, explained for the walk and the room (pass). |
+
+**3.7 Flash at low thinking, entries 3 and 7 (2026-11-11, $0.33):**
+- Entry 3: the room is read and the doubt passes (why the dress, what jeans risk, how to wear them, an
+  offer to build it). Wedges, with no shoes-off thought (weak; medium had one).
+- Entry 7: three options, each with a layer; 57–65°F stated; no linen (pass). Follow-up answered in 5 s
+  (pass).
+

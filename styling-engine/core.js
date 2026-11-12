@@ -17,6 +17,7 @@ import { logAiCall, estimateOpenAIImageCostUsd, getAiTelemetryContext, runWithAi
 import { getImageRenderProvider, renderWithGeminiImageModel } from './geminiImage.js'
 import { getStylistConversationState, saveStylistConversationState } from './conversationState.js'
 import { localIsoDate, openPlansFromOtherThreads, openPlansPromptText } from './pastConversations.js'
+import { readTheSituation } from './prompts.js'
 import { restoreWeatherProfile, serializeWeatherProfile } from './weather.js'
 
 export { getStylistConversationState, saveStylistConversationState }
@@ -90,7 +91,7 @@ import {
   parseModelJson,
   stylistProviderOverride,
 } from './provider.js'
-import { isTravelOrPackingRequest, travelRequestCanResolveWeatherLive } from './stylingIntent.js'
+import { travelRequestCanResolveWeatherLive } from './stylingIntent.js'
 import { formalityRank, pieceRequiresBaseLayer, pieceIsSeeThrough, visuallyPrioritizedPieces } from './attributes.js'
 import { evaluateWearableOutfit } from './outfitValidation.js'
 import { validatedFallback } from './recovery.js'
@@ -4359,7 +4360,7 @@ export function freeformToolRoutingInstruction(turnMode = '') {
   // Stated in full here, because the tool descriptions no longer carry it. A fresh request is the
   // only turn shape the bounded exception applies to, which is why it is emitted only for one mode.
   return `${ownerLine}
-BOUNDED MULTI-LOOK EXCEPTION (this turn only): for a fresh request for 2–5 outfit options that share one occasion, activity, location, date and weather context, do NOT call declare_intent and do NOT call search_wardrobe — call generate_outfits directly and exactly once. That call is itself the cards declaration. An ordinary new "what should I wear?" defaults to limit:2; an explicit count 2–5 wins.
+BOUNDED MULTI-LOOK EXCEPTION (this turn only): for a fresh request for 2–5 outfit options that share one occasion, activity, location, date and weather context, do NOT call search_wardrobe — call declare_intent (want:'cards' with your reading of the situation) and then generate_outfits exactly once; both may go in the same response, declare_intent first. Options asked for without a number are 3; an explicit count 2–5 wins. An ordinary new "what should I wear?" with no request for several options is ONE recommended outfit, built with search + propose_outfit.
 One/best/pick-one requests stay on the verified search + propose path; multi-context schedules and capsules use plan_outfit_set; existing-card revisions use suggest_slot_swaps. Never flatten distinct contexts to qualify.`
 }
 
@@ -4511,65 +4512,6 @@ export function formatHistoricalOutfitSetsForPrompt(resolution) {
   ].join('\n\n')
 }
 
-// A fresh request for one complete look does not need the universal stylist workbench. Keep this
-// payload factual and bounded: the style constitution, one structured request, and four tools at
-// execution time. In particular, do not load the whole wardrobe manifest, global feedback,
-// historical cards, trip state, or conversation history here.
-export function buildSingleOutfitConversationPayload(body = {}, routed = {}) {
-  const question = String(body.question || '').trim()
-  const userWeather = body.user_weather || extractStructuredUserWeather([
-    question,
-    typeof body.weather === 'string' ? body.weather : ''
-  ].filter(Boolean).join('\n'))
-  const context = {
-    request: question,
-    occasion: routed.occasion || body.occasion || 'casual',
-    activity: routed.activity || body.activity || 'none',
-    location: routed.location || body.location || '',
-    date: routed.date || '',
-    season: routed.season || body.season || '',
-    ...(routed.setting === 'indoor_only' ? { setting: 'indoor only' } : routed.setting === 'indoor_destination' ? { setting: 'indoors, at a place travelled to' } : routed.setting === 'not_stated' ? { setting: 'no place or time given' } : {}),
-    mood: routed.mood || body.mood || '',
-    mission: routed.mission || body.mission || 'mix',
-    user_weather: userWeather || null,
-  }
-  return {
-    system: prompts.SINGLE_OUTFIT_STYLIST_SYSTEM,
-    messages: [{
-      role: 'user',
-      content: [
-        'FRESH SINGLE-OUTFIT REQUEST (STRUCTURED AUTHORITY):',
-        JSON.stringify(context, null, 2),
-        '',
-        userWeather
-          ? `The user_weather above is a literal fact from the current request. ${
-              Number.isFinite(userWeather.high_f) && Number.isFinite(userWeather.low_f)
-                ? 'Preserve both endpoints unchanged on every composition tool call.'
-                : 'Only one endpoint was stated; preserve it unchanged and do not supply the other — it is genuinely unknown, not zero and not equal to the stated one.'
-            }`
-          : routed.setting === 'indoor_only'
-            ? 'This occasion is spent indoors in one room for its whole duration. Dress for the room: do not supply user_weather or weather_estimate, and add no layer for warmth.'
-            : routed.setting === 'indoor_destination'
-              ? 'This occasion is spent indoors at a place the wearer travels to. Dress for the room; the forecast the tools resolve is for the way there and back, so it decides only whether a coat or layer goes over the outfit for that. Do not invent user_weather.'
-            : routed.setting === 'not_stated'
-              ? 'No place or time was given for this outfit and no weather was asked about. Dress for the occasion and season: do not supply user_weather or weather_estimate.'
-              : 'No numeric weather range was stated. If a real location/date is supplied, let the tools resolve weather; do not invent user_weather.'
-      ].join('\n')
-    }],
-    maxTokens: 1200,
-    automaticallySavedCorrection: null,
-    threadState: { turn_mode: 'new_request', current_outfit_set: [] },
-    historyDiagnostics: {
-      historyMessagesReceived: Array.isArray(body.history) ? body.history.length : 0,
-      historyMessagesIncluded: 0,
-      historyCharsRemoved: (Array.isArray(body.history) ? body.history : []).reduce((sum, message) => sum + String(message?.content || '').length, 0),
-    },
-    wardrobeManifestIncluded: false,
-    restrictToInformationalTools: false,
-    singleOutfitContext: context,
-  }
-}
-
 export async function buildStylistConversationPayload(body) {
   const {
     question,
@@ -4593,7 +4535,7 @@ export async function buildStylistConversationPayload(body) {
     mood,
     mission,
     activity,
-    answerInWords = false
+    savedPackingApproach = ''
   } = body
 
   // This is semantic conversation history. The transport history includes the current user
@@ -4742,24 +4684,14 @@ export async function buildStylistConversationPayload(body) {
     // whether the user or the assistant's prose produced it, and the user's words are read above.
     || extractWeatherContext([effectiveSeason, effectiveMood].join('\n'))
     || ''
-  // Whether this is a trip is the router's reading when it read the request, and the word match only when it did not
-  // (live thread_1794273948027, 2026-11-09). "My friends are staying with us… Saturday afternoon we're going to a
-  // winery tasting" matched "going to", the router had called it full_stylist with no place because the wearer is at
-  // home, and the turn was told to stop and ask the user for the forecast of their own town. The router has a
-  // profile for trips (trip_plan); a fresh request it did not give that profile is not one.
-  const routedProfile = String(body?.routedProfile || '').trim()
-  const travelOrPackingRequest = routedProfile
-    ? routedProfile === 'trip_plan' || String(effectiveOccasion || '').toLowerCase() === 'travel'
-    : isTravelOrPackingRequest(question, effectiveOccasion)
-  // The router's structured reading of the place outranks the word match (live thread_1791764470904,
-  // 2026-10-11): "a trip to Vienna, Virginia… Do some sightseeing and visit museums" failed the
-  // activity list below on a plural ("museums"), the turn was marked as missing weather, and she was
-  // told to ask the user for the forecast of a named place a day away. The thread before it
-  // (thread_1791697835891) passed only because her own clarifying question, joined to the request,
-  // contained "museum". A trip turn the router routed with a named place can look its weather up;
-  // plan_outfit_set resolves it and carries a seasonal estimate for dates the forecast does not reach.
-  const routedLocation = String(body?.routedLocation || '').trim()
-  const canResolveTravelWeatherLive = travelRequestCanResolveWeatherLive(question, effectiveOccasion) || Boolean(routedLocation)
+  // Whether this turn is a trip, for the TRAVEL WEATHER BLOCKER below. The router's reading decided it until
+  // 2026-11-11; with the router retired (docs/one-stylist-per-thread.md) it is the occasion the user picked,
+  // never a word match: "we're going to a winery tasting", said by someone hosting at home, matched the old
+  // pattern and the turn was told to ask the user for their own town's forecast (thread_1794273948027).
+  // A trip the user describes in words is the stylist's to read; her tools look the destination's weather up
+  // and return weather_context_required when they cannot.
+  const travelOrPackingRequest = String(effectiveOccasion || '').toLowerCase() === 'travel'
+  const canResolveTravelWeatherLive = travelRequestCanResolveWeatherLive(question, effectiveOccasion)
   const missingTravelWeather = travelOrPackingRequest && !extractedWeather && !canResolveTravelWeatherLive
   const establishedStylingContext = {
     ...(effectiveOccasion ? { occasion: effectiveOccasion } : {}),
@@ -5030,6 +4962,9 @@ export async function buildStylistConversationPayload(body) {
     // The thread's dated plan (docs/cross-thread-continuity.md) outlives each turn; only a new plan
     // replaces it (persistFullStylistTurnState). Without this, the first follow-up erased it.
     ...(restoredState.plan ? { plan: restoredState.plan } : {}),
+    // The provider conversation this thread continues (docs/one-stylist-per-thread.md); replaced by
+    // persistFullStylistTurnState at the end of each turn.
+    ...(restoredState.stylist_continuation ? { stylist_continuation: restoredState.stylist_continuation } : {}),
   }, sessionId)
 
   // 2026-07-12: the pre-model auto-save that stored the RAW question whenever the
@@ -5066,18 +5001,15 @@ export async function buildStylistConversationPayload(body) {
   } catch (err) {
     console.error('Wardrobe manifest query failed:', err)
   }
-  // A fresh trip request (routes/ai.js `trip_plan`) only turns the request into activities and then
-  // writes the reply from the planner's result; the packer and the outfit step get the wardrobe
-  // themselves. Its prompt carries no wardrobe list (2026-10-07).
-  const tripPlanTurn = body?.tripPlanTurn === true
-  // A follow-up on a trip plan (owner, 2026-10-07). It answered from the full stylist request, about
-  // 56k tokens against the planning turn's 21k, most of it the wardrobe list — which a question
-  // about an existing plan does not need: THREAD STATE already carries the looks and the suitcase,
-  // and search_wardrobe returns full facts when the list is absent. Live thread_1791421976583's
-  // follow-ups, on the long prompt, kept describing the plan back. TRIP_FOLLOWUP_LEAN_PROMPT=false
-  // restores the long prompt.
-  const tripFollowupTurn = !tripPlanTurn
-    && process.env.TRIP_FOLLOWUP_LEAN_PROMPT !== 'false'
+  // A follow-up on a trip plan (owner, 2026-10-07). It gets the trip guidance below and its own tool list
+  // (routes/ai.js). Until 2026-11-11 it also left the wardrobe list out, to save ~35k tokens a turn; that made
+  // its stable prompt differ from the trip's first turn, so a trip thread could never continue its provider
+  // conversation (docs/one-stylist-per-thread.md, live check). The list is now kept, and the trip guidance
+  // sits below the cache breakpoint. Live thread_1791421976583's follow-ups, on the long prompt, kept
+  // describing the plan back; the guidance's "answer from those" and the controller's "Do not describe
+  // again what is already on the cards" are what answer that. TRIP_FOLLOWUP_LEAN_PROMPT=false turns the
+  // trip follow-up treatment off.
+  const tripFollowupTurn = process.env.TRIP_FOLLOWUP_LEAN_PROMPT !== 'false'
     && conversationMode !== 'new_request'
     && Array.isArray(packingRoster?.roster_ids) && packingRoster.roster_ids.length > 0
     && body?.tripFollowupEligible === true
@@ -5095,9 +5027,8 @@ export async function buildStylistConversationPayload(body) {
   // The suitcase as the stylist reads it on a follow-up. The stored roster carries a name, colours
   // and photo filenames per piece — enough for the screen, nothing to judge by. Same thread: "black
   // solid wide leg pants" went into the at-home look on its name; its record says heavy cotton,
-  // elevated, "structured classic". With the wardrobe list omitted on this turn the roster is the only
-  // place a packed piece is described, so each one is given as the shared sparse fact row (and the
-  // tagger's labelled impression) that search and swap results already use. Display copy only:
+  // elevated, "structured classic". Each packed piece is given as the shared sparse fact row (and the
+  // tagger's labelled impression) that search and swap results already use, beside the suitcase itself. Display copy only:
   // threadState keeps the stored shape, which the route reads back as toolContext.packingRosterPieces.
   const rosterFactRows = tripFollowupTurn
     ? (() => {
@@ -5111,7 +5042,7 @@ export async function buildStylistConversationPayload(body) {
   const threadStateForStylist = rosterFactRows.length
     ? { ...threadState, packing_roster: { ...threadState.packing_roster, conventions: SPARSE_CATALOG_CONVENTIONS, roster_pieces: rosterFactRows } }
     : threadState
-  const wardrobeManifestText = !tripPlanTurn && !tripFollowupTurn && activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
+  const wardrobeManifestText = activeManifestPieces.length && activeManifestPieces.length <= manifestPieceCap
     ? buildWardrobeManifest(activeManifestPieces, { groupFor: wardrobeCategoryGroup })
     : ''
 
@@ -5154,6 +5085,19 @@ export async function buildStylistConversationPayload(body) {
     console.warn('Open-plans lookup failed:', err.message)
   }
 
+  // Trip follow-up guidance, below the cache breakpoint so a trip thread's stable prompt matches its first turn.
+  const tripFollowupGuidanceText = tripFollowupTurn
+    ? [
+        'TRIP FOLLOW-UP: This thread holds a trip plan. THREAD STATE lists its looks (current_outfit_set) and everything packed (packing_roster); answer from those.',
+        'current_outfit_set is the plan as it stands now: the plan\'s looks (`in_plan`), each with any swap already made to it, followed by any look added since (`added_after_plan`). `shown_last_turn` marks what your last reply showed.',
+        tripPackedForText,
+        HOW_A_DAY_AWAY_WORKS,
+        '- To change one piece in a look, use `suggest_slot_swaps`. To show a look the plan does not have, use `propose_outfit` (call `view_pieces` on the ids you mean to use).',
+        '- The rest of the wardrobe is reached with `search_wardrobe`. A piece from it is one more thing to pack; say plainly when a piece you suggest is not in the suitcase.',
+        '- The plan on screen stays as it is. A new need (something to wear at the house, one more evening) is answered with a look or with pieces to add to the suitcase, named as additions — never by planning the trip again.',
+      ].join('\n')
+    : ''
+
   const activeWardrobeText = wardrobeManifestText
     ? [
       `WARDROBE MANIFEST — all ${activeManifestPieces.length} active pieces, grouped by category. A "?" suffix marks a low-confidence tag value; [flags] mark trust limits (do not auto-style flagged pieces without checking).`,
@@ -5171,23 +5115,10 @@ export async function buildStylistConversationPayload(body) {
       '- `search_wardrobe` also applies occasion/weather/activity gating; use it when composing for specific conditions so prohibited pieces are filtered for you.',
       '- Use `get_last_outfit_evaluation` to check past critiques and `get_current_image_inventory` to inspect attached images.',
       '- Use `search_past_conversations` when the user refers to an earlier, separate conversation with you; it returns what they said and how they rated the cards.',
+      // A fresh trip request reaches this prompt since the lean trip turn's retirement (2026-11-11), so the
+      // stylist who splits a trip into days for plan_outfit_set is told how a day away is lived, as that turn was.
+      `- For a trip, before calling plan_outfit_set: ${HOW_A_DAY_AWAY_WORKS}`,
       'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`. Pass a verified `piece_id` for one exact garment. Otherwise include `guidance_applicability` using only explicit owner-stated garment and context terms; use universal only when the owner clearly means every request. Add `firm_rule_proposal` only for an explicit supported prohibition. Never guess scope or store situational trip facts.'
-    ].join('\n')
-    : tripFollowupTurn ? [
-      'This thread holds a trip plan. THREAD STATE lists its looks (current_outfit_set) and everything packed (packing_roster); answer from those. The rest of the wardrobe is not listed here.',
-      'current_outfit_set is the plan as it stands now: the plan\'s looks (`in_plan`), each with any swap already made to it, followed by any look added since (`added_after_plan`). `shown_last_turn` marks what your last reply showed.',
-      tripPackedForText,
-      HOW_A_DAY_AWAY_WORKS,
-      '- To change one piece in a look, use `suggest_slot_swaps`. To show a look the plan does not have, use `propose_outfit` (call `view_pieces` on the ids you mean to use).',
-      '- The rest of the wardrobe is reached with `search_wardrobe`. A piece from it is one more thing to pack; say plainly when a piece you suggest is not in the suitcase.',
-      '- The plan on screen stays as it is. A new need (something to wear at the house, one more evening) is answered with a look or with pieces to add to the suitcase, named as additions — never by planning the trip again.',
-      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
-    ].join('\n')
-    : tripPlanTurn ? [
-      'This turn plans a trip. The wardrobe is not listed here: plan_outfit_set chooses what to pack from the whole wardrobe and builds the outfits, and its result names the pieces. Describe only garments that result names.',
-      'How the traveller is packing for this trip (from the request or their answer to your question) goes in plan_outfit_set\'s packing_approach, in their words.',
-      HOW_A_DAY_AWAY_WORKS,
-      'CRITICAL: If the user states a new DURABLE style rule, taste preference, dislike, constraint, or correction, call `store_user_correction`.',
     ].join('\n')
     : [
       'The full wardrobe list is omitted from the prompt to save context tokens.',
@@ -5264,6 +5195,11 @@ export async function buildStylistConversationPayload(body) {
   // Keep the stable prefix byte-stable — it is what makes the manifest cheap.
   const system = prompts.STYLIST_SYSTEM + [
     '',
+    // What a stylist works out before choosing. The single-outfit stylist carried it until the router's
+    // retirement (2026-11-11, docs/one-stylist-per-thread.md); every ordinary request now reaches this prompt.
+    'READ THE SITUATION FIRST:',
+    readTheSituation('Before you search or compose'),
+    '',
     'OCCASION & CLIMATE PROFILES (RULES-AS-DATA):',
     'Classify the user\'s event/activity and weather description into one of the profiles below. A profile\'s prohibited_materials and prohibited_footwear are hard constraints and you MUST apply them. The profile\'s vibe describes the social register it covers; it is not a list of required garments, and no garment category is banned by season. Each profile\'s `keywords` are illustrative examples of the kind of request it covers, not an exhaustive or literal match list — real requests will use wording none of them anticipated. Classify by the social register and setting the request actually implies, not by matching a surface noun: the same noun can describe very different registers (e.g. "market" spans a routine grocery/farmers-market errand, which is casual/city, versus a craft fair, wine festival, or artisan market outing, which is outdoor_daytime_social). When a request is a plain errand or everyday task with no festival/social/event framing, default to the permissive casual or city profiles rather than a narrower one.',
     JSON.stringify(stripSoftRankingRules(OCCASION_PROFILES), null, 2),
@@ -5293,9 +5229,6 @@ export async function buildStylistConversationPayload(body) {
     restrictToInformationalTools
       ? 'This turn asks about a FACT of the plan already generated (its assumed weather, budget, date range, or location), not for a revision. No tool that produces new outfits is available this turn on purpose. Answer from THREAD STATE\'s current_outfit_set — each card carries its own weather_used and resolved_weather_context — and from the plan details already shown above. If a specific number was never resolved (e.g. weatherSource was a heuristic guess with no high_f/low_f), say so plainly instead of inventing one.'
       : '',
-    answerInWords
-      ? 'The user is thinking with you this turn, not asking to see outfits. Answer in words, as a conversation about directions rather than finished outfits: name the directions worth exploring, what each would do for the piece, and which of their garments it would draw on (cite them as (ID <n>)), then offer to build any of them as cards. No tool that builds cards is available this turn on purpose.'
-      : '',
     generatedSetCoverageAudit ? 'CURRENT SET COVERAGE AUDIT: The user is asking whether the current multi-outfit set has enough coverage, backup options, or repeat-wear resilience. First audit the current set plainly. If you recommend additional outfits or swaps, you MUST call search_wardrobe with visual:true and the relevant occasion/activity/weather before naming pieces. Suggest only exact owned wardrobe garments returned by search_wardrobe. Do NOT invent aspirational pieces, do NOT add shopping-style [missing wardrobe gap] outfits, and do NOT include a missing wardrobe gap unless an owned-garment search fails and you are explicitly explaining the uncovered gap.' : '',
     // Live thread_1791416150174: after a trip plan, "I'll do some sightseeing in Alexandria first,
     // then check out the fall foliage in the surrounding parks" got the plan described again by
@@ -5315,9 +5248,11 @@ export async function buildStylistConversationPayload(body) {
     threadState.packing_roster
       ? 'ACTIVE PACKING ROSTER: threadState.packing_roster is the trip\'s explicit packing set — the suitcase, not just this turn\'s cards. A card edit ("this trail outfit is too summery", "swap the shoes") should restyle from roster_ids first; search_wardrobe marks each result in_packing_roster so you can tell which. Reaching outside the roster for a genuinely needed piece is allowed, but it is a PROPOSED PACKING-SET CHANGE, not a quiet substitution — say plainly what is being added (or, if you know what it replaces, what leaves the suitcase) so the packing list and the card never silently disagree about what was decided.'
       : '',
+    tripFollowupGuidanceText,
     '',
     historicalOutfitContextText,
     openPlansText,
+    savedPackingApproach ? `USUAL PACKING APPROACH (on record, never assumed for a trip): "${savedPackingApproach}". When the user plans a trip without saying how they are packing for it, ask whether this trip is the same as usual or different.` : '',
     threadContextText ? `CURRENT THREAD CONTEXT:\n${threadContextText}` : '',
     '',
     extraContextText ? `OUTFIT CONTEXT UNDER DISCUSSION:\n${extraContextText}` : '',
@@ -5393,6 +5328,5 @@ export async function buildStylistConversationPayload(body) {
     wardrobeManifestIncluded: Boolean(wardrobeManifestText),
     tripFollowupTurn,
     restrictToInformationalTools,
-    answerInWords: answerInWords === true
   }
 }

@@ -120,6 +120,18 @@ decisions.
 > history, and recently-discussed-piece evidence still keep continuation turns out of fresh bounded
 > profiles.
 
+> **[amended 2026-11-11 — one stylist per thread]** The model-call sequence changed. `/ask` no longer
+> calls the execution router, and none of its routed paths run: every typed turn is the full-stylist tool
+> loop. That covers single outfit, bounded options shortcut, compact answers, wardrobe inventory, router
+> clarifying question and lean trip turn.
+> - The router's reading of the situation is the stylist's own `declare_intent`, required before any
+>   wardrobe search.
+> - The first call of a turn continues the thread's stored Gemini interaction when it can; otherwise it
+>   rebuilds as before.
+> - Wherever this document's diagrams show the router or its branches, read them as history until it is
+>   redrawn. The design and the as-built record are in
+>   [one-stylist-per-thread.md](../one-stylist-per-thread.md).
+
 ## Pipeline overview (PM altitude)
 
 ```mermaid

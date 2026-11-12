@@ -113,14 +113,6 @@ function planLabel(plan = {}) {
   return 'Plan'
 }
 
-// The router's compact context gets the same facts in one clause, so a request about a trip planned
-// in another thread ("for my Portland trip…", a day inside it) reaches the full stylist, which can
-// look the plan up. Router check 2026-11-11: without it, case B went to single_outfit.
-export function openPlansRouterContext(plans = []) {
-  if (!plans.length) return ''
-  return `open plans in other conversations: ${plans.map(plan => `${planLabel(plan)} ${plan.start === plan.end ? plan.start : `${plan.start} to ${plan.end}`}`).join('; ')}`
-}
-
 export function openPlansPromptText(plans = []) {
   if (!plans.length) return ''
   return [
