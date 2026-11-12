@@ -194,6 +194,36 @@ test('the router\'s compact context names other threads\' open plans, and nothin
   assert.match(route, /'no usual packing approach on record',\s*routerOpenPlansContext\(req\.body\),\s*\]\.filter\(Boolean\)\.join\('; '\)/)
 })
 
+test('finding an open plan puts its suitcase in force for the turn, and only for the turn', async () => {
+  const { boundedConversationStateFromToolContext } = await import('../routes/ai.js')
+  addThread('thread_rome', { title: 'Rome trip', messages: [{ role: 'user', text: 'Rome next week.' }] })
+  const roster = { roster_ids: [dress, sandals], roster_pieces: [{ id: dress, name: 'green silk slip dress', category: 'dress' }, { id: sandals, name: 'tan strappy sandals', category: 'shoes' }], slots: [{ id: 'day', label: 'Days' }] }
+  saveStylistConversationState({ plan: { kind: 'trip', location: 'Rome, Italy', start: '2026-11-18', end: '2026-11-21' }, packing_roster: roster }, 'thread_rome')
+
+  const toolContext = { sessionId: 'thread_current', currentDate: '2026-11-11T12:00:00-08:00', timezone: 'America/Los_Angeles' }
+  const result = await executeTool('search_past_conversations', { query: 'Rome' }, toolContext)
+  assert.match(result.suitcase_in_force, /packed pieces of the plan in "Rome trip" are this turn's suitcase/)
+  assert.deepEqual([...toolContext.packingRosterIds], [dress, sandals])
+  assert.deepEqual(toolContext.packingRosterSlots, roster.slots)
+  assert.equal(toolContext.adoptedPackingRosterFrom, 'thread_rome')
+
+  // An addition on a card (propose_outfit's pendingRosterChange) is not written into this thread.
+  toolContext.generatedOutfits = [{ label: 'Rome dinner', pieceIds: [dress, goneBlazer], pieces: [{ id: dress }, { id: goneBlazer }] }]
+  toolContext.pendingRosterChange = { addedIds: [goneBlazer], addedPieces: [{ id: goneBlazer, name: 'old navy blazer' }], removedIds: [] }
+  assert.equal(boundedConversationStateFromToolContext(toolContext).packing_roster, undefined)
+
+  // A plan that has ended is not adopted, and a turn's own roster is never replaced.
+  const later = { sessionId: 'thread_current', currentDate: '2026-11-25T12:00:00-08:00' }
+  assert.equal((await executeTool('search_past_conversations', { query: 'Rome' }, later)).suitcase_in_force, undefined)
+  assert.equal(later.packingRosterIds, undefined)
+  const own = { sessionId: 'thread_current', currentDate: '2026-11-11T12:00:00-08:00', packingRosterIds: new Set([goneBlazer]) }
+  await executeTool('search_past_conversations', { query: 'Rome' }, own)
+  assert.deepEqual([...own.packingRosterIds], [goneBlazer])
+
+  db.prepare("DELETE FROM chat_threads WHERE id = 'thread_rome'").run()
+  db.prepare("DELETE FROM stylist_conversation_state WHERE session_id = 'thread_rome'").run()
+})
+
 test('localIsoDate uses the user\'s time zone', () => {
   assert.equal(localIsoDate(new Date('2026-11-12T03:00:00Z'), 'America/Los_Angeles'), '2026-11-11')
 })

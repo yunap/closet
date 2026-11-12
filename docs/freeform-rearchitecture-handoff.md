@@ -2196,6 +2196,11 @@ Spec: [cross-thread-continuity.md](cross-thread-continuity.md).
 - **New prompt block "OPEN PLANS IN OTHER CONVERSATIONS"** (`openPlansPromptText`) sits below the cache
   breakpoint in `buildStylistConversationPayload`, after the historical outfit sets. It is empty when no
   other thread has a dated plan that has not ended.
+- **Borrowed suitcase** (owner ruling 2026-11-11). When `search_past_conversations` returns a plan that has
+  not ended, `adoptOpenPlanSuitcase` sets the turn's `packingRosterIds` / `packingRosterPieces` /
+  `packingRosterSlots` from that thread. `propose_outfit`'s packing-set change disclosure then applies, and
+  the result carries `suitcase_in_force`. It is turn-only: `boundedConversationStateFromToolContext` does
+  not persist a roster change made under it. `toolContext.timezone` is now set in `/ask` for the date test.
 - **Router compact context** gains `open plans in other conversations: …` (`routerOpenPlansContext` in
   `routes/ai.js`). It is empty when there are none.
 - **Thread state `plan` is kept** by the per-turn state write in `buildStylistConversationPayload` and by

@@ -175,6 +175,30 @@ function userMessagesOf(messages = []) {
     .map(message => String(message.text))
 }
 
+// Owner ruling 2026-11-11 ("use its suitcase"): when the search finds an open plan in another thread,
+// that plan's packing roster is in force for THIS turn, so the same code that guards a trip thread's
+// suitcase applies — search_wardrobe marks in_packing_roster, and propose_outfit shows an unpacked
+// piece as a proposed packing-set change on the card. Live check case B: given only the packed list
+// as text, the stylist added an unpacked jacket twice without saying so.
+//
+// Turn-only on purpose: the roster is not written into the new thread (that would make it a trip
+// thread, with the trip follow-up prompt) and the original trip's suitcase is not changed from here.
+// The first result whose plan has not ended and has a packing roster wins; an active roster already
+// on the turn is never replaced.
+export function adoptOpenPlanSuitcase(toolContext = {}, result = {}, today = '') {
+  if (toolContext.packingRosterIds instanceof Set && toolContext.packingRosterIds.size) return null
+  const match = (result?.conversations || []).find(conversation => conversation?.plan?.packed?.length && (!today || (conversation.plan.end || conversation.plan.start) >= today))
+  if (!match) return null
+  const roster = safeJsonParse(db.prepare('SELECT state_json FROM stylist_conversation_state WHERE session_id = ?').get(match.conversation_id)?.state_json, {})?.packing_roster
+  const ids = (Array.isArray(roster?.roster_ids) ? roster.roster_ids : []).map(Number).filter(Boolean)
+  if (!ids.length) return null
+  toolContext.packingRosterIds = new Set(ids)
+  toolContext.packingRosterPieces = Array.isArray(roster.roster_pieces) ? roster.roster_pieces : []
+  toolContext.packingRosterSlots = Array.isArray(roster.slots) ? roster.slots : []
+  toolContext.adoptedPackingRosterFrom = match.conversation_id
+  return match.conversation_id
+}
+
 export function searchPastConversations({ query = '', currentSessionId = '', limit = DEFAULT_RESULT_LIMIT } = {}) {
   const cap = Math.min(Math.max(Number(limit) || DEFAULT_RESULT_LIMIT, 1), MAX_RESULT_LIMIT)
   const words = searchWords(query)
@@ -260,6 +284,7 @@ export function searchPastConversations({ query = '', currentSessionId = '', lim
         .filter(piece => piece && Number(piece.id))
         .map(piece => ({ id: Number(piece.id), name: String(piece.name || ''), category: String(piece.category || ''), still_in_wardrobe: activeIds.has(Number(piece.id)) }))
       return {
+        conversation_id: row.id,
         title: String(row.title || ''),
         started: dayOf(row.created_at),
         last_active: dayOf(row.updated_at),

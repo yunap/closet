@@ -957,7 +957,9 @@ export function boundedConversationStateFromToolContext(toolContext = {}) {
         roster_pieces: rosterBearingOutfit.tripPlanContext.roster_pieces || [],
         slots: rosterBearingOutfit.tripPlanContext.slots || [],
       }
-    : (toolContext?.pendingRosterChange
+    // A suitcase borrowed from another thread's open plan (adoptOpenPlanSuitcase) is in force for
+    // that turn only: it is not written into this thread (docs/cross-thread-continuity.md).
+    : (toolContext?.pendingRosterChange && !toolContext?.adoptedPackingRosterFrom
       ? (() => {
           const removedIdSet = new Set(toolContext.pendingRosterChange.removedIds || [])
           const survivingIds = [...(toolContext.packingRosterIds || [])].filter(id => !removedIdSet.has(Number(id)))
@@ -7674,6 +7676,7 @@ router.post('/ask', async (req, res) => {
       currentDate: req.body.currentDate || '',
       // This thread's id, so search_past_conversations looks only at the user's OTHER threads.
       sessionId: req.body.sessionId || '',
+      timezone: req.body.timezone || 'America/Los_Angeles',
       statedTripDateRange,
       history: priorStylistConversationHistory(req.body.history, typedQuestion),
       // Step 3 (retrieval rule): per-turn tracking of which piece ids the model

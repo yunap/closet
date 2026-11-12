@@ -61,7 +61,7 @@ import {
 import { OCCASION_VALUES, ACTIVITY_VALUES, MISSION_VALUES, extractExplicitActivity, extractWeatherContext, normalizeActivity } from './stylingIntent.js'
 import { buildWardrobeManifestLine } from '../src/utils/wardrobeAiContext.js'
 import { getStylistConversationState } from './conversationState.js'
-import { searchPastConversations } from './pastConversations.js'
+import { adoptOpenPlanSuitcase, localIsoDate, searchPastConversations } from './pastConversations.js'
 import { validateOwnerConstraintInput } from '../lib/ownerConstraints.js'
 import { extractOwnerGuidanceApplicability, validateOwnerGuidanceApplicability } from '../lib/ownerGuidance.js'
 import { reportTurnProgress } from '../lib/turnProgress.js'
@@ -3703,11 +3703,20 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         return getLastOutfitEvaluation(outfit_id) || { note: "No evaluation found." }
       }
       case 'search_past_conversations': {
-        return searchPastConversations({
+        const result = searchPastConversations({
           query: args?.query || '',
           limit: args?.limit,
           currentSessionId: toolContext.sessionId || '',
         })
+        const currentDate = toolContext.currentDate ? new Date(toolContext.currentDate) : new Date()
+        const today = localIsoDate(Number.isNaN(currentDate.getTime()) ? new Date() : currentDate, toolContext.timezone || 'America/Los_Angeles')
+        const adoptedFrom = adoptOpenPlanSuitcase(toolContext, result, today)
+        if (!adoptedFrom) return result
+        const title = result.conversations.find(conversation => conversation.conversation_id === adoptedFrom)?.title || ''
+        return {
+          ...result,
+          suitcase_in_force: `The packed pieces of the plan in "${title}" are this turn's suitcase. search_wardrobe marks each result in_packing_roster; a card that uses a piece not packed shows it as an addition to the suitcase, so say plainly what you are adding. Prefer packed pieces.`,
+        }
       }
       case 'get_current_image_inventory': {
         const state = getStylistConversationState('default')

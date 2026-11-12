@@ -310,6 +310,11 @@ Item 12's review surface is deferred, but its bounded storage, routing and undo 
   plan. **Authority across threads: history and context only.** Nothing read this way is preference
   memory, a rule, a score or a gate, and a verdict found by search is what the user wanted then, not a
   standing instruction. Within its own thread the category keeps its thread-only authority as above.
+  **[amended 2026-11-11, owner ruling "use its suitcase"]** One exception carries more than context.
+  When the search finds a plan that has not ended, `adoptOpenPlanSuitcase` puts that thread's
+  `packing_roster` in force for the current turn, so its suitcase gets the same packing-set disclosure
+  the trip thread gets. It is turn-only: it is not written into the new thread, and the original roster
+  is not changed.
 
 ### 8 · Short-lived recency / diversity memory
 

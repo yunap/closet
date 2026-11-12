@@ -128,7 +128,26 @@ router sends a request that refers to an earlier, separate conversation to `full
     if remembered.
   - Name any piece added that is not in `packed`.
 
-**Left for a decision:**
+**[amended 2026-11-11] B decided and fixed — owner ruling: "Use its suitcase".**
+- **The change.** When `search_past_conversations` returns a conversation whose plan has not ended and has
+  a packing roster, `adoptOpenPlanSuitcase` (`pastConversations.js`) puts that roster in force for the
+  turn: `toolContext.packingRosterIds`, `packingRosterPieces` and `packingRosterSlots`.
+- **Effect.** The trip thread's own code now applies:
+  - `search_wardrobe` marks `in_packing_roster`.
+  - `propose_outfit` shows an unpacked piece as a proposed packing-set change on the card.
+  - The tool result carries a `suitcase_in_force` line saying so.
+- **Limits.**
+  - The first matching result wins.
+  - A roster already active on the turn is never replaced.
+  - The roster is **turn-only**. It is not written into the new thread, which would make that a trip
+    thread with the trip follow-up prompt (`boundedConversationStateFromToolContext` skips it). The
+    original trip's suitcase is not changed from here.
+- **Re-run of B** (one live turn, 3.9¢, `search_past_conversations` "Portland"): she kept the Saturday
+  dinner look and added the packed dark grey cashmere vest (142), calling it packed. Pass.
+  - A styling note, not this feature: for a cold Portland evening the look has no coat for the way there,
+    and the plan's packed raincoat was not mentioned.
+
+**Left for a decision** (the first item was decided above):
 - **B, unpacked pieces.** In the trip's own thread, the packing roster makes an unpacked piece a "proposed
   packing-set change", which she has to name. In a new thread that roster is not in force, and naming the
   rule in the tool description did not make her follow it. Two structural options:
