@@ -245,3 +245,9 @@ The same 15 turns, with the chat stylist on `gemini-3.7-flash` at medium thinkin
 | 6 | Mid-50s evening and sitting still by a fire stated as the problem; three options with real layers and boots for a patio (pass). No caution about fabric near a fire pit; no reading of how dressed the dinner is (fail, as before). |
 | 7 | Three options with a layer each, the evening's 57°F stated, flat shoes for blocks (pass); linen trousers in the second option (fail); the cardigan option says it gives less wind resistance (pass). Follow-up "why that jacket?": the tweed, explained for the walk and the room (pass). |
 
+**3.7 Flash at low thinking, entries 3 and 7 (2026-11-11, $0.33):**
+- Entry 3: the room is read and the doubt passes (why the dress, what jeans risk, how to wear them, an
+  offer to build it). Wedges, with no shoes-off thought (weak; medium had one).
+- Entry 7: three options, each with a layer; 57–65°F stated; no linen (pass). Follow-up answered in 5 s
+  (pass).
+

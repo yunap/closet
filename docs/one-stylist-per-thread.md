@@ -427,9 +427,27 @@ linen in November on one option.
 - Three of the four continued 3.7 follow-ups reported no cached input on their first call; the "Really?
   jeans?" turn reported 97%. Flash-Lite's continued calls were cached. Why is not yet known.
 
-**Next to measure:**
-- the stylist loop's thinking level on 3.7, which is medium (`GEMINI_STYLIST_LOOP_THINKING_LEVEL`);
-- 3.7's caching on continued turns.
+**Thinking level, measured the same day.** The same 4 turns (entries 3 and 7, with follow-ups) on 3.7
+Flash at low thinking cost $0.33, the same as medium.
+
+| Turn | Medium | Low |
+|---|---|---|
+| "Why that jacket?" | 10 s | 5 s |
+| "Really? jeans?" | 27 s | 20 s |
+| Boss's dinner | 66 s | 52 s |
+| Gallery (mostly the options composer) | 45 s | 46 s |
+
+- **The judgment held:** the doubt follow-up still passes, and every gallery option has a layer with the
+  evening temperature stated.
+- **One small loss:** the shoes-off thought on the boss's dinner.
+- **Set:** `CHAT_STYLIST_THINKING_LEVEL`, default low, through `chatThinkingLevelFor` (`provider.js`). It
+  applies to `/ask` on 3.7 Flash only.
+- **Unchanged:** Flash-Lite and every other caller of the loop keep medium. That medium was set for
+  Flash-Lite, where low meant no reasoning at all; the cases are named beside
+  `GEMINI_STYLIST_LOOP_THINKING_LEVEL`.
+- One run of four turns.
+
+**Still to measure:** 3.7's caching on continued turns.
 
 ## Decisions (2026-11-11)
 

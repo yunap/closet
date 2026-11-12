@@ -150,6 +150,17 @@ test('a planner result states the dates it planned for, and names the range the 
   assert.deepEqual(withPlannedDates('plan_outfit_set', { status: 'success' }, {}), { status: 'success' })
 })
 
+// 2026-11-11: low thinking for the chat on 3.7 Flash; medium stays for Flash-Lite (where low meant no reasoning)
+// and for every caller of the loop that is not /ask.
+test('the chat stylist thinks at low on 3.7 Flash only', async () => {
+  const { chatThinkingLevelFor, CHAT_STYLIST_THINKING_LEVEL } = await import('../styling-engine/provider.js')
+  assert.equal(CHAT_STYLIST_THINKING_LEVEL, process.env.CHAT_STYLIST_THINKING_LEVEL || 'low')
+  assert.equal(chatThinkingLevelFor({ continueThread: true }, { provider: 'gemini', model: 'gemini-3.7-flash' }), CHAT_STYLIST_THINKING_LEVEL)
+  assert.equal(chatThinkingLevelFor({ continueThread: true }, { provider: 'gemini', model: 'gemini-3.5-flash-lite' }), '', 'Flash-Lite keeps the loop default')
+  assert.equal(chatThinkingLevelFor({}, { provider: 'gemini', model: 'gemini-3.7-flash' }), '', 'callers other than /ask keep the loop default')
+  assert.equal(chatThinkingLevelFor({ continueThread: true }, { provider: 'anthropic', model: 'claude-sonnet-4-6' }), '')
+})
+
 // Owner, 2026-11-11: the Stylist chat runs on 3.7 Flash; every other feature keeps its own model.
 test('the chat stylist has its own model, 3.7 Flash by default on Gemini, and only /ask uses it', async () => {
   const { CHAT_STYLIST_MODEL } = await import('../styling-engine/provider.js')

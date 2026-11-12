@@ -637,6 +637,18 @@ export const chatStylistProviderOverride = stylistProviderOverride?.provider ===
   ? { provider: 'gemini', model: CHAT_STYLIST_MODEL }
   : stylistProviderOverride
 
+// The chat stylist's thinking level on 3.7 Flash (2026-11-11, docs/one-stylist-per-thread.md). The loop's 'medium'
+// above was set for Flash-Lite, where 'low' meant no reasoning at all (the cases named there). On 3.7 Flash the same
+// four check-set turns at 'low' kept the judgment medium had (the doubt follow-up, a layer on every gallery option)
+// and answered follow-ups in 5–20 s against 10–27 s. Flash-Lite, and every caller that is not /ask, keep 'medium'.
+// CHAT_STYLIST_THINKING_LEVEL sets another level for the chat on 3.7 Flash.
+export const CHAT_STYLIST_THINKING_LEVEL = process.env.CHAT_STYLIST_THINKING_LEVEL || 'low'
+export function chatThinkingLevelFor(toolContext = {}, target = {}) {
+  return toolContext.continueThread === true && target.provider === 'gemini' && /^gemini-3\.7-flash(?:-|$)/.test(String(target.model || ''))
+    ? CHAT_STYLIST_THINKING_LEVEL
+    : ''
+}
+
 
 // resolveGeminiKey (real per-user BYOK resolution, plan Stage D) is imported from lib/apiKeys.js
 // above — it used to be a standalone `process.env.GEMINI_API_KEY` read here, kept only for the
@@ -1916,7 +1928,8 @@ function describeGeminiInputShape(input, continuation, toolCount) {
 // at all: askStylistWithTools short-circuits on takeTestAiResponse before ever reaching a provider
 // branch, so the ordinary mock path skips this function's own status/truncation/malformed-call
 // handling entirely.
-export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model, captureCallId = null, iterationIndex = null }) {
+export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuation, tools, maxTokens, model, thinkingLevel = '', captureCallId = null, iterationIndex = null }) {
+  const loopThinkingLevel = thinkingLevel || GEMINI_STYLIST_LOOP_THINKING_LEVEL
   const ai = new GoogleGenAI({ apiKey: resolveGeminiKey() })
   const input = canonicalHistoryToGeminiInput(unsyncedEntries, { firstCall: !continuation })
   const callKind = tools.length ? 'tool_loop' : 'text'
@@ -1930,8 +1943,8 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
     ...(continuation ? { previous_interaction_id: continuation } : { system_instruction: plainSystem }),
     input,
     generation_config: {
-      max_output_tokens: maxTokens + (GEMINI_STYLIST_LOOP_THINKING_LEVEL === 'low' ? 0 : GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS),
-      thinking_level: GEMINI_STYLIST_LOOP_THINKING_LEVEL,
+      max_output_tokens: maxTokens + (loopThinkingLevel === 'low' ? 0 : GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS),
+      thinking_level: loopThinkingLevel,
     },
     ...(tools.length ? { tools: tools.map(toGeminiFunctionDeclaration) } : {})
   }
@@ -2198,7 +2211,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     let turn
     try {
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem, model: target.model, captureCallId, iterationIndex: iter,
+        system, plainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries, continuation: providerContinuation,
         tools: availableTools, maxTokens,
@@ -2213,7 +2226,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       currentMessages = [...rebuildMessages]
       toolContext.freeformDiagnostics.stylistContinuation = 'continuation_failed'
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem, model: target.model, captureCallId, iterationIndex: iter,
+        system, plainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries: currentMessages, continuation: null,
         tools: availableTools, maxTokens,
