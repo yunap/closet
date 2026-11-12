@@ -237,7 +237,10 @@ test('a genuinely completed response has no stopReason', async () => {
   assert.equal(result.usage.stopReason, null)
 })
 
-test('a continuation call omits system_instruction and sends previous_interaction_id instead', async () => {
+// 2026-11-11: inverted. Google's Interactions docs: previous_interaction_id "preserves only the conversation
+// history"; system instructions are interaction-scoped and must be re-specified on each request. This test used to
+// pin the omission, and every Gemini tool-loop call after a turn's first ran without the system prompt.
+test('a continuation call sends system_instruction as well as previous_interaction_id', async () => {
   queueGeminiResponse({
     id: 'interaction_13', status: 'completed',
     steps: [{ type: 'model_output', content: [{ type: 'text', text: 'ok' }] }],
@@ -246,7 +249,7 @@ test('a continuation call omits system_instruction and sends previous_interactio
   await callGeminiTurn(baseArgs({ continuation: 'prior_interaction_id' }))
   const sent = requestsSeen.at(-1)
   assert.equal(sent.previous_interaction_id, 'prior_interaction_id')
-  assert.equal(sent.system_instruction, undefined)
+  assert.equal(sent.system_instruction, 'system prompt')
 })
 
 test('the first call of a turn (no continuation) sends system_instruction and omits previous_interaction_id', async () => {

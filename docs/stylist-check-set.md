@@ -251,3 +251,8 @@ The same 15 turns, with the chat stylist on `gemini-3.7-flash` at medium thinkin
 - Entry 7: three options, each with a layer; 57–65°F stated; no linen (pass). Follow-up answered in 5 s
   (pass).
 
+> **[2026-11-11] Every Gemini run scored above had a fault (engine map item 113).** Every stylist call after a turn's
+> first, and every continued turn, ran without the system prompt: no constitution, wardrobe list, instructions,
+> rulings or turn context. The scores describe that system. The next runs, with the prompt on every call, are the
+> first fair ones.
+
