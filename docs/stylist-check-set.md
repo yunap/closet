@@ -221,3 +221,11 @@ The first run on the one-stylist build ([one-stylist-per-thread.md](one-stylist-
 | 6 | Three options with layers for sitting outside; no fire-pit caution and no reading of how dressed the dinner is (fail, as before). |
 | 7 | After the season fix: three options, each with a layer (lambskin jacket, bouclé jacket, vest), the evening's mid-50s to mid-60s stated, ankle boots and loafers (pass); the reading of the room is thin (weak, as before). Follow-up "why that jacket?" answered in 4 s from the conversation (pass). |
 
+**Second one-stylist run (2026-11-11, Flash-Lite, after the router code was deleted):**
+
+| Entry | Result |
+|---|---|
+| 1 | No weather question; rain stated, with a raincoat on the Friday look; winery look in a sweater with a trench and closed boots; dinner as its own look (pass). One breakfast look for every morning, not one per day with an outing (fail). Linen trousers on Sunday at home in November (weak). |
+| 3 | Reads the room (pass); pointed heels, nothing said about a shoes-off house (weak). On the doubt she dresses the jeans with no word on her own pick (fail, unchanged on Flash-Lite). |
+| 5 | The reply says 12–15 November, while the plan was built for 19–22 (fail, fixed offline: the plan's dates are now stated on its result). Cooking look, Saturday dinner, rain stated, no packing question (pass). Follow-up continued, swapped in a packed sweater, no replan (pass). |
+

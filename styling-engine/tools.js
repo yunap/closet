@@ -1804,11 +1804,27 @@ export function toolProgressFacts(name, args = {}) {
   return facts
 }
 
+// Live check 2026-11-11 (docs/one-stylist-per-thread.md): "next Thursday", said on Wednesday 11 November, was
+// passed as 12–15 November; the stated-date override planned 19–22 correctly, but those dates appeared only
+// inside the weather data, and the reply told the user "November 12 through November 15". The plan's dates
+// are now a plain line on the result, with the replaced range named when the user's words overrode it.
+export function withPlannedDates(name, result, toolContext = {}) {
+  const dates = toolContext.plannedDatesForReply
+  if (name !== 'plan_outfit_set' || !dates?.start || !result || typeof result !== 'object' || Array.isArray(result)) return result
+  const span = dates.start === dates.end ? dates.start : `${dates.start} to ${dates.end}`
+  return {
+    planned_dates: dates.replaced
+      ? `The plan is for ${span}, from the user's own words. The dates you passed (${dates.replaced.start === dates.replaced.end ? dates.replaced.start : `${dates.replaced.start} to ${dates.replaced.end}`}) were wrong and were replaced; state ${span} in your reply.`
+      : `The plan is for ${span}.`,
+    ...result,
+  }
+}
+
 export async function executeTool(name, args, toolContext = {}) {
   console.log(`\n🤖 [Agent Tool Call] ${name} (${JSON.stringify(args)})`)
   reportTurnProgress('tool', toolProgressFacts(name, args))
   try {
-    const result = await executeToolInternal(name, args, toolContext)
+    const result = withPlannedDates(name, await executeToolInternal(name, args, toolContext), toolContext)
     logAgentToolResult(name, result)
     return result
   } catch (err) {
@@ -3766,6 +3782,14 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
           planDateRange = modelDateRange
         }
         toolContext.freeformDiagnostics.dateRangeSource = dateRangeSource
+        // Stated back on the result (executeTool), so the reply names the dates the plan was built for.
+        toolContext.plannedDatesForReply = planDateRange.start ? {
+          start: planDateRange.start,
+          end: planDateRange.end || planDateRange.start,
+          replaced: dateRangeSource === 'user_stated' && modelDateRange.start && modelDateRange.start !== planDateRange.start
+            ? { start: modelDateRange.start, end: modelDateRange.end || modelDateRange.start }
+            : null,
+        } : null
         toolContext.freeformDiagnostics.resolvedDateRange = planDateRange.start
           ? `${planDateRange.start}${planDateRange.end && planDateRange.end !== planDateRange.start ? `..${planDateRange.end}` : ''}`
           : ''

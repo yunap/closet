@@ -373,6 +373,28 @@ These are known check-set failures, seen before on the router's paths.
 **Next:** delete the unreachable router code (one commit, see "As built"), then close the trip follow-up
 gap.
 
+## Second live check (2026-11-11, after the deletion and the trip fix)
+
+**Setup.**
+- 5 turns on `gemini-3.5-flash-lite`, $0.21, same harness and data copy.
+- It checked the four changes that had been offline only: trip follow-ups continuing, travel detection,
+  `readTheSituation`, and `HOW_A_DAY_AWAY_WORKS`.
+
+**Results.**
+- **Trip follow-up continued** (5.2): 10 s and 1.6¢, against 13 s and 2.6¢ when it rebuilt. It swapped in
+  a packed sweater, with no replan. The thread's stored plan holds the right dates.
+- **No travel-weather stop on the at-home plan** (1.1). There was no weather question; rain was stated,
+  and a raincoat went on the Friday market look.
+- **The room was read** (3.1): "polished, respectful, and comfortably approachable".
+- **The doubt follow-up continued** (3.2, 1.3¢), and still failed the same way on Flash-Lite.
+- **A fault found:** 5.1's reply said "November 12 through November 15".
+  - The stated-date override had planned 19–22 November correctly. Those dates reached the stylist only
+    inside the weather data, and she repeated the dates she had passed.
+  - Fixed offline: `withPlannedDates` (`tools.js`) puts a `planned_dates` line first on the planner's
+    result. When the user's words replaced her range, it names the old range and tells her to state the
+    new one.
+  - The first run's correct dates were luck.
+
 ## Decisions (2026-11-11)
 
 The owner's direction: these conversations should be as good as they can be, and a quick question gets

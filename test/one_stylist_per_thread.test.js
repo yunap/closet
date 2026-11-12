@@ -136,3 +136,16 @@ test('a trip follow-up keeps the first turn\'s stable prompt, so the trip conver
   assert.match(volatilePromptTail(followUp.system), /TRIP FOLLOW-UP: This thread holds a trip plan/)
   assert.doesNotMatch(volatilePromptTail(first.system), /TRIP FOLLOW-UP/)
 })
+
+// Live check 2026-11-11: the override planned 19–22 November but the reply said "November 12 through 15".
+test('a planner result states the dates it planned for, and names the range the user\'s words replaced', async () => {
+  const { withPlannedDates } = await import('../styling-engine/tools.js')
+  const corrected = withPlannedDates('plan_outfit_set', { status: 'success', plan_lines: [] }, {
+    plannedDatesForReply: { start: '2026-11-19', end: '2026-11-22', replaced: { start: '2026-11-12', end: '2026-11-15' } },
+  })
+  assert.equal(corrected.planned_dates, "The plan is for 2026-11-19 to 2026-11-22, from the user's own words. The dates you passed (2026-11-12 to 2026-11-15) were wrong and were replaced; state 2026-11-19 to 2026-11-22 in your reply.")
+  assert.equal(Object.keys(corrected)[0], 'planned_dates', 'first, so it is read before the cards')
+  assert.equal(withPlannedDates('plan_outfit_set', { status: 'success' }, { plannedDatesForReply: { start: '2026-11-19', end: '2026-11-19', replaced: null } }).planned_dates, 'The plan is for 2026-11-19.')
+  assert.deepEqual(withPlannedDates('search_wardrobe', [{ id: 1 }], { plannedDatesForReply: { start: '2026-11-19', end: '2026-11-22' } }), [{ id: 1 }])
+  assert.deepEqual(withPlannedDates('plan_outfit_set', { status: 'success' }, {}), { status: 'success' })
+})
