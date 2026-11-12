@@ -395,6 +395,42 @@ gap.
     new one.
   - The first run's correct dates were luck.
 
+## 3.7 Flash for the chat (2026-11-11)
+
+**Owner: "switch to Flash 3.7".** The chat stylist has its own model, `CHAT_STYLIST_MODEL`
+(`CHAT_STYLIST_MODEL_OVERRIDE`): `gemini-3.7-flash` on Gemini, used by `/ask` only. The other ~35 call
+sites of `stylistProviderOverride` keep `STYLIST_MODEL_OVERRIDE`.
+
+**The same 15 turns on 3.7 Flash** (medium thinking, $1.80; scores in
+[stylist-check-set.md](stylist-check-set.md)):
+
+| | Flash-Lite | 3.7 Flash |
+|---|---|---|
+| Cost, 15 turns | $0.78 | $1.80 |
+| A fresh card turn | 20–60 s | 45–190 s |
+| Continued follow-ups | 4–10 s | 10–47 s |
+| The doubt follow-up (entry 3) | fail every run | pass |
+
+**Judgment, 3.7 better on:**
+- the doubt follow-up;
+- a shoes-off house considered;
+- a breakfast look per morning, with the reason;
+- the right trip dates, and honesty that the overcoat is not rainwear;
+- an option she no longer stands behind, said openly.
+
+**Still failing on both models:** no fire-pit fabric caution; thin readings of how dressed an occasion is;
+linen in November on one option.
+
+**Latency is the cost.**
+- The quick-answer target of decision 2 (about 7 s) is missed: the fastest follow-up took 10 s, and a
+  slot swap 47 s.
+- Three of the four continued 3.7 follow-ups reported no cached input on their first call; the "Really?
+  jeans?" turn reported 97%. Flash-Lite's continued calls were cached. Why is not yet known.
+
+**Next to measure:**
+- the stylist loop's thinking level on 3.7, which is medium (`GEMINI_STYLIST_LOOP_THINKING_LEVEL`);
+- 3.7's caching on continued turns.
+
 ## Decisions (2026-11-11)
 
 The owner's direction: these conversations should be as good as they can be, and a quick question gets
