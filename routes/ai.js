@@ -17,7 +17,6 @@ import {
   askStylistWithUsage,
   askStylistStructuredWithUsage,
   askStylistWithTools,
-  routeFreeformExecutionProfile,
   resolveAiTarget,
   stylistProviderOverride,
   boundedAtomicMultiLookResponse,
@@ -80,7 +79,7 @@ import { extractSeasonRequest, resolveCalendarSeason, seasonPromptLabel } from '
 import { projectStylingApplicabilityContext, resolveStylingContext, stepOutsideForecastLine } from '../styling-engine/stylingContext.js'
 import { reportTurnProgress, startTurnProgressStream } from '../lib/turnProgress.js'
 
-import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, declareSingleOutfitIntent, stylistCatalogLine, getSavedPackingApproach, savePackingApproach, seasonForReadTurn } from '../styling-engine/tools.js'
+import { storeUserCorrection, executeTool, bumpFreeformDiagnostic, recordFreeformToolIteration, nextFreeformCallIndex, verifiedPieceIdSets, coldLayerDecisionSchemaProperty, stylistCatalogLine, getSavedPackingApproach, savePackingApproach, seasonForReadTurn } from '../styling-engine/tools.js'
 import { planSummaryFromToolContext } from '../styling-engine/pastConversations.js'
 
 import { detectExplicitProhibition, describeOwnerGuidanceScope } from '../lib/ownerGuidance.js'
@@ -213,7 +212,6 @@ import {
   getStylistConversationState,
   saveStylistConversationState,
   buildStylistConversationPayload,
-  buildSingleOutfitConversationPayload,
   priorStylistConversationHistory,
   normalizeCalibrationRow,
   withTimeout,
@@ -1042,335 +1040,8 @@ export function persistFullStylistTurnState({ toolContext, answer, freeformTurnT
   }, sessionId)
 }
 
-// Shared by both compact profiles that judge real garments (2026-10-20, thread_1792563578975).
-// It was written for garment_fact only, so a card-explanation question about layering ("tell me how
-// the fitted 3/4 sleeves work with these two outfits") was answered with "the sleeves peek out
-// cleanly without bunching" over a turtleneck whose supplied facts said ruched, extra-long sleeves.
-// The sentence itself is the canonical one the composers state (outfitValidation.js).
-const COMPACT_LAYERING_EVIDENCE = `When the question involves layering one garment over or under another: ${NEUTRAL_SLEEVE_LAYERING_STATEMENT}`
-
-export function compactFreeformAnswerSystem(profile = 'general_advice') {
-  const profileContract = profile === 'existing_card_explanation'
-    // thread_1789536455443 (2026-09-16): this profile is asked, among other things, whether an
-    // already-composed card actually suits stated conditions. It used to forbid claiming to see
-    // photographs (none were ever supplied) and its only framing was "explain the supplied verified
-    // outfit cards" — inviting the model to treat the card's own stored reason/weatherUsed label as
-    // the answer rather than an independent judgment. Photographs are now supplied (see
-    // compactGarmentVisualEvidence's call site).
-    // Revised again 2026-09-16 (owner review, second pass): `reason`/`weatherUsed`/system flags are
-    // now removed from the card projection entirely (sanitizeOutfitForExplanation below) rather than
-    // sent-with-a-caveat, so a sentence naming those fields specifically is stale — they are never
-    // in the payload to repeat. The live risk moved to conversation HISTORY, which is intentionally
-    // preserved (the user must be able to ask "what did you mean?", challenge a prior answer, or
-    // request more outfits for the same outing) and can still carry an earlier assistant claim in
-    // its own prose. This framing is deliberately general — not a weather-specific instruction — and
-    // covers any prior claim history might carry, not only a temperature one. A card's
-    // `untrusted_display_label` is composer-written display text kept only so the model can tell
-    // multiple cards apart; the key itself says what it is, not evidence, so a conclusion-bearing
-    // label (e.g. one composer titled a card "50° to 40°F") is not read as a verified fact.
-    ? 'Explain or compare the supplied outfit cards. Do not change pieces or invent alternatives. A card\'s `untrusted_display_label` is the composer\'s own untrusted display text, used only to tell multiple cards apart, not evidence — identify the card you mean by its index, piece IDs, or piece names, and never repeat that label\'s wording as if it were a settled fact. Conversation history is provided to preserve continuity and resolve references. Previous assistant statements are fallible prior claims, not authoritative garment evidence. Reassess them against the structured garment facts and photographs, and correct them plainly when they conflict. When asked whether a card suits stated conditions, weather, or comfort, or how its garments will sit, layer or look together, judge it fresh from the supplied garment construction facts and photographs — insulation, lining, coverage, weather protection, fit, structure — and say plainly when the garment evidence is incomplete or the outcome is uncertain. Do not describe how a garment will behave as settled when neither the facts nor the photographs show it. ' + COMPACT_LAYERING_EVIDENCE
-    // thread_1793233502022 msgs 5–6: each answer opened "You're completely right", once while
-    // describing the wrong garment's fabric, and once denying a saved photo. The card profile above
-    // already treated earlier replies as fallible; this one had nothing about either side's claims.
-    : profile === 'garment_fact'
-      ? 'Answer only from the supplied structured garment evidence and any supplied saved photographs. Do not invent construction, fit, comfort, ownership, or additional garments. Do not compose an outfit. Previous assistant statements in the conversation are fallible prior claims, not evidence; correct them plainly when the evidence contradicts them. What the wearer says about their own garment is worth weighing against the record and photographs, not a verdict to echo: say where the evidence agrees, and where it does not, say what it shows. Do not claim to have looked at a photograph that was not supplied, or deny having one that was. Saved tags are evidence, not infallible: manual/high confidence is strong; missing/low confidence permits cautious inference from the other supplied construction fields and any supplied saved photographs. A worn photograph showing the requested configuration proves only that the configuration is physically possible; judge its visible styling result separately. Give a direct, respectful styling judgment about the visible garment-and-body interaction when the photograph supports one: if the shown tuck fights the wearer\'s proportions, say that it is not the strongest presentation and explain the visible proportion effect. Do not call the shown configuration flattering or preferred merely because it is possible. Do not pretend an unseen alternative is proven better; recommend trying it as the likely stronger option or ask for a comparison photograph. Keep an unseen alternative mechanically simple and adjacent to what was shown: for a full-tuck question, compare fully untucked before proposing a partial, French, asymmetric, folded, or otherwise more elaborate tuck, unless supplied evidence specifically supports that treatment. ' + COMPACT_LAYERING_EVIDENCE + ' Do not invent a hidden cause, diagnose the wearer\'s body, or turn one photographed interaction into a universal body rule. If evidence conflicts, explain the practical conflict naturally and prefer clearly visible garment behavior over a weak or missing tag. Photographs may show drape, bulk, texture and visible behavior, but cannot establish exact fiber composition; if fiber is not supplied, describe only its visible behavior and do not guess cotton, wool, viscose, modal or a blend. Never infer tuckability from hem shape alone. If saved photographs are supplied, do not ask the user to upload a photograph you already have. Speak as a stylist, not as a database inspector: never expose field names, snake_case keys, enum values, JSON notation, backticks, or confidence labels such as manual/high/low. Translate the evidence into ordinary garment language (for example, say “this fitted tee can be tucked,” never “tuck_behavior is tucks_anywhere”).'
-      : 'Give general styling education only. Do not imply that you inspected the wardrobe or recommend a specific owned garment. Explain dress codes and styling concepts through multiple valid pathways. Present structure, fabric, finish, cohesion, accessories, and footwear as optional signals whose effect depends on the whole outfit—not mandatory ingredients. Distinguish common tendencies from requirements, avoid status-loaded contrasts such as “real” versus lesser accessories, and never treat casual clothing as inherently careless, shapeless, or confined to errands. Say briefly when a wardrobe-specific answer would require looking at the pieces.'
-  // Voice (2026-10-07, live thread_1791357375231): "Why that cardigan?" came back as "three
-  // practical and proportional reasons: 1. **Proportion:** … 2. **Temperature:** …" — a report, in a
-  // thread whose other replies were now conversational. Length stays the stylist's call.
-  return `${STYLIST_COMPETENCE_CONTRACT} You are answering one question from the wearer, as their stylist talking with them: plain sentences in your own voice, the way you would say it across a table, as long as the answer needs and no longer. ${profileContract}
-
-RATIFIED STYLE CONSTITUTION:
-${prompts.BODY_CONTRACT}
-${prompts.PROVEN_FORMULAS}
-${prompts.AESTHETIC_GRAVITY}
-${prompts.LANE_NEUTRALITY}
-${prompts.WORKING_STYLE}`
-}
-
-// thread_1789536455443: audited against garmentEvidenceLine.js's garmentEvidenceFields — the
-// canonical shared fact set every OTHER chat surface (Whole Wardrobe, trip, /ask view_pieces)
-// already sends. Weather-relevant fields that set carries and this one was missing:
-// insulating_layer_materials, interior_construction, weather_protection (added first), and
-// fiber_content and season (added here). `stretch` is also on the shared line but is a fit/comfort
-// fact, not a weather-relevant one, and is deliberately left out — this is not "declare parity from
-// three fields," it is a field-by-field comparison against the one list this app treats as
-// authoritative for garment evidence.
-export function compactFreeformPieceFacts(piece = {}) {
-  return {
-    id: Number(piece.id),
-    name: piece.name,
-    category: piece.category,
-    colors: piece.colors,
-    fabric_category: piece.fabric_category,
-    fabric_weight: piece.fabric_weight,
-    fiber_content: piece.fiber_content,
-    insulating_layer_materials: piece.insulating_layer_materials,
-    interior_construction: piece.interior_construction,
-    weather_protection: piece.weather_protection,
-    season: piece.season,
-    opacity: piece.opacity,
-    needs_base: piece.needs_base,
-    tuck_behavior: piece.tuck_behavior,
-    hem_finish: piece.hem_finish,
-    sleeve_length: piece.sleeve_length,
-    sleeve_shape: piece.sleeve_shape,
-    length_hits_at: piece.length_hits_at,
-    silhouette: piece.silhouette,
-    waistband_type: piece.waistband_type,
-    formality: piece.formality,
-    heel_height: piece.heel_height,
-    walk_support: piece.walk_support,
-    occasions: piece.occasions,
-    reads_as: piece.reads_as,
-    // The owner's stored rules, minus receipts, retired reaction copies and saved chat replies (ruleProvenance.js).
-    styling_rules_learned: storedGarmentRules(piece),
-    field_confidence: piece.style_profile_json?._confidence || {},
-  }
-}
-
-export function exactNamedPieceIdsFromQuestion(question = '', pieces = []) {
-  const matches = namedPieceIdsInQuestion(question, pieces)
-  return matches.length === 1 ? matches : []
-}
-
-// Every active garment the question names in full. More than one is a comparison, which no single
-// resolved subject may narrow.
-export function namedPieceIdsInQuestion(question = '', pieces = []) {
-  const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  const request = normalize(question)
-  return (Array.isArray(pieces) ? pieces : [])
-    .filter(piece => {
-      const name = normalize(piece?.name)
-      return name.length >= 6 && request.includes(name)
-    })
-    .map(piece => Number(piece.id))
-    .filter(Boolean)
-}
-
-// A user citing "ID 127" is naming a garment as precisely as a name match would, but no name text
-// is present for exactNamedPieceIdsFromQuestion to find. Every distinct numeral is returned here,
-// resolved or not — compactGarmentFactSubjectsIncomplete below needs the unresolved ones too, to
-// tell "the user cited one garment" apart from "the user cited two and only one exists."
-export function explicitPieceIdMentionsFromQuestion(question = '') {
-  const matches = [...String(question || '').matchAll(/\bID\s*#?\s*(\d+)\b/gi)]
-  return [...new Set(matches.map(match => Number(match[1])).filter(Number.isFinite))]
-}
-
-// garment_fact compares supplied subjects; a question naming two garments by ID where only one
-// resolves to an active piece is missing half its evidence, not answerable-with-a-caveat. Scoped to
-// explicit ID citations only — the failure this guards against (routes/ai.js:4145) is a user typing
-// "ID 127" for a piece never in the current outfit set, not the pre-existing ambiguous-name-match
-// miss in exactNamedPieceIdsFromQuestion, which is a separate, already-accepted gap.
-export function compactGarmentFactSubjectsIncomplete(question = '', resolvedPieceIds = []) {
-  const mentioned = explicitPieceIdMentionsFromQuestion(question)
-  if (mentioned.length < 2) return false
-  const resolvedSet = new Set((Array.isArray(resolvedPieceIds) ? resolvedPieceIds : []).map(Number))
-  return mentioned.some(id => !resolvedSet.has(id))
-}
-
-// Last couple of exchanges only — enough for "what did you mean by that?" to resolve, not a second
-// copy of the conversation. Originally scoped to existing_card_explanation for thread_1787387145601
-// msg 5 (a question referring back to the model's OWN prior turn, unanswerable from outfit-card
-// JSON alone). thread_1787435527800 msg 16 showed garment_fact needs the same window for a
-// different reason — see recentReferentPieceIds below — so both profiles use it now; general_advice
-// still doesn't, since it answers from general knowledge, not from what was just said.
-export function compactRecentHistory(history = [], limit = 4) {
-  const entries = (Array.isArray(history) ? history : [])
-    .filter(entry => entry?.role === 'user' || entry?.role === 'assistant')
-    .slice(-limit)
-  if (!entries.length) return ''
-  return entries.map(entry => `${entry.role}: ${String(entry.content || '').trim()}`).join('\n')
-}
-
-// The user's side of the same window, for the router's setting judgment (engine-behaviour-map
-// item 85): the assistant reply stays in the recent exchange for its own purpose (answers to the
-// stylist's question), but where and when the clothes are worn is judged from the user's words.
-export function compactRecentUserWords(history = [], limit = 2) {
-  return (Array.isArray(history) ? history : [])
-    .filter(entry => entry?.role === 'user' || entry?.role === 'assistant')
-    .slice(-limit)
-    .filter(entry => entry.role === 'user')
-    .map(entry => String(entry.content || '').trim())
-    .filter(Boolean)
-    .join('\n')
-}
-
-// A vague reference like "these shorts" or "this top" names a garment CATEGORY, not an exact piece
-// or ID — exactNamedPieceIdsFromQuestion and explicitPieceIdMentionsFromQuestion both miss it, so it
-// previously fell through to every piece across the whole accumulated current-card set (see
-// compactFreeformContext). thread_1787435527800 msg 16 ("These shorts are a bit large") came one
-// turn after msg 15 named "the tan shorts" specifically — the referent is almost always whatever the
-// assistant most recently called by that same category word. Resolve against just the last exchange
-// before falling back to the full card set; an ambiguous or absent match returns no override, and
-// the existing fallback in compactFreeformContext still applies.
-const GARMENT_CATEGORY_WORDS = ['shorts', 'pants', 'trousers', 'slacks', 'jeans', 'shoes', 'sneakers', 'sandals', 'boots', 'heels', 'flats', 'dress', 'skirt', 'jacket', 'cardigan', 'sweater', 'coat', 'vest', 'blouse', 'shirt', 'tee', 'tank', 'top', 'hoodie', 'blazer']
-// Words people use interchangeably for one garment. thread_1793233502022: the user called the
-// "black wide-leg knit trousers" just discussed "pants", and only a different garment named
-// "...knit pants" could match — the answer described that one's cotton ponte as theirs.
-const GARMENT_CATEGORY_SYNONYMS = [['pants', 'trousers', 'slacks']]
-export function recentReferentPieceIds(question = '', history = [], pieces = [], { fullOnly = false } = {}) {
-  const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  const questionNorm = normalize(question)
-  const categoryWord = GARMENT_CATEGORY_WORDS.find(word => new RegExp(`\\b${word}\\b`).test(questionNorm))
-  if (!categoryWord) return []
-  const categoryWords = GARMENT_CATEGORY_SYNONYMS.find(group => group.includes(categoryWord)) || [categoryWord]
-  const recentText = normalize(compactRecentHistory(history, 2))
-  if (!recentText) return []
-  const recentWords = new Set(recentText.split(' ').filter(Boolean))
-  // Assistant prose abbreviates ("the tan shorts" for "tan straight shorts"), so an exact full-name
-  // substring match misses the real case — allow at most one of the piece's other name words to be
-  // absent from the recent exchange. Two candidates both fully present (both explicitly compared,
-  // e.g. "the tan ones vs. the olive ones") tie and neither wins — genuinely ambiguous stays ambiguous.
-  // A garment the exchange names in full outranks one it only nearly names (one word short).
-  const candidates = (Array.isArray(pieces) ? pieces : [])
-    .map(piece => {
-      const nameWords = normalize(piece?.name).split(' ').filter(Boolean)
-      if (!nameWords.some(word => categoryWords.includes(word))) return null
-      const matchedCount = nameWords.filter(word => recentWords.has(word)).length
-      if (matchedCount < 2 || nameWords.length - matchedCount > 1) return null
-      return { id: Number(piece.id), full: matchedCount === nameWords.length }
-    })
-    .filter(candidate => candidate && Number.isFinite(candidate.id))
-  const fullyNamed = candidates.filter(candidate => candidate.full)
-  const pool = fullyNamed.length || fullOnly ? fullyNamed : candidates
-  return pool.length === 1 ? [pool[0].id] : []
-}
-
-// The garment on the thread's own cards that a question refers to by a shortened name.
-// thread_1793329874358: the stylist called Look 4's "navy cream striped button-up shirt" "the striped
-// button-up shirt"; the wardrobe-wide match above allows one missing word, so it picked the "grey
-// striped button-up shirt" that was on no card, and every answer after it described the wrong shirt.
-// Among the cards' pieces the question and the last exchange are read together, and the piece of a category the
-// question names that shares the most name words with them (at least two) is the one meant; a tie is no answer.
-export function cardReferentPieceIds(question = '', history = [], pieces = [], cardPieceIds = []) {
-  const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  const onCards = new Set((Array.isArray(cardPieceIds) ? cardPieceIds : []).map(Number))
-  if (!onCards.size) return []
-  const questionNorm = normalize(question)
-  // Every category the question names ("the shirt … in the Striped Button-Up and Boyfriend Jeans outfit").
-  const categoryWords = GARMENT_CATEGORY_WORDS.filter(word => new RegExp(`\\b${word}\\b`).test(questionNorm))
-    .flatMap(word => GARMENT_CATEGORY_SYNONYMS.find(group => group.includes(word)) || [word])
-  if (!categoryWords.length) return []
-  const words = new Set(`${questionNorm} ${normalize(compactRecentHistory(history, 2))}`.split(' ').filter(Boolean))
-  const scored = (Array.isArray(pieces) ? pieces : [])
-    .filter(piece => onCards.has(Number(piece?.id)))
-    .map(piece => {
-      const nameWords = normalize(piece?.name).split(' ').filter(Boolean)
-      if (!nameWords.some(word => categoryWords.includes(word))) return null
-      return { id: Number(piece.id), matched: nameWords.filter(word => words.has(word)).length }
-    })
-    .filter(candidate => candidate && candidate.matched >= 2 && Number.isFinite(candidate.id))
-  const best = Math.max(0, ...scored.map(candidate => candidate.matched))
-  const top = scored.filter(candidate => candidate.matched === best)
-  return top.length === 1 ? [top[0].id] : []
-}
-
-// The router reads the recent exchange and names the garment the request is about. Only an exact
-// active name counts; anything else leaves the subject to the other resolvers.
-export function routerSubjectPieceIds(subject = '', pieces = []) {
-  const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  const wanted = normalize(subject)
-  if (wanted.length < 6) return []
-  const matches = (Array.isArray(pieces) ? pieces : []).filter(piece => normalize(piece?.name) === wanted)
-  return matches.length === 1 ? [Number(matches[0].id)].filter(Boolean) : []
-}
-
-// A follow-up to a garment answer ("these are knit wool, did you look at the photo?") is about the
-// same garment. thread_1793233502022 msg 6 named nothing, so it fell back to all 13 pieces on the
-// plan's cards and the photo budget ran out before the trousers. The stored subject applies only
-// when the user's previous message is the one that answer replied to.
-export function garmentFactFollowUpSubjectIds(priorHistory = [], storedSubject = null) {
-  const ids = Array.isArray(storedSubject?.piece_ids) ? storedSubject.piece_ids.map(Number).filter(Boolean) : []
-  const answeredQuestion = String(storedSubject?.question || '').trim()
-  if (!ids.length || !answeredQuestion) return []
-  const lastUser = (Array.isArray(priorHistory) ? priorHistory : []).filter(entry => entry?.role === 'user').at(-1)
-  return String(lastUser?.content || '').trim() === answeredQuestion ? ids : []
-}
-
-// This is request-shape routing, not garment-semantic inference. It stays deliberately narrow:
-// exact identity and saved visual evidence must already exist, while pairing, outfit-building,
-// general fit critique, and ambiguous references remain with the full stylist.
-export function isSavedPhotoWearMechanicsQuestion(question = '', { exactSubjectCount = 0, savedPhotoCount = 0 } = {}) {
-  if (Number(exactSubjectCount) !== 1 || Number(savedPhotoCount) < 1) return false
-  return /\b(?:tuck(?:ed|ing)?|untuck(?:ed|ing)?|half[- ]?tuck(?:ed|ing)?|french[- ]?tuck(?:ed|ing)?)\b/i.test(String(question || ''))
-}
-
-export function compactFreeformContext({ body = {}, state = {}, namedPieceIds = [] } = {}) {
-  const bodyOutfits = Array.isArray(body.generatedOutfits) ? body.generatedOutfits : []
-  const stateOutfits = Array.isArray(state.current_outfit_set) ? state.current_outfit_set : []
-  // Server state is the verified authority. The browser echo remains a legacy fallback for
-  // pre-bounded threads that have not yet written current_outfit_set.
-  const outfits = stateOutfits.length ? stateOutfits : bodyOutfits
-  const activePieceId = Number(body?.activeContext?.type === 'piece' ? body.activeContext.id : body?.pieceId)
-  const pieceIds = [...new Set([
-    ...(Number.isFinite(activePieceId) && activePieceId > 0 ? [activePieceId] : []),
-    ...(Array.isArray(body.pieceIds) ? body.pieceIds : []),
-    ...(Array.isArray(namedPieceIds) ? namedPieceIds : []),
-    ...outfits.flatMap(outfit => Array.isArray(outfit?.pieceIds)
-      ? outfit.pieceIds
-      : (Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : [])),
-  ].map(Number).filter(Boolean))].slice(0, 16)
-  // New pieces the current cards suggest buying (ideal additions). They have no garment record, so
-  // they never reach pieceIds; the card's own text is everything the app knows about them.
-  // thread_1792476353706: "tell me more about the fitted black tee in Ink Navy Contrast" reached
-  // garment_fact with only the anchor's record and answered that no such garment existed.
-  const suggestedCards = bodyOutfits
-    .filter(outfit => Array.isArray(outfit?.missingPieces) && outfit.missingPieces.length)
-    .slice(0, 8)
-    .map(outfit => ({
-      card: outfit.title || outfit.label || '',
-      suggested_pieces: outfit.missingPieces.map(piece => {
-        const name = typeof piece === 'string' ? piece : String(piece?.name || '')
-        const note = (Array.isArray(outfit.pieceNotes) ? outfit.pieceNotes : []).find(entry => entry?.piece === name)
-        return note?.description ? { name, description: note.description } : { name }
-      }),
-      ...(outfit.visualPrompt ? { full_look: outfit.visualPrompt } : {}),
-    }))
-  return { outfits: outfits.slice(0, 8), pieceIds, suggestedCards }
-}
-
-// Which garments' photos a card-explanation answer gets, in order. A card counts as named when its
-// label appears in the question as whole words ("…with Plum Cardigan Over Black Sheath or Tonal
-// Plum & Grey Layer"); with none named, every card's pieces are used in card order. The label is
-// composer display text, used here only to choose photos, never as evidence.
-export function cardExplanationVisualPieceIds({ question = '', outfits = [], leadPieceIds = [] } = {}) {
-  const normalize = text => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  const normalizedQuestion = ` ${normalize(question)} `
-  const cardPieceIds = outfit => (Array.isArray(outfit?.pieceIds)
-    ? outfit.pieceIds
-    : (Array.isArray(outfit?.piece_ids) ? outfit.piece_ids : []))
-  const list = Array.isArray(outfits) ? outfits : []
-  const named = list.filter(outfit => {
-    const label = normalize(outfit?.label || outfit?.title)
-    return label && normalizedQuestion.includes(` ${label} `)
-  })
-  return [...new Set([...(leadPieceIds || []), ...(named.length ? named : list).flatMap(cardPieceIds)]
-    .map(Number).filter(id => Number.isFinite(id) && id > 0))]
-}
-
-export function compactProfileHasContext(profile, context = {}) {
-  if (profile === 'existing_card_explanation') return Boolean(context.outfits?.length)
-  if (profile === 'garment_fact') return Boolean(context.pieceIds?.length)
-  return profile === 'general_advice'
-}
-
-// Whether a turn can reach ANY compact profile, decided before the router is paid for. A fresh
-// request can reach all of them; a verified current outfit set can reach existing_card_explanation;
-// a resolved garment subject can reach garment_fact. compactFreeformContext already folds
-// activeContext, body pieceIds, exact named pieces and current-card pieces into pieceIds, so the
-// subject test covers every route to one.
-//
-// Known accepted miss: general_advice and wardrobe_inventory need no context at all, so a follow-up
-// in a thread that never produced a card or a subject falls through to the full stylist. That is a
-// deliberate trade rather than an oversight — general education is always answerable, so no turn is
-// provably compact-ineligible and any narrowing is a heuristic. Measure before widening: rows with
-// execution_router_calls = 0 AND search_calls = 0 are turns the full stylist answered without ever
-// touching the wardrobe, which is the proxy for a missed compact turn.
-export function compactRouterTurnHasContext(conversationMode = 'new_request', context = {}) {
-  if (String(conversationMode || 'new_request') === 'new_request') return true
-  return Boolean(context.outfits?.length) || Boolean(context.pieceIds?.length)
-}
+// The compact answer profiles, the execution router's helpers and the single-outfit route were removed
+// on 2026-11-11 (docs/one-stylist-per-thread.md): every typed turn goes to the one stylist.
 
 // Evidence that a request belongs to an established execution context. Conversation-mode words
 // are deliberately absent: "this is", "actually", or another tone marker cannot create prior
@@ -1388,217 +1059,6 @@ export function freeformExecutionContextEvidence(body = {}, state = {}, recently
     Array.isArray(state.current_outfit_set) && state.current_outfit_set.length ? 'saved_outfit_set' : '',
     Array.isArray(recentlyDiscussedPieceIds) && recentlyDiscussedPieceIds.length ? 'recently_discussed_pieces' : '',
   ].filter(Boolean)
-}
-
-export function formatWardrobeInventoryAnswer(counts = {}) {
-  const ordered = [
-    ['top', 'Tops'],
-    ['bottom', 'Bottoms'],
-    ['dress', 'Dresses'],
-    ['shoes', 'Shoes'],
-    ['outerwear', 'Outerwear'],
-    ['accessory', 'Accessories'],
-    ['other', 'Other'],
-  ]
-  const rows = ordered
-    .filter(([key]) => Number(counts[key]) > 0)
-    .map(([key, label]) => `| ${label} | ${Number(counts[key])} |`)
-  const total = Object.values(counts).reduce((sum, value) => sum + (Number(value) || 0), 0)
-  return [
-    'Here’s your active wardrobe breakdown:',
-    '',
-    '| Category | Count |',
-    '|---|---:|',
-    ...rows,
-    `| **Total** | **${total}** |`,
-  ].join('\n')
-}
-
-// Canonical layer-pair-mechanics verdict for every top/dress pair among the supplied garment_fact
-// subjects, computed server-side so the compact answer model consumes one shared verdict instead of
-// re-deriving sleeve/fabric compatibility from raw fields itself (routes/ai.js:evaluateLayerPairConstruction
-// is the single owner propose_outfit/plan/capsule validation also consumes). Most garment_fact
-// questions are single-garment and produce no pair here; that is expected, not a gap.
-// LOG-ONLY since 2026-09-14: this verdict is diagnostic evidence and is no longer sent to the garment_fact model.
-export function compactGarmentFactLayeringEvidence(pieces = []) {
-  const candidates = (Array.isArray(pieces) ? pieces : [])
-    .filter(piece => ['top', 'dress'].includes(wardrobeCategoryGroup(piece)))
-  if (candidates.length < 2) return []
-  const lines = []
-  for (let i = 0; i < candidates.length; i++) {
-    for (let j = i + 1; j < candidates.length; j++) {
-      const pair = evaluateLayerPairConstructionFor(candidates[i], candidates[j])
-      if (pair.verdict === 'compatible') continue
-      const addedLabel = pair.addedPiece?.name || `piece ${pair.addedPiece?.id}`
-      const baseLabel = pair.basePiece?.name || `piece ${pair.basePiece?.id}`
-      lines.push(`${addedLabel} + ${baseLabel}: ${pair.verdict}${pair.findings[0] ? ` — ${pair.findings[0].message}` : ''}`)
-    }
-  }
-  return lines
-}
-
-// thread_1789536455443 (revised again 2026-09-16, owner review): a local keyword classifier
-// deciding WHEN a prior conclusion is dangerous to show was itself the wrong mechanism — it is a
-// second guess about which questions are "about weather", brittle by construction, and the
-// underlying problem (the model repeating a conclusion placed in front of it) is not limited to
-// questions that happen to contain a weather word. `existing_card_explanation` now ALWAYS projects
-// a card as structural membership only: `reason`, `weather_used`/`weatherUsed`,
-// `resolved_weather_context`/`resolvedWeatherContext`, `needs_removable_cool_layer`/
-// `needsRemovableCoolLayer`, and `system_flags`/`systemFlags` are removed unconditionally, on
-// every question, not detected per-question. Outfit membership (piece_ids, pieces,
-// styling_instructions, roles) is kept: it is a fact about what the card contains, not a conclusion
-// about it. The answer model explains or assesses the outfit afresh from its pieces, the full
-// garment facts, and the photographs — including for an ordinary "why did you choose this?"
-// question, which gets a fresh explanation rather than a repetition of the stored reason. The
-// user's own original wording (including any stated weather) is never deleted — it survives in
-// recent conversation history, the turn that actually asked for the outfit.
-//
-// Revised again 2026-09-16 (owner review, second pass): a real capture (thread_1789543565383) showed
-// a composer-written `label` of "Polished Urban Walk at 50° to 40°F" reaching the model verbatim —
-// exactly the conclusion-bearing text the reason/weatherUsed stripping above was meant to keep out,
-// just carried through a field that survived because it is genuinely needed to tell multiple cards
-// in a bundle apart. Deleting it outright would break that legitimate case. Renamed instead of
-// caveated: the key itself now says what it is (an untrusted composer-written display string, not
-// evidence) rather than depending on the model reading and honoring a nearby prompt sentence — once
-// a card is resolved, its index/piece_ids/pieces are the neutral way to refer back to it.
-function sanitizeOutfitForExplanation(outfit = {}) {
-  const {
-    reason, weather_used, weatherUsed,
-    resolved_weather_context, resolvedWeatherContext,
-    needs_removable_cool_layer, needsRemovableCoolLayer,
-    system_flags, systemFlags,
-    label, title,
-    ...membership
-  } = outfit
-  const composerLabel = label || title
-  return composerLabel ? { ...membership, untrusted_display_label: composerLabel } : membership
-}
-
-export function compactFreeformAnswerMessage({ profile, question = '', context = {}, pieces = [], state = {}, history = [] } = {}) {
-  const recentHistory = (profile === 'existing_card_explanation' || profile === 'garment_fact') ? compactRecentHistory(history) : ''
-  const sanitizedOutfits = (context.outfits || []).map(outfit =>
-    profile === 'existing_card_explanation' ? sanitizeOutfitForExplanation(outfit) : outfit)
-  return [
-    `Question: ${question}`,
-    // The user's ORIGINAL wording (including any stated weather) survives here, in the turn that
-    // asked for the outfit — never deleted, only kept out of the technical-conclusion fields above.
-    recentHistory ? `Recent conversation (most recent last):\n${recentHistory}` : '',
-    profile === 'existing_card_explanation' && sanitizedOutfits.length
-      ? `Card membership as composed (garment IDs and names only — the composer's own reason and weather/warmth conclusions are withheld here; any untrusted_display_label is composer-written display text, not evidence; explain or judge the outfit afresh from the garment facts and photographs below, and from the user's own words above):\n${JSON.stringify(sanitizedOutfits)}`
-      : '',
-    profile !== 'general_advice' && pieces.length ? `Authoritative garment facts:\n${JSON.stringify(pieces.map(compactFreeformPieceFacts))}` : '',
-    profile !== 'general_advice' && context.suggestedCards?.length
-      ? `Suggested new pieces on the current cards. The user does not own these: there is no garment record or photograph, only the card's own text. When the question is about one of them, answer from that text, say it is a suggestion rather than something they own, and where the text leaves something open, say so and give your advice on what to look for:\n${JSON.stringify(context.suggestedCards)}`
-      : '',
-    profile !== 'general_advice' && state.established ? `Established context:\n${JSON.stringify(state.established)}` : ''
-  ].filter(Boolean).join('\n\n')
-}
-
-// 2026-09-16 (owner review): a real capture (thread_1789543565383, session
-// 20260916T072500260Z-p33193-328b5958) stored a sentence fragment cut off mid-word by
-// stopReason: max_tokens and presented it as a finished answer. Raising the caller's maxTokens
-// (its own comment has the full diagnosis: Gemini bills thinking tokens out of the same cap) fixes
-// the common case; this is the simple defensive backstop for the rest — one retry asking for a
-// shorter, complete answer (the same shape as the full tool loop's own providerTruncation retry in
-// styling-engine/provider.js), and an honest disclosure if it is STILL truncated, rather than ever
-// storing/serving a fragment as a completed answer. `ask` is injectable so this can be unit-tested
-// directly — askStylistWithUsage's own test-mode shortcut cannot simulate a provider stopReason
-// (see test/bounded_multi_context_continuity_e2e.test.js's documented harness limitation), so a
-// route-level HTTP mock could never reach the truncated branch at all.
-export async function compactAnswerWithTruncationGuard({
-  system, messages, maxTokens = 1500, providerOverride = null, ask = askStylistWithUsage, onAttempt = null
-} = {}) {
-  const usages = []
-  let lastText = ''
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (onAttempt) onAttempt({ isRetry: attempt > 0 })
-    const call = await ask({
-      system,
-      messages: attempt === 0
-        ? messages
-        : [...messages,
-            { role: 'assistant', content: lastText },
-            { role: 'user', content: 'That reply was cut off by the token limit before it finished, so it may be incomplete — give a shorter, complete answer this time.' }
-          ],
-      maxTokens,
-      providerOverride
-    })
-    usages.push(call.usage)
-    lastText = call.text
-    if (call.usage?.stopReason !== 'max_tokens') return { text: call.text, usages, truncated: false }
-  }
-  return {
-    text: "I ran out of room to finish that answer completely — ask me again and I'll give a shorter, complete one.",
-    usages,
-    truncated: true
-  }
-}
-
-// A card's own role invariant (outfitValidation.js: "at most one primary_top, primary_bottom,
-// dress, and shoes role" plus "at most one MIDDLE layer... and at most one OUTER layer") caps a
-// valid outfit at five distinct pieces — top-or-dress, bottom, shoes, one middle layer, one outer
-// layer. Accessories are styled separately and never shown here. A lower image ceiling can still
-// starve a valid five-piece card of its outerwear or shoes in pass one, below.
-const MAX_STRUCTURAL_OUTFIT_PIECES = 5
-// One photo per garment across two compared cards that share their anchor, with a ceiling so a
-// question about every card on a long set does not attach a dozen images.
-const MAX_CARD_EXPLANATION_IMAGES = 8
-
-export async function compactGarmentVisualEvidence(pieces = [], { uploadsDir = userUploadsDir(), maxImages = MAX_STRUCTURAL_OUTFIT_PIECES } = {}) {
-  const list = Array.isArray(pieces) ? pieces : []
-  const blocks = []
-  const seenFiles = new Set()
-  // 2026-09-16 (owner review): a hard-coded 4 was a stale ceiling from when 4 pieces was the
-  // largest card seen in practice — it could still truncate pass one below the outfit's own
-  // structural maximum and lose a valid fifth garment (typically the outer layer) entirely. The
-  // ceiling is now the actual structural maximum, so pass one always has room for one image per
-  // unique garment on any valid card before pass two spends anything on a second photo.
-  // A card explanation comparing several cards may ask for more, up to MAX_CARD_EXPLANATION_IMAGES.
-  const boundedLimit = Math.max(0, Math.min(MAX_CARD_EXPLANATION_IMAGES, Number(maxImages) || 0))
-  const imageCount = () => blocks.filter(block => block.type === 'image').length
-
-  const tryAdd = async (piece, label, photoFile) => {
-    if (imageCount() >= boundedLimit) return false
-    if (!photoFile || seenFiles.has(photoFile)) return false
-    if (path.basename(photoFile) !== photoFile) return false
-    const filePath = path.join(uploadsDir, photoFile)
-    if (!fs.existsSync(filePath)) return false
-    try {
-      const thumb = await prepareWardrobeThumb(
-        filePath,
-        `compact-garment-fact:${piece.id}:${label}:${photoFile}`,
-        { maxPx: 640 }
-      )
-      blocks.push(
-        { type: 'text', text: `Saved ${label} for ${piece.name || `piece ${piece.id}`}:` },
-        { type: 'image', detail: 'low', source: { type: 'base64', ...thumb } }
-      )
-      seenFiles.add(photoFile)
-      return true
-    } catch (err) {
-      console.warn(`Failed to prepare compact garment evidence for piece ${piece?.id}:`, err.message)
-      return false
-    }
-  }
-
-  // thread_1789536455443 (2026-09-16): the previous loop was piece-major, photo-type-minor — worn
-  // AND hanger photo for piece 1, then piece 2, and so on — so a 4-image budget silently spent
-  // itself on the outfit's first two pieces and left later ones (on a 4-piece outfit: the
-  // outerwear) with no visual evidence at all. Pass 1 gives every garment ONE useful image (worn
-  // photo preferred, hanger as fallback) before any single garment gets a second; pass 2 only then
-  // spends remaining capacity on each garment's other photo, same order.
-  for (const piece of list) {
-    if (imageCount() >= boundedLimit) break
-    const gotWorn = await tryAdd(piece, 'worn photo', piece?.worn_photo)
-    if (!gotWorn) await tryAdd(piece, 'hanger photo', piece?.photo)
-  }
-  for (const piece of list) {
-    if (imageCount() >= boundedLimit) break
-    await tryAdd(piece, 'worn photo', piece?.worn_photo)
-    if (imageCount() >= boundedLimit) break
-    await tryAdd(piece, 'hanger photo', piece?.photo)
-  }
-  return blocks
 }
 
 function formatCoverageNote(topCoverage, shoeCoverage, { occasion = '', occasionProfile = null, activityProfile = null } = {}) {
@@ -5627,18 +5087,6 @@ export { getSavedPackingApproach, savePackingApproach }
 
 // One-shot: the pending question is read and cleared together, so an unanswered or abandoned
 // question cannot attach itself to some later message.
-export function takePendingClarification(sessionId = 'default') {
-  const state = getStylistConversationState(sessionId) || {}
-  const pending = state.pending_clarification
-  if (!pending) return null
-  const { pending_clarification: _taken, ...rest } = state
-  saveStylistConversationState(rest, sessionId)
-  return pending.request && pending.question ? pending : null
-}
-
-export function clarifiedRequestText(pending = {}, answer = '') {
-  return `${pending.request}\n\n(You asked me: "${pending.question}" My answer: ${String(answer || '').trim()})`
-}
 
 // What sits beside each garment photograph in the Whole Wardrobe composer: the shared fact line,
 // then the tagger's "reads as" on its own line, labelled as an unverified impression.
@@ -7565,13 +7013,10 @@ router.post('/ask', async (req, res) => {
   // success path.
   let diagnosticsContext = null
   try {
-    // The stylist asked a question last turn (pendingClarification below); this message is the
-    // answer. The paths that compose an outfit see only the current message, so the original
-    // request and the exchange are joined into it, once.
+    // The stylist's own clarifying question and the user's answer are ordinary turns of the same
+    // conversation (docs/one-stylist-per-thread.md); nothing is joined here any more.
     const typedQuestion = req.body.question || ''
-    const pendingClarification = takePendingClarification(req.body.sessionId || 'default')
-    const currentQuestion = pendingClarification ? clarifiedRequestText(pendingClarification, typedQuestion) : typedQuestion
-    if (pendingClarification) req.body.question = currentQuestion
+    const currentQuestion = typedQuestion
     // Item 12's deferred fast path (feedback-routing-proposal.md): a simple, explicit, self-
     // contained prohibition needs no model turn at all — extractOwnerGuidanceApplicability already
     // resolves it deterministically. Applies regardless of thread state, since the whole point is
@@ -7740,7 +7185,6 @@ router.post('/ask', async (req, res) => {
     // its reading for the turn, a follow-up keeps the thread's.
     const executionContextEvidence = freeformExecutionContextEvidence(req.body, compactState, recentlyDiscussedPieceIds)
     const freshExecutionRequest = executionContextEvidence.length === 0
-      || (Boolean(pendingClarification) && executionContextEvidence.every(kind => kind === 'history'))
     toolContext.freshExecutionRequest = freshExecutionRequest
     toolContext.requireDeclaredReading = true
     // docs/one-stylist-per-thread.md: continue this thread's provider conversation when it can be continued

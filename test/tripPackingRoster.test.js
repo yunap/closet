@@ -1728,7 +1728,9 @@ test('every trip call is told how a day away works: one outfit from morning unti
   assert.ok(tripPlanCompositionSystemPrompt().includes(HOW_A_DAY_AWAY_WORKS), 'the look composer')
   const { readFileSync } = await import('node:fs')
   const core = readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
-  assert.equal(core.split('      HOW_A_DAY_AWAY_WORKS,').length - 1, 2, 'the trip planning turn and the trip follow-up turn')
+  // The trip follow-up turn, and the full stylist that now plans a fresh trip (2026-11-11, docs/one-stylist-per-thread.md).
+  assert.equal(core.split('      HOW_A_DAY_AWAY_WORKS,').length - 1, 1, 'the trip follow-up turn')
+  assert.match(core, /`- For a trip, before calling plan_outfit_set: \$\{HOW_A_DAY_AWAY_WORKS\}`/, 'the stylist who plans a fresh trip')
 })
 
 // Live thread_1791778749455 (36–87°F, two days at 80°F or more): the suitcase held two pairs of

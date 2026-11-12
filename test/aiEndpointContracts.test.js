@@ -20,7 +20,7 @@ process.env.WARDROBE_TEST_MAX_WHOLE_WARDROBE_REVIEW_CANDIDATES = '3'
 const { app, db, userUploadsDir, executeTool, contentToOpenAI } = await import('../server.js')
 const { savedOutfitImagePrompt, clearOutfitEvaluationResultCache, outfitEvaluationSystemPrompt, buildStylistConversationPayload } = await import('../styling-engine/core.js')
 const { RETRY_IS_UNSEEN, extractToolResultImages, normalizeAiUsage, estimateAiUsageCost, applyFreeformOutputChecks, stylistToolsForTurn, systemToAnthropicBlocks, systemToPlainText, withMovingCacheBreakpoint, PROMPT_CACHE_BREAKPOINT, toAnthropicContentBlocks } = await import('../styling-engine/provider.js')
-const { wholeWardrobeVisualComposerSystemPrompt, selectedItemVisualComposerSystemPrompt, compactFreeformAnswerSystem, orderLayersByThermalFit } = await import('../routes/ai.js')
+const { wholeWardrobeVisualComposerSystemPrompt, selectedItemVisualComposerSystemPrompt, orderLayersByThermalFit } = await import('../routes/ai.js')
 
 let server
 let baseUrl
@@ -2319,12 +2319,6 @@ test('critique/feedback is a one-shot entry and writes no conversational cache o
   assert.equal(outfitEvaluationSystemPrompt('followup').includes(PROMPT_CACHE_BREAKPOINT), false)
 })
 
-test('a compact freeform follow-up never forces the full conversational cache', () => {
-  for (const profile of ['existing_card_explanation', 'garment_fact', 'general_advice']) {
-    assert.equal(compactFreeformAnswerSystem(profile).includes(PROMPT_CACHE_BREAKPOINT), false)
-  }
-})
-
 test('a one-shot entry followed by a genuine full-stylist follow-up activates the conversational cache on that turn', async () => {
   await postJson('/api/ai/generate-wardrobe-outfits-visual', {
     occasion: 'city',
@@ -2805,25 +2799,22 @@ test('a freeform turn writes a run row attributed to its own thread', async () =
   assert.equal(unattributed.n, 0)
 })
 
-test('freeform ask broad request triggers clarifying question instruction', async () => {
+test('a travel request with no weather is told to ask for the forecast; one that only names a place is not stopped', async () => {
+  // docs/one-stylist-per-thread.md: since the router's retirement the stop reads the picked occasion, never a word match.
   const json = await postJson('/api/ai/ask', {
-    question: 'suggest packing outfits for Portland',
+    question: 'help me pack for my trip',
+    occasion: 'travel',
     pieces: [],
     history: [],
     conversationMode: 'new_request',
   })
-
   assert.equal(json.answer, 'Mock stylist answer with generated outfit context.')
-  assert.deepEqual(json.structuredOutfits, [])
   const lastCall = aiCalls.at(-1)
-  assert.match(lastCall.system, /ask exactly one clear clarifying question/i)
-  assert.match(lastCall.system, /do not recommend garments, and do not suggest outfits/)
   assert.match(lastCall.system, /TRAVEL WEATHER BLOCKER/)
-  // Same condition, stated by the surviving TRAVEL WEATHER BLOCKER rather than the pre-dedup mode
-  // sentence. The three assertions above already carry the contract; this one names the trigger.
-  assert.match(lastCall.system, /travel\/packing request without weather or forecast context/)
+  assert.match(lastCall.system, /do not recommend garments, and do not suggest outfits/)
+  await postJson('/api/ai/ask', { question: 'suggest packing outfits for Portland', pieces: [], history: [], conversationMode: 'new_request' })
+  assert.doesNotMatch(aiCalls.at(-1).system, /TRAVEL WEATHER BLOCKER/, 'the words alone do not stop the turn; her tools look the weather up')
 })
-
 test('freeform ask does not precompose destination-only multi-day trips before activity scope is confirmed', async () => {
   const json = await postJson('/api/ai/ask', {
     question: 'Going to Fairfax, CA for a few days',
@@ -6325,7 +6316,6 @@ test('output guards consume declared intent instead of phrasing regexes', () => 
 
   // 2026-10-23: a turn the router marked as an invitation to think, or that declared prose, may name
   // garments while discussing directions; it is not forced into a card.
-  assert.equal(applyFreeformOutputChecks(proseOutfit, { ...undeclaredContext, answerInWords: true }).block, false)
   assert.equal(applyFreeformOutputChecks(proseOutfit, { ...undeclaredContext, declaredIntent: { want: 'text' } }).block, false)
 })
 
@@ -8919,46 +8909,6 @@ test('a router season equal to the requested date\'s calendar season is the curr
 
 // Owner ruling 2026-10-06: the stylist asks first when information is missing or the request can go
 // different ways. The question is remembered once; the answer is joined to the original request.
-test('a pending clarifying question is taken exactly once and joined to the answer', async () => {
-  const { takePendingClarification, clarifiedRequestText } = await import('../routes/ai.js')
-  const { saveStylistConversationState, getStylistConversationState } = await import('../styling-engine/conversationState.js')
-  const sessionId = 'clarify-test-session'
-  saveStylistConversationState({ occasion: 'city', pending_clarification: { request: 'What should I wear to the party on Saturday?', question: 'Is it a sit-down dinner or more of a standing drinks thing?' } }, sessionId)
-  const pending = takePendingClarification(sessionId)
-  assert.equal(pending.question, 'Is it a sit-down dinner or more of a standing drinks thing?')
-  assert.equal(getStylistConversationState(sessionId).pending_clarification, undefined, 'cleared when read')
-  assert.equal(getStylistConversationState(sessionId).occasion, 'city', 'the rest of the state is kept')
-  assert.equal(takePendingClarification(sessionId), null, 'never attaches to a later message')
-  const joined = clarifiedRequestText(pending, 'Standing drinks, in a garden')
-  assert.match(joined, /^What should I wear to the party on Saturday\?/)
-  assert.match(joined, /You asked me: "Is it a sit-down dinner or more of a standing drinks thing\?" My answer: Standing drinks, in a garden/)
-})
-
-test('the router is asked for a clarifying question, told when to leave it empty, and the asking-is-a-mistake retry is gone', async () => {
-  const { routeFreeformExecutionProfile, evaluateTurnEnd } = await import('../styling-engine/provider.js')
-  let captured = null
-  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
-    captured = call
-    return { profile: 'single_outfit', occasion: 'city', activity: 'none', setting: 'includes_outdoors', season: '', mood: '', mission: 'mix', limit: 1, location: '', date: '', subject: '', clarifying_question: 'What kind of party is it?' }
-  }
-  try {
-    const routed = await routeFreeformExecutionProfile({ question: 'What should I wear to the party?' })
-    assert.equal(routed.value.clarifying_question, 'What kind of party is it?')
-    assert.match(captured.system, /a good stylist asks before choosing when she has to/)
-    assert.match(captured.system, /those are looked up, never asked/)
-    assert.match(captured.system, /do not ask again/)
-  } finally {
-    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
-  }
-  if (typeof evaluateTurnEnd === 'function') {
-    const verdict = evaluateTurnEnd({ answerText: 'Where are you headed, and what weather do you expect?', toolContext: { freeformDiagnostics: { searchCalls: 0 }, declaredIntent: { want: 'text' } }, retried: new Set() })
-    assert.notEqual(verdict?.clause, 'destinationClarification')
-  }
-})
-
-// thread_1791327434563: "Tonight I'm going to a guitar concert" was dressed for the whole day's
-// 58–90°F; the evening ran 89°F down to 64°F. The router's time of day reads the forecast for those
-// hours, and falls back to the day when they are not covered.
 test('a routed time of day reads the forecast for those hours, not the whole day', async () => {
   const { resolveToolStylingContext } = await import('../styling-engine/tools.js')
   const { _clearWeatherCachesForTests, setForecastClockForTests } = await import('../styling-engine/weather.js')
@@ -9017,21 +8967,6 @@ test('a set of options opens with the stylist\'s own note when she wrote one abo
 
 // thread_1791328194271: the single-outfit stylist was told to let the tools resolve weather and was
 // never told what they resolved; she dressed an 89°F evening in trousers, boots and a cardigan.
-test('the single-outfit wardrobe search states the resolved conditions as a fact, and says nothing when there are none', async () => {
-  const { buildSingleOutfitStylistCatalog } = await import('../styling-engine/tools.js')
-  const live = { weatherProfile: { resolvedWeatherContext: { location: 'San Mateo', temperature: { highF: 89, lowF: 65, source: 'live', provider: 'Open-Meteo' } } } }
-  const stated = buildSingleOutfitStylistCatalog([], { stylingContext: live, weatherWindow: 'evening' }).conditions
-  assert.match(stated, /^this evening: 89°F high \/ 65°F low — live forecast/)
-  assert.match(stated, /San Mateo/)
-  assert.doesNotMatch(stated, /must|should wear|layer/i, 'a fact, not a prescription')
-  assert.match(buildSingleOutfitStylistCatalog([], { stylingContext: live }).conditions, /^89°F high/)
-  const guess = { weatherProfile: { resolvedWeatherContext: { location: '', temperature: { highF: null, lowF: null, source: 'heuristic' } } } }
-  assert.equal('conditions' in buildSingleOutfitStylistCatalog([], { stylingContext: guess }), false)
-  assert.equal('conditions' in buildSingleOutfitStylistCatalog([], {}), false)
-})
-
-// Owner, 2026-10-06 (thread_1791328549015): word-count styling notes are not shown on cards, and the
-// too-warm note is said in plain words with the number.
 test('word-count styling notes stay off the card; the too-warm note names the temperature', async () => {
   const { locallyGateWholeWardrobeOutfits } = await import('../styling-engine/rules.js')
   const { evaluateOutfitEnvironmentalAdequacy, advisoryFindingsToSystemFlags, ENVIRONMENTAL_ADEQUACY_CODES: C } = await import('../styling-engine/outfitEnvironmentalAdequacy.js')
@@ -9390,15 +9325,6 @@ test('a user_weather that only repeats the thread\'s stored forecast is not reco
   assert.equal(stated.weatherProfile.highF, 85)
 })
 
-test('the card-explanation reply is asked for in the stylist\'s conversational voice', async () => {
-  const { compactFreeformAnswerSystem } = await import('../routes/ai.js')
-  for (const profile of ['existing_card_explanation', 'garment_fact', 'general_advice']) {
-    assert.match(compactFreeformAnswerSystem(profile), /as their stylist talking with them: plain sentences in your own voice/)
-    assert.doesNotMatch(compactFreeformAnswerSystem(profile), /one bounded text question, concisely/)
-  }
-})
-
-// Owner rulings 2026-10-06 applied to the standing stylist instructions (2026-10-07).
 test('the stylist instructions do not cap reply length, and a reaction that carries a request is treated as a request', async () => {
   const { buildStylistConversationDirective } = await import('../styling-engine/core.js')
   const directive = buildStylistConversationDirective('preference_reaction')
@@ -9453,60 +9379,6 @@ test('removing a citation does not strand its separator inside the bracket', asy
 // Owner, 2026-10-07: "there are lots of ways trip packing is approached… if there is no real
 // preference why doesn't she ask the user?" The trip turn asks how the traveller packs when it is
 // not known, carries the answer to the planner and the packer, and remembers a standing preference.
-test('the packing approach: asked for a trip when unknown, carried to the packer, remembered when it is a standing preference', async () => {
-  const { getSavedPackingApproach, savePackingApproach, tripRosterSelectionUserText, tripRosterSelectionSystemPrompt } = await import('../routes/ai.js')
-  const { routeFreeformExecutionProfile } = await import('../styling-engine/provider.js')
-  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
-  const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
-
-  db.prepare("DELETE FROM app_meta WHERE key = 'packing_approach'").run()
-  assert.equal(getSavedPackingApproach(), '')
-  assert.equal(savePackingApproach(''), '', 'nothing stated, nothing saved')
-  assert.equal(getSavedPackingApproach(), '')
-  assert.equal(savePackingApproach('carry-on only, I re-wear and do laundry'), 'carry-on only, I re-wear and do laundry')
-  assert.equal(getSavedPackingApproach(), 'carry-on only, I re-wear and do laundry')
-  savePackingApproach('something different most days')
-  assert.equal(getSavedPackingApproach(), 'something different most days', 'a newer statement replaces the old one')
-
-  let captured = null
-  globalThis.__WARDROBE_AI_TEST_HANDLER__ = call => {
-    captured = call
-    return { profile: 'trip_plan', occasion: 'travel', activity: 'none', setting: 'includes_outdoors', season: '', mood: '', mission: 'mix', limit: 0, location: 'Seattle', date: '', subject: '', clarifying_question: 'Do you like to pack light and re-wear, or have something different most days?', time_of_day: '', remember_packing_approach: '' }
-  }
-  try {
-    const routed = await routeFreeformExecutionProfile({ question: 'I am going to Seattle for a week. What should I pack?', contextSummary: 'no current outfit set; no saved packing approach' })
-    assert.match(routed.value.clarifying_question, /pack light/)
-    assert.match(captured.system, /For trip_plan, clarifying_question asks how the traveller likes to pack/)
-    assert.match(captured.system, /remember_packing_approach is usually empty/)
-    assert.match(captured.system, /how someone packs changes from trip to trip/)
-    assert.match(captured.system, /do not assume it applies: use it to ask whether this trip is the same as usual or different/)
-  } finally {
-    delete globalThis.__WARDROBE_AI_TEST_HANDLER__
-  }
-
-  const planTool = STYLIST_TOOLS.find(tool => tool.name === 'plan_outfit_set')
-  assert.match(planTool.input_schema.properties.packing_approach.description, /how the traveller packs, in their own words/)
-
-  const slots = [{ label: 'Sightseeing', occasion: 'city', bestFor: 'sightseeing', targetOutfits: 2 }]
-  const withApproach = tripRosterSelectionUserText({ bench: [{ id: 1, name: 'stripe tee', category: 'top' }], slots, dateRange: { start: '2026-10-12', end: '2026-10-18' }, packingApproach: 'something different most days' })
-  assert.match(withApproach, /HOW THE TRAVELLER PACKS \(their words\): something different most days/)
-  assert.match(withApproach, /7 days/)
-  assert.doesNotMatch(tripRosterSelectionUserText({ bench: [], slots, dateRange: {} }), /HOW THE TRAVELLER PACKS/)
-  assert.match(tripRosterSelectionSystemPrompt(), /HOW THE TRAVELLER PACKS\. When the request states this, it decides how much re-wear the suitcase assumes/)
-
-  // Owner: "packing preference might change depending on a trip" — an earlier trip's answer is
-  // never applied; the plan carries only what was said for this trip.
-  const payload = await buildStylistConversationPayload({ question: 'Seattle for a week, what should I pack?', history: [], sessionId: 'packing-approach-contract', tripPlanTurn: true })
-  const system = typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system)
-  assert.match(system, /How the traveller is packing for this trip \(from the request or their answer to your question\) goes in plan_outfit_set/)
-  savePackingApproach('carry-on only')
-  const toolContext = { declaredIntent: { want: 'cards' }, generatedOutfits: [], question: 'Seattle for a week', savedPackingApproach: 'carry-on only', weatherFetchImpl: async () => ({ ok: false, json: async () => ({}) }) }
-  await executeTool('plan_outfit_set', { plan_kind: 'trip', weather_estimate: { high_f: 60, low_f: 48 }, slots: [{ label: 'City', occasion: 'city', activity: 'walking', count: 1 }] }, toolContext)
-  assert.equal(toolContext.tripPackingApproach, '', 'a usual approach on record is not applied to this trip')
-  db.prepare("DELETE FROM app_meta WHERE key = 'packing_approach'").run()
-})
-
-// thread_1791362754936 (2026-10-07).
 test('the proactive-alternative rule answers first and revises the existing look; an answer to a clarifying question keeps its fresh route', async () => {
   const { buildPrompts } = await import('../styling-engine/prompts.js')
   const system = buildPrompts({}).STYLIST_SYSTEM
@@ -9515,7 +9387,6 @@ test('the proactive-alternative rule answers first and revises the existing look
   assert.match(system, /when the garment is in an existing card or plan, use 'suggest_slot_swaps' for that slot/)
   assert.match(system, /instead of asking if \S+ would like recommendations/, 'the rule keeps its purpose: offer replacements, do not ask whether she wants them')
   const routeSrc = (await import('node:fs')).readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
-  assert.match(routeSrc, /Boolean\(pendingClarification\) && executionContextEvidence\.every\(kind => kind === 'history'\)/)
   assert.match(routeSrc, /normalizedWeatherLocationIdentity \} from '\.\.\/styling-engine\/weather\.js'/)
 })
 
@@ -9618,38 +9489,17 @@ test('weather stated in a trip follow-up is used for the turn and does not becom
 
 // Live thread_1791764470904: the router named the place, the word list missed "museums", and the
 // trip turn was told to ask the user what weather to expect.
-test('a trip turn the router routed with a named place is not told to ask the user for the weather', async () => {
-  const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
-  const question = "I am planning a trip to Vienna, Virginia, on October 12th. I'll stay there for a week. Do some sightseeing and visit museums. help me pack. I'll check the bag in"
-  const text = payload => (typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system))
-  const routed = await buildStylistConversationPayload({ question, sessionId: 'trip-weather-blocker-routed', conversationMode: 'new_request', history: [], tripPlanTurn: true, routedLocation: 'Vienna, Virginia' })
-  assert.doesNotMatch(text(routed), /TRAVEL WEATHER BLOCKER/)
-  assert.equal(routed.threadState.travel.missing_weather, false)
-  assert.equal(routed.threadState.travel.live_weather_resolvable, true)
-  // Without the router's place, the same words still fail the list: that is the fault this pins.
-  const unrouted = await buildStylistConversationPayload({ question, sessionId: 'trip-weather-blocker-unrouted', conversationMode: 'new_request', history: [], tripPlanTurn: true })
-  assert.match(text(unrouted), /TRAVEL WEATHER BLOCKER/)
-})
-
-// Live thread_1794273948027: guests at home, "we're going to a winery tasting". The words matched "going to", the
-// router had read no trip and no place, and the stylist was told to ask the user what weather to expect.
-test('a fresh request the router did not read as a trip is not blocked on travel weather by its wording', async () => {
+test('a request that is not a picked trip is not blocked on travel weather by its wording', async () => {
   const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
   const question = 'My friends are staying with us this Thursday through Sunday. I’ll cook breakfast every morning. Saturday afternoon we’re going to a winery tasting, mostly outdoors, then dinner at a nice restaurant that evening. Can you plan my outfits?'
   const text = payload => (typeof payload.system === 'string' ? payload.system : JSON.stringify(payload.system))
-  const atHome = await buildStylistConversationPayload({ question, sessionId: 'travel-blocker-at-home', conversationMode: 'new_request', history: [], routedProfile: 'full_stylist' })
+  // Live thread_1794273948027: guests at home, "we're going to a winery tasting" matched the old word pattern.
+  const atHome = await buildStylistConversationPayload({ question, sessionId: 'travel-blocker-at-home', conversationMode: 'new_request', history: [] })
   assert.doesNotMatch(text(atHome), /TRAVEL WEATHER BLOCKER/)
   assert.equal(atHome.threadState.travel, undefined)
-  // The word match still decides when the router did not read the request, and a trip the router named keeps the stop.
-  const unrouted = await buildStylistConversationPayload({ question, sessionId: 'travel-blocker-unrouted', conversationMode: 'new_request', history: [] })
-  assert.match(text(unrouted), /TRAVEL WEATHER BLOCKER/)
-  const trip = await buildStylistConversationPayload({ question: 'I am away for a few days next week, help me pack', sessionId: 'travel-blocker-trip', conversationMode: 'new_request', history: [], tripPlanTurn: true, routedProfile: 'trip_plan' })
+  const trip = await buildStylistConversationPayload({ question: 'I am away for a few days next week, help me pack', occasion: 'travel', sessionId: 'travel-blocker-trip', conversationMode: 'new_request', history: [] })
   assert.match(text(trip), /TRAVEL WEATHER BLOCKER/)
 })
-
-// Live thread_1791416150174 (a 49–83°F week): a trip thread stores no single forecast profile, so
-// the follow-up label fell back to a word match and read "hot weather". The cards' own stored
-// ranges now supply it. Same turn: new information about the plans must change the answer.
 test('a trip follow-up states the range the cards record, and is told what new plans mean', async () => {
   const { buildStylistConversationPayload } = await import('../styling-engine/core.js')
   const { saveStylistConversationState } = await import('../styling-engine/conversationState.js')
@@ -9670,8 +9520,6 @@ test('a trip follow-up states the range the cards record, and is told what new p
   assert.match(system, /activities that now share one day need one outfit that works for all of them/)
   assert.match(system, /never rescue it with an impractical workaround/)
   const { readFileSync } = await import('node:fs')
-  const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
-  assert.match(provider, /is not a card explanation: the answer may need a different outfit, so choose full_stylist/)
 })
 
 // Owner, 2026-10-07: a follow-up on a trip plan answers from a prompt without the wardrobe list.
@@ -9781,20 +9629,11 @@ test('a swapped card takes the stylist\'s title or one suffix only, and the rout
   assert.match(tools, /const baseLabel = String\(outfit\.label \|\| outfit\.title \|\| 'Current outfit'\)\.split\(' — '\)\[0\]/)
   assert.match(tools, /const label = statedLabel \|\| `\$\{baseLabel\} — \$\{replacement\.name\}`/)
   const provider = readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
-  assert.doesNotMatch(provider, /For full_stylist use includes_outdoors/)
-  assert.match(provider, /Judge setting from what the current message says the clothes are for, whatever the profile/)
+  // The router is retired (docs/one-stylist-per-thread.md); the setting is read in declare_intent, on any turn.
+  const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+  assert.match(STYLIST_TOOLS.find(t => t.name === 'declare_intent').input_schema.properties.setting.description, /A follow-up that carries on with a situation the user already gave keeps that situation's setting/)
 })
 
-test('the router runs on its own configurable model: 3.7 Flash by default when the stylist is on Gemini', async () => {
-  const { routerProviderOverride, ROUTER_MODEL_OVERRIDE, ROUTER_THINKING_LEVEL } = await import('../styling-engine/provider.js')
-  assert.equal(ROUTER_MODEL_OVERRIDE, 'gemini-3.7-flash')
-  assert.equal(ROUTER_THINKING_LEVEL, 'low')
-  assert.deepEqual(routerProviderOverride({ provider: 'gemini', model: 'gemini-3.5-flash-lite' }), { provider: 'gemini', model: 'gemini-3.7-flash' })
-  assert.deepEqual(routerProviderOverride({ provider: 'anthropic' }), { provider: 'anthropic' }, 'another provider keeps the stylist\'s own')
-  assert.equal(routerProviderOverride(null), null)
-})
-
-// 2026-10-29: the chat sent "America/Los_Angeles" as the wearer's time zone wherever they were.
 test('the chat sends the browser\'s own time zone, with Los Angeles only as the fallback', () => {
   const src = fs.readFileSync(new URL('../src/components/StylistChat.jsx', import.meta.url), 'utf8')
   assert.match(src, /Intl\.DateTimeFormat\(\)\.resolvedOptions\(\)\.timeZone \|\| 'America\/Los_Angeles'/)

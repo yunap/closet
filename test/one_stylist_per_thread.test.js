@@ -99,12 +99,15 @@ test('the full stylist\'s own per-turn state write keeps the stored conversation
   assert.equal(getStylistConversationState(sessionId).stylist_continuation?.interaction_id, 'int_1')
 })
 
+
 test('/ask opts every typed turn into continuation and the reading requirement', () => {
   const route = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
   const ask = route.slice(route.indexOf("router.post('/ask'"))
   assert.match(ask, /toolContext\.requireDeclaredReading = true/)
   assert.match(ask, /toolContext\.continueThread = true/)
   assert.match(ask, /toolContext\.savedStylistContinuation = compactState\.stylist_continuation \|\| null/)
-  assert.doesNotMatch(ask, /routeFreeformExecutionProfile\(/, 'the execution router no longer runs on /ask')
   assert.match(ask, /catch \(err\) \{[\s\S]*clearStylistContinuation\(req\.body\.sessionId \|\| 'default'\)/)
+  // The execution router is gone from the code, not only from this route.
+  const provider = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(provider + route, /export async function routeFreeform|FREEFORM_EXECUTION_ROUTE_SCHEMA = /)
 })

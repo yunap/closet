@@ -2231,6 +2231,15 @@ Spec and as-built: [one-stylist-per-thread.md](one-stylist-per-thread.md).
 
 **Execution:** the execution router no longer runs on `/ask` (engine map item 112).
 
+**Deleted the same day, after the keep verdict:**
+- The router and its schema.
+- The compact profiles.
+- The single-outfit route, including its `search_wardrobe` catalog mode.
+- The pending-clarification hand-off.
+
+The full stylist's stable prompt gains `READ THE SITUATION FIRST` (`readTheSituation`) and a trip line with
+`HOW_A_DAY_AWAY_WORKS`. The `search_wardrobe` description no longer describes the single-outfit catalog.
+
 ## Gotchas for the next assistant
 
 **Layer-direction ownership landed 2026-08-24.** `evaluateLayerDirections` is now the shared

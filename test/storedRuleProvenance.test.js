@@ -27,7 +27,7 @@ const { db, parsePiece } = await import('../db.js')
 const { storedGarmentRules, _clearRuleProvenanceCacheForTests } = await import('../styling-engine/ruleProvenance.js')
 const rules = await import('../styling-engine/rules.js')
 const { buildPieceText } = rules
-const { capsuleRosterSelectionUserText, tripRosterSelectionUserText, tripPlanTruthCatalog, tripPlanPieceNotes, compactFreeformPieceFacts } = await import('../routes/ai.js')
+const { capsuleRosterSelectionUserText, tripRosterSelectionUserText, tripPlanTruthCatalog, tripPlanPieceNotes } = await import('../routes/ai.js')
 const { executeTool } = await import('../styling-engine/tools.js')
 const { garmentNotesText } = await import('../styling-engine/garmentEvidenceLine.js')
 
@@ -79,11 +79,6 @@ test('capsule roster selection, trip roster selection and trip composition', () 
   // Trip composition: the fact line carries no rules; the owner rules travel in piece_notes with their authority.
   assert.doesNotMatch(tripPlanTruthCatalog([piece(mixedId)]).join('\n'), /RULES|feedback:/)
   assertOwnerRulesAuthoritative(tripPlanPieceNotes([piece(mixedId)]).join('\n'), 'trip composition notes')
-})
-
-test('/ask compact garment facts: the owner rules, without the copy, receipt or saved reply', () => {
-  const facts = compactFreeformPieceFacts(piece(mixedId))
-  assert.deepEqual(facts.styling_rules_learned, [OWNER_RULE, OWNER_RULE_2])
 })
 
 test('get_garment_details (real tool)', async () => {

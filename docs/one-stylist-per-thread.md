@@ -263,15 +263,32 @@ than today's ~7 s; otherwise revert the commit.
 - A turn answered locally (the explicit-prohibition fast path) is not added to the provider conversation.
   Its rule is saved to memory, which the next turn's context carries.
 
-**Left in place until the keep-or-revert decision.** These are unreachable from `/ask` but still
-unit-tested:
-- `routeFreeformExecutionProfile` and `FREEFORM_EXECUTION_ROUTER_SYSTEM`;
-- the compact-answer helpers (`compactFreeformContext`, `compactFreeformAnswerSystem`, …);
-- `buildSingleOutfitConversationPayload`;
-- core's `tripPlanTurn` and `answerInWords` branches.
+**Retired code deleted (2026-11-11, after the keep verdict).** About 2,700 lines:
+- **The execution router:** `routeFreeformExecutionProfile`, its prompt, schema and model settings.
+- **The compact answer profiles and their helpers:** `compactFreeformContext`, `compactFreeformAnswerSystem`,
+  `compactGarmentVisualEvidence`, the referent resolvers, and others.
+- **The single-outfit route:**
+  - `buildSingleOutfitConversationPayload` and `SINGLE_OUTFIT_STYLIST_SYSTEM`;
+  - `declareSingleOutfitIntent`;
+  - the single-outfit catalog mode in `search_wardrobe`, `view_pieces` and `propose_outfit`;
+  - the single-outfit stop in the tool loop.
+- **The router-written clarification hand-off:** `takePendingClarification` and `clarifiedRequestText`.
+- **Core's branches for routes that no longer exist:** the lean trip-plan turn and answer-in-words.
+- Tests of the deleted code went with it. Shared helpers and invariant tests were kept, with the retired
+  prompt left out (the byte-for-byte prompt-equivalence ratchet skips `SINGLE_OUTFIT_STYLIST_SYSTEM`; its
+  frozen snapshot stays).
 
-If the build is kept, they are deleted in one follow-up commit. If it is reverted, one commit restores the
-route.
+**Three gaps found while deleting, fixed in the same commit:**
+1. **Travel detection fell back to a word match.** Without the router's verdict, core decided "is this a
+   trip" by matching words, which is the 2026-11-09 fault: guests at home with "we're going to a winery
+   tasting" told to ask for the forecast (`thread_1794273948027`). The TRAVEL WEATHER BLOCKER now fires
+   only when the picked occasion is `travel`. A trip described in words is the stylist's to read, and
+   her tools return `weather_context_required` when they cannot look the weather up.
+2. **`readTheSituation` reached only the options composer.** The single-outfit stylist carried it. The
+   full stylist now has it in its stable prompt: read the room, say how you read it, do not ask what
+   others wear.
+3. **`HOW_A_DAY_AWAY_WORKS` reached the trip follow-up but not a fresh trip.** The lean trip-plan turn
+   carried it. The full stylist's wardrobe instructions now give it before `plan_outfit_set`.
 
 **Tests.**
 - Removed with their paths: `test/bounded_multi_context_continuity_e2e.test.js`, and eight route-shape tests

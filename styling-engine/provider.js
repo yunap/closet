@@ -283,7 +283,7 @@ export function applyFreeformOutputChecks(answerText, toolContext, retried = new
   // A turn the stylist declared as a prose answer (want:'text') may name garments while discussing
   // directions; forcing it into a card overrides the decision the prompt asks her to make
   // (thread_1792793923755: "what other directions can we explore?" was an invitation to think).
-  const declaredProse = toolContext?.declaredIntent?.want === 'text' || toolContext?.answerInWords === true
+  const declaredProse = toolContext?.declaredIntent?.want === 'text'
   if (!boundedCompositionCompleted && !declaredProse && !retried.has('outfitProse') && !hasPreseededOutfitCard && (toolContext?.freeformDiagnostics?.proposeCalls || 0) === 0 &&
       !discussesEstablishedPieces && looksLikeUnproposedOutfitProse(answerText)) {
     const priorIds = extractPieceIdsFromProse(answerText)
@@ -628,17 +628,6 @@ export const stylistProviderOverride = STYLIST_PROVIDER_OVERRIDE
   ? { provider: STYLIST_PROVIDER_OVERRIDE, model: STYLIST_MODEL_OVERRIDE }
   : null
 
-// The execution router's own model (owner, 2026-10-28). On Flash-Lite at low thinking
-// it skipped reasoning and sent requests for outfits to the words path; replays of the captured router requests gave
-// 3.7 Flash at low thinking cards 4 of 4 (≈ $0.0024 a call). It applies when the stylist runs on Gemini; set
-// ROUTER_MODEL_OVERRIDE to another Gemini model, or to an empty string to use the stylist's own model.
-export const ROUTER_MODEL_OVERRIDE = process.env.ROUTER_MODEL_OVERRIDE ?? 'gemini-3.7-flash'
-export const ROUTER_THINKING_LEVEL = process.env.ROUTER_THINKING_LEVEL || 'low'
-export function routerProviderOverride(stylistOverride = null) {
-  return stylistOverride?.provider === 'gemini' && ROUTER_MODEL_OVERRIDE
-    ? { provider: 'gemini', model: ROUTER_MODEL_OVERRIDE }
-    : stylistOverride
-}
 
 // resolveGeminiKey (real per-user BYOK resolution, plan Stage D) is imported from lib/apiKeys.js
 // above — it used to be a standalone `process.env.GEMINI_API_KEY` read here, kept only for the
@@ -1100,18 +1089,7 @@ export function stylistToolsForTurn(toolContext = {}) {
   const tools = allowedNames
     ? STYLIST_TOOLS.filter(tool => allowedNames.has(tool.name))
     : STYLIST_TOOLS
-  // The single-outfit turn ends when its card is accepted, so the chat reply has to arrive inside
-  // the proposal. As an optional field the model left it empty on a live run
-  // (thread_1790929800547); here it is required. This profile already has its own three-tool list,
-  // so the full stylist's tool schemas, and their cached prefix, stay byte-identical.
-  if (toolContext?.executionProfile !== 'single_outfit') return tools
-  return tools.map(tool => tool.name !== 'propose_outfit' ? tool : {
-    ...tool,
-    input_schema: {
-      ...tool.input_schema,
-      required: [...new Set([...(tool.input_schema?.required || []), 'why_it_works', 'stylist_note'])],
-    },
-  })
+  return tools
 }
 
 // Spec 26 Part 7: "SyntaxError: Unterminated string in JSON at position N"
@@ -1548,119 +1526,10 @@ async function askStylistStructuredWithUsageCall({
   return { value: toolUse.input, usage }
 }
 
-export const FREEFORM_EXECUTION_ROUTE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['profile', 'answer_form', 'occasion', 'activity', 'setting', 'season', 'mood', 'mission', 'limit', 'location', 'date', 'subject', 'clarifying_question', 'time_of_day', 'remember_packing_approach'],
-  properties: {
-    profile: { type: 'string', enum: ['single_outfit', 'bounded_multi', 'existing_card_explanation', 'garment_fact', 'general_advice', 'wardrobe_inventory', 'trip_plan', 'full_stylist'] },
-    answer_form: { type: 'string', enum: ['cards', 'words'] },
-    occasion: { type: 'string', enum: ['casual', 'city', 'smart casual', 'outdoor_daytime_social', 'evening', 'gallery / art event', 'travel', 'concert'] },
-    activity: { type: 'string', enum: ['none', 'walking', 'hiking'] },
-    setting: { type: 'string', enum: ['indoor_only', 'indoor_destination', 'includes_outdoors', 'not_stated'] },
-    season: { type: 'string' },
-    mood: { type: 'string' },
-    mission: { type: 'string', enum: ['mix', 'capsule', 'wildcard'] },
-    limit: { type: 'integer', minimum: 0, maximum: 5 },
-    location: { type: 'string' },
-    date: { type: 'string' },
-    subject: { type: 'string' },
-    clarifying_question: { type: 'string' },
-    time_of_day: { type: 'string', enum: ['', 'morning', 'afternoon', 'evening'] },
-    remember_packing_approach: { type: 'string' },
-  }
-}
+// The execution router (routeFreeformExecutionProfile, its prompt and schema) was removed on 2026-11-11:
+// every typed turn goes to the one stylist, whose declare_intent carries the reading it made
+// (docs/one-stylist-per-thread.md).
 
-const FREEFORM_EXECUTION_ROUTER_SYSTEM = `Classify one wardrobe-stylist request into an execution profile. You do not see the wardrobe and must not give styling advice.
-
-Choose bounded_multi ONLY when the user explicitly asks for several fresh complete outfit options ("a few options", "some ideas", "outfits", or a count from 2 to 5) sharing one occasion, activity, location, date, and weather context. Use the stated count; when options are asked for without a number, use 3.
-
-Choose single_outfit for a FRESH request for an outfit in one occasion/activity/location/date/weather context, with no garment subject and no current-card revision. An ordinary "what should I wear?" with no request for several options is single_outfit: the stylist recommends one outfit and the user can ask for more. Explicit "one", "one best", "pick one", and "give me an outfit" requests also use this profile. Use limit 1. A trip, capsule, schedule, attached photo, critique, garment-pairing request, or request spanning several use cases is never single_outfit.
-
-Choose existing_card_explanation only when compact context says a verified current outfit set exists and the user asks why, compares those options, or clarifies them WITHOUT changing, adding, replacing, rendering, or restyling pieces. A message that tells you more about the user's plans (where they will go, in what order, on which day), or that questions whether the advice works for how their day will actually go (when they would change, how they would carry or wear something), is not a card explanation: the answer may need a different outfit, so choose full_stylist.
-
-Choose garment_fact only when compact context says an active/verified garment subject exists and the user asks about that garment's construction, wear mechanics, warmth, suitability, or a comparison among supplied subjects. When compact context also says saved garment photographs are available, use garment_fact for judging the visibly shown result of a wear-mechanics configuration such as a tuck; the saved photos will be supplied to the answer model. Do not use it to build an outfit or discover other pieces.
-
-Choose general_advice only for general styling education that does not claim to inspect, select, compare, or discuss the user's owned garments: definitions, broad principles, and non-wardrobe-specific technique. "My", "mine", "this blouse", a named owned piece, or a request for what to wear is not general_advice.
-
-Choose wardrobe_inventory only when the user asks for exact counts of active wardrobe pieces, an exact category count, or a factual active-wardrobe category breakdown. Do NOT use it for whether the wardrobe has enough coverage, what is missing, which pieces qualify, what should be bought, or any styling/aesthetic/suitability judgment; those are full_stylist.
-
-Choose trip_plan ONLY for a request to pack for, or plan what to wear on, a trip or stay away from home lasting more than one day ("what should I pack for…", "I'm going to X for a week/weekend"), including when the user is answering your question about such a trip, and when the user asks for a trip plan this thread already holds to be made again as a whole. Not for a capsule wardrobe, a work week at home, a single outing in another city, or a question about, or a change to, part of a plan or cards that already exist (one look, one piece, one day); those are full_stylist. Use limit 0.
-
-Choose full_stylist when the user refers to an earlier, separate conversation with you — what you suggested last time, for a past event, or on a trip you planned together — because only the full stylist can look those up. When compact context lists open plans in other conversations and the request is about one of them — the same trip or place, or a day inside its dates — choose full_stylist too. A request about another place, or about a day outside every plan's dates, is classified as usual.
-
-Choose full_stylist for: broad outfit critique; user-attached photos; existing-outfit changes; styling or pairing a garment into an outfit; slot swaps or revisions; capsules, packing, trips or schedules with multiple use cases/contexts; ambiguous identity; visual-fit questions without saved photographs for a resolved subject; or anything needing clarification.
-
-answer_form says how the stylist should answer a full_stylist turn. Use words when the user is thinking with the stylist — exploring directions, asking how she sees a piece, what could go with it or what to consider — and is not asking to see, build or change an outfit; the stylist then talks it through and offers to build any of it. Use cards when the user asks to see, build, be dressed in, or change outfits — including asking for the outfits just shown to be made another way, such as from their own wardrobe — and for every profile other than full_stylist.
-
-Occasion follows the event's social register, not the relationship between attendees. A generic restaurant dinner, including "dinner with friends," is city/smart casual (occasion:city); an explicit dinner date, night out, evening drinks, or dressy dinner is occasion:evening; coffee, errands, parks, and explicitly low-key/casual events are occasion:casual.
-
-Nature walks, trails, woods, and unpaved ground use activity hiking. Pavement, fairs, museums, sightseeing, and city days use walking only when walking is actually part of the request. Merely traveling to a named place, or attending dinner there, does not establish walking; use activity:none. Setting is indoor_only ONLY when the whole occasion takes place inside the home the user is living or staying in, or another single heated or cooled room, with no travel and no time outdoors: hosting or staying in, working from home. Setting is indoor_destination when the occasion itself is spent indoors at a place the user goes to — a restaurant, someone else's home, an office, a theatre, a concert hall — and the only time outside is getting there and back: the outfit is then judged for the room, and the weather only for the way there. Anything with real time outside — errands, a barbecue, a market, a walk, sightseeing, a day moving between places, a trip — is includes_outdoors, and so is any request that asks about the weather. Setting is not_stated when the user has not said where or when the clothes will be worn — in this message or earlier — and does not ask about weather, as when the user asks which pieces go together or how to style a garment. Judge it only from the user's own words, which are the Request and the line of the user's earlier words: the assistant's replies in the recent exchange are suggestions, not the user's plans. An occasion or season the user selected is the style and the season they want, not a place or time. Judge setting from what the current message says the clothes are for, whatever the profile; a follow-up that carries on with a situation the user already gave keeps that situation's setting.
-
-time_of_day is when the outing happens, when the request says so or plainly implies it: tonight, this evening, dinner, drinks, a concert or show at night are evening; breakfast, brunch, a morning walk are morning; lunch, an afternoon event are afternoon. Use an empty value when no time is stated or implied, when it spans the day, and for full_stylist. The forecast is then read for those hours rather than the whole day.
-
-Resolve relative dates from the supplied current date. Use an empty location/date when none is stated. For full_stylist, use limit 0 and conservative defaults for occasion, activity, season, mood and mission.
-
-For trip_plan, clarifying_question asks how the traveller likes to pack, because there are real, different ways to pack and none is the default: packing light and re-wearing a few pieces, or having something different most days; carry-on or checked; laundry on the trip or not. Ask it, as one short natural question in a stylist's voice, whenever the request itself does not say how they are packing for THIS trip — how someone packs changes from trip to trip. When the compact context holds a "usual packing approach", do not assume it applies: use it to ask whether this trip is the same as usual or different. If the request also names no activities, ask about those in the same question. Leave it empty when the request says how they are packing, and when the request contains the user's answer to a question of yours.
-
-remember_packing_approach is usually empty. Fill it only when the user states how they ALWAYS or usually pack — a standing preference, not a choice for this one trip — with that preference in their own words (for example "carry-on only, I re-wear and do laundry"). It is kept only so a later trip can be asked "same as usual?"; it is never applied without asking.
-
-For single_outfit and bounded_multi requests, clarifying_question is usually empty. You are also the stylist's first read of the request, and a good stylist asks before choosing when she has to. Write ONE short question, in a warm stylist's own voice, when either holds: a fact that would change the outfit is missing and cannot be looked up or sensibly taken from the request (what the occasion actually is, how dressed-up it is, what the person will be doing there, who it is with); or the request could honestly be dressed in clearly different directions and nothing says which. What is appropriate to wear, and what the other people there will be wearing, is never asked: that is the stylist's own knowledge to bring, and she says how she read it. Leave it empty when the request already gives a stylist enough to choose well, when the only unknowns are weather, forecast, date or a named place (those are looked up, never asked), and when the request contains an answer the user gave to a question of yours ("You asked me: … My answer: …") — then work from that answer and do not ask again.
-
-RECENT EXCHANGE, if supplied, is only the immediately preceding assistant/user turn — use it solely to judge whether the current request continues an unresolved need from that turn (most commonly: the user is answering your own clarifying question). A reply that names an owned garment only because it was answering where to add something, comparing something, or which outfit is meant is NOT thereby a garment_fact question about that garment — classify by the underlying need (usually full_stylist: styling/pairing a garment into an outfit), not by the surface presence of a garment name. Do not use the recent exchange to justify broader classification drift than the current request text supports on its own.`
-
-export async function routeFreeformExecutionProfile({ question = '', currentDate = '', timezone = 'America/Los_Angeles', contextSummary = '', recentExchange = '', recentUserWords = '', explicitActivity = '', providerOverride = null } = {}) {
-  // engine-behaviour-map item 85: the user's own earlier words get a line of their own, apart from
-  // the assistant reply, so setting is judged from what the user said rather than from the
-  // places a generated reply suggested ("Best for: city autumn day").
-  const userWords = String(recentUserWords || '').trim()
-  const routed = await askStylistStructuredWithUsage({
-    system: FREEFORM_EXECUTION_ROUTER_SYSTEM,
-    messages: [{
-      role: 'user',
-      content: `Current date: ${currentDate || new Date().toISOString().slice(0, 10)}\nTime zone: ${timezone}\nCompact context available: ${String(contextSummary || 'none').trim()}${String(recentExchange || '').trim() ? `\nRecent exchange (immediately preceding turn only):\n${String(recentExchange).trim()}` : ''}${userWords ? `\nThe user's own earlier words (same turn as the recent exchange): ${userWords}` : ''}\nRequest: ${String(question || '').trim()}`
-    }],
-    schema: FREEFORM_EXECUTION_ROUTE_SCHEMA,
-    name: 'freeform_execution_route',
-    subflow: 'execution_router',
-    description: 'Choose one narrow execution profile only when its contract and supplied compact context are sufficient.',
-    // Gemini bills thinking tokens out of this same cap (normalizeAiUsage folds
-    // total_thought_tokens into outputTokens) and thinking_level 'low' still lets that vary a
-    // lot per request. A live call for an ambiguous multi-day-trip request (thread_1788430055577,
-    // ai_call_log id 819) spent 333 of a 350-token budget on reasoning and had room for only ~165
-    // characters of the classification JSON before hitting the cap — a routine, not edge-case,
-    // failure that silently converts a cheap router call into a wasted billed one before the
-    // catch in routes/ai.js falls back to full_stylist anyway. 350 was sized for Anthropic's
-    // forced tool_choice path, which never spends budget on prose; Gemini's plain-JSON path needs
-    // real headroom on top of the ~150-token ceiling this schema's own output can reach.
-    // 2026-10-28: room for the router model's thinking at ROUTER_THINKING_LEVEL (the router runs on its own model).
-    maxTokens: 2000,
-    thinkingLevel: ROUTER_THINKING_LEVEL,
-    providerOverride: routerProviderOverride(providerOverride)
-  })
-  // thread_1788985997110: the router labeled a five-hour Santa Fe "outing" as walking even
-  // though its own contract says place/outdoor duration do not establish activity. Activity
-  // activates hard footwear exclusions, so post-validate it from the structured UI value when
-  // supplied, otherwise explicit user language, instead of letting a probabilistic classification
-  // silently remove garments. Profile/occasion remain model-owned; this narrow factual axis is
-  // deterministic and conservative.
-  //
-  // A structured `none` is NOT a statement that there is no activity: the chat UI's activity picker defaults to "No special
-  // activity" and sends `none` on every turn. Treating that default as authority discarded explicit request language
-  // ("I'll be walking around the city…"), locked the turn to `none`, and left the walking footwear gate off on /ask search and
-  // the Whole Wardrobe roster (live threads thread_1789501326521 and thread_1789501370356, 2026-09-15). Only a structured
-  // walking/hiking selection is authority; otherwise the conservative explicit-language extractor decides.
-  const structuredActivity = String(explicitActivity || '').toLowerCase().trim()
-  return {
-    ...routed,
-    value: {
-      ...routed.value,
-      activity: ACTIVITY_VALUES.includes(structuredActivity) && structuredActivity !== 'none'
-        ? normalizeActivity(structuredActivity)
-        : extractExplicitActivity(question),
-    },
-  }
-}
 
 
 // docs/activity-and-roster-spec.md Part 4. Every text block of an assistant message, not just the
@@ -2434,30 +2303,6 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       }
       if (toolContext.followupProposalCompleted && toolContext.followupStylistNote) {
         return { answer: toolContext.followupStylistNote, savedCorrections }
-      }
-      if (toolContext.executionProfile === 'single_outfit' && toolContext.singleOutfitProposalCompleted) {
-        const outfit = Array.isArray(toolContext.generatedOutfits)
-          ? toolContext.generatedOutfits.find(o => !o?.broken)
-          : null
-        const hasAdvisoryNotes = (outfit?.result?.annotations?.length || 0) > 0
-        // If the proposal generated advisory notes (e.g. thermal undershoot or sleeve bunching)
-        // and we haven't yet given the model a follow-up turn to see those notes, allow one iteration
-        // so the model receives the tool_result with systemNotes and can either swap pieces or speak with candor.
-        if (!hasAdvisoryNotes || toolContext.singleOutfitAdvisoryTurnDelivered) {
-          // thread_1790928379170: the loop ends here the moment a card is accepted, so the brief's
-          // "Stylist Note" step only ever ran when an advisory note bought the model one more turn
-          // (which is the only reason thread_1790923286929 had its intro paragraph). Otherwise the
-          // chat reply was the card's own why_it_works, repeated. The note now travels with the
-          // proposal as propose_outfit's stylist_note, costing no extra provider call.
-          const chatText = (turn.text && turn.text.trim())
-            ? joinAnswer(turn.text)
-            : (toolContext.singleOutfitStylistNote || outfit?.why || outfit?.reason || `I've put together an outfit for you: ${outfit?.label || 'Outfit'}.`)
-          return { answer: chatText, savedCorrections }
-        }
-        if (turn.text && narration.length && narration[narration.length - 1] === turn.text) {
-          narration.pop()
-        }
-        toolContext.singleOutfitAdvisoryTurnDelivered = true
       }
       continue
     } else {

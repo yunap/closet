@@ -506,8 +506,9 @@ test('the options composer reads the situation on a chat turn, in the single-out
   assert.match(shared, /what the hands will be doing \(cooking, serving, carrying, working\)/)
   const routeSrc = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
   assert.match(routeSrc, /stylistNote && !composerExperiment\n\s+\? `READ THE SITUATION FIRST:\\n\$\{readTheSituation\('Before you compose'\)\}/, 'sent only on the turn that also writes a stylist note')
-  const promptsSrc = fs.readFileSync(new URL('../styling-engine/prompts.js', import.meta.url), 'utf8')
-  assert.match(promptsSrc, /READ THE SITUATION FIRST:\n\$\{readTheSituation\('Before you search'\)\}/, 'the single-outfit stylist reads the same paragraph')
+  // The single-outfit stylist read it until 2026-11-11; every ordinary request now reaches the full stylist, which does.
+  const coreSrc = fs.readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
+  assert.match(coreSrc, /'READ THE SITUATION FIRST:',\n\s+readTheSituation\('Before you search or compose'\)/, 'the full stylist reads the same paragraph')
 })
 
 // Owner, 2026-11-10: people come to a stylist for advice, "not just echoing of their habits", and want to know what is
@@ -523,8 +524,9 @@ test('what is appropriate is the stylist\'s to advise: the situation read, the p
   const toolsSrc = fs.readFileSync(new URL('../styling-engine/tools.js', import.meta.url), 'utf8')
   assert.match(toolsSrc, /What it is done in is yours to advise, not theirs to be asked/)
   assert.doesNotMatch(toolsSrc, /ask them before calling this tool/)
-  const providerSrc = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
-  assert.match(providerSrc, /What is appropriate to wear, and what the other people there will be wearing, is never asked/)
+  // The router said so too until its retirement (2026-11-11); the full stylist now carries the situation read itself.
+  const coreSrc = fs.readFileSync(new URL('../styling-engine/core.js', import.meta.url), 'utf8')
+  assert.match(coreSrc, /readTheSituation\('Before you search or compose'\)/)
 })
 
 // thread_1794359258964: "Cooking at Home Evenings" (casual, at home) was reclassified as an evening out by the word
@@ -631,10 +633,13 @@ test('a trip\'s whole-day weather sentence states the rain the daily forecast me
 
 // Two shower runs (thread_1794359193592, thread_1794365489352): "a few options" was composed as two, a second look
 // turned one down each time, and one usable option was left. "A few" asked for without a number is three.
-test('options asked for without a number are three', () => {
-  const providerSrc = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
-  assert.match(providerSrc, /when options are asked for without a number, use 3\./)
-  assert.doesNotMatch(providerSrc, /without a number, use 2\./)
+test('options asked for without a number are three', async () => {
+  // In the stylist's own tool since the router's retirement (2026-11-11).
+  const { STYLIST_TOOLS, declareBoundedMultiLookIntent } = await import('../styling-engine/tools.js')
+  assert.match(STYLIST_TOOLS.find(t => t.name === 'generate_outfits').description, /asks for options without a number, compose 3/)
+  const toolContext = { turnMode: 'new_request' }
+  declareBoundedMultiLookIntent(toolContext)
+  assert.equal(toolContext.declaredIntent.outfitCount, 3)
 })
 
 // Owner, 2026-11-10 ("Yes, as a note"): cashmere was chosen to cook in on three live runs. The usual care of a
