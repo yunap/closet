@@ -386,3 +386,17 @@ test('two consecutive truncated turns do not ship the second one\'s partial pros
   assert.notEqual(result.answer, 'Wear the navy sweater with')
   assert.match(result.answer, /ran out of steps/)
 })
+
+// 2026-11-12 live run: a low-thinking 3.7 call capped at maxTokens (1500) was cut off at 1,496 output tokens twice in a
+// row, because thinking counts against max_output_tokens, and the turn ended on the "ran out of steps" fallback.
+test('a low-thinking call still gets output headroom for its thinking', async () => {
+  const done = { id: 'interaction_h', status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: 'ok' }] }], usage: {} }
+  queueGeminiResponse(done)
+  queueGeminiResponse(done)
+  await callGeminiTurn(baseArgs({ thinkingLevel: 'low', maxTokens: 1500 }))
+  await callGeminiTurn(baseArgs({ thinkingLevel: 'medium', maxTokens: 1500 }))
+  const [low, medium] = requestsSeen.map(r => r.generation_config)
+  assert.equal(low.thinking_level, 'low')
+  assert.ok(low.max_output_tokens > 1500, `low got ${low.max_output_tokens}`)
+  assert.ok(medium.max_output_tokens >= low.max_output_tokens)
+})

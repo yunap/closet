@@ -283,3 +283,13 @@ tag data, not a gate.
 - On the doubt she dressed the jeans without saying whether she still stands by her pick (fail). Across four runs
   on 3.7 Flash the doubt line has passed three times.
 
+## Run 2026-11-12 — medium thinking on each turn's first call (3.7 Flash)
+
+Entries 1 and 3, twice each, about $1.04.
+
+| Entry | Run 1 | Run 2 |
+|---|---|---|
+| 1 | Saturday breakfast look; Friday's washable market look explained (pass) | Friday and Saturday cooking looks with the reason (pass) |
+| 3 | First turn failed: "I ran out of steps…", two calls cut at the output cap (fail; fixed, see one-stylist-per-thread.md). Doubt: "Jeans can absolutely work…" (fail) | Doubt: named the cost, no stance (partial) |
+
+Follow-ups continued, but only about 55.7k of 132–145k input tokens were cached.

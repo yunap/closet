@@ -610,6 +610,10 @@ const GEMINI_THINKING_LEVEL = process.env.GEMINI_THINKING_LEVEL || 'low'
 // the loop's cap gets headroom. Set GEMINI_STYLIST_LOOP_THINKING_LEVEL=low to revert.
 const GEMINI_STYLIST_LOOP_THINKING_LEVEL = process.env.GEMINI_STYLIST_LOOP_THINKING_LEVEL || 'medium'
 const GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS = 4000
+// Low thinking still thinks, and Gemini counts it against max_output_tokens. With no headroom at low, a proposal that
+// carries her full note (ONE_OUTFIT_GUIDANCE, 2026-11-12) was cut off at 1,496 of 1,500 tokens twice in a row and the
+// turn ended on the "ran out of steps" fallback. Unused tokens cost nothing.
+const GEMINI_STYLIST_LOOP_LOW_THINKING_HEADROOM_TOKENS = 2500
 
 // The one shared, app-wide text/vision provider config. Owner ruling 2026-08-30: only calls that
 // generate an image (runOpenAIImageGeneration and friends) are hardcoded to OpenAI — every other
@@ -1953,7 +1957,7 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
     ...(continuation ? { previous_interaction_id: continuation } : {}),
     input,
     generation_config: {
-      max_output_tokens: maxTokens + (loopThinkingLevel === 'low' ? 0 : GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS),
+      max_output_tokens: maxTokens + (loopThinkingLevel === 'low' ? GEMINI_STYLIST_LOOP_LOW_THINKING_HEADROOM_TOKENS : GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS),
       thinking_level: loopThinkingLevel,
     },
     ...(tools.length ? { tools: tools.map(toGeminiFunctionDeclaration) } : {})

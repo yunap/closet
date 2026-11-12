@@ -524,6 +524,27 @@ None of these was in the full stylist's prompt.
   - This also covers turns that end on an options batch.
 - The doubt failed again ("Jeans can absolutely work"). At low thinking it is now 2 of 5.
 
+## Medium thinking on each turn's first call (2026-11-12)
+
+The chat now thinks at medium on a turn's first call (`CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL`) and at low after
+it. Live test: entries 1 and 3, twice each, 3.7 Flash, about $1.04.
+
+- **Breakfast looks are back** in both at-home plans (thread_1794470249474 had lost them). Run 2 gives Friday and
+  Saturday cooking looks with the reason; run 1 gives a Saturday breakfast look and explains Friday's washable
+  market look.
+- **The doubt is still not fixed:** run 1 failed ("Jeans can absolutely work…"); run 2 named the cost but took no
+  stance. It passed when the first pick was a knit dress and failed when it was a silk blouse with trousers, so
+  the pick may matter more than the thinking level.
+- **Follow-ups continued** with the owed results sent first. But only about 55.7k of 132–145k input tokens came
+  from the cache, about the size of the system prompt alone. Not yet explained.
+- **One turn failed** (run 1, the boss's dinner): "I ran out of steps before I could finish this one". Its third
+  and fourth calls stopped at the output cap (1,496 of 1,500 tokens). At low thinking `callGeminiTurn` gave no
+  headroom over `maxTokens`, but low on 3.7 still thinks, and the thinking counts against the cap. The first call
+  at medium had the 4,000-token headroom, so the failure appeared only after the split.
+  - **Fixed:** low-thinking calls now get 2,500 tokens of headroom
+    (`GEMINI_STYLIST_LOOP_LOW_THINKING_HEADROOM_TOKENS`). Unused tokens are not billed. Covered by
+    `test/gemini_call_turn.test.js`; not yet rerun live.
+
 ## Decisions (2026-11-11)
 
 The owner's direction: these conversations should be as good as they can be, and a quick question gets
