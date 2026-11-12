@@ -2253,7 +2253,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   let syncedHistoryLength = 0
   // docs/one-stylist-per-thread.md. Only /ask opts in (toolContext.continueThread); the other callers of
   // this loop (outfit-evaluation follow-ups) keep rebuilding every call.
-  const fingerprint = toolContext.continueThread === true ? stablePromptFingerprint(plainSystem, target.model) : ''
+  const fingerprint = toolContext.continueThread === true ? stablePromptFingerprint(system, target.model) : ''
   const continuation = toolContext.continueThread === true
     ? stylistContinuationDecision(toolContext.savedStylistContinuation, { provider: target.provider, model: target.model, fingerprint })
     : null

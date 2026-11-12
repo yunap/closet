@@ -2612,6 +2612,17 @@ test('on /ask the reading is required before a wardrobe search, and a declaratio
   assert.equal(direct.status, 'success')
 })
 
+test('a declared season is a calendar season only: a weather word does not lock the turn\'s season', async () => {
+  // Live check 2026-11-11 (docs/one-stylist-per-thread.md): season "cool" was locked as-is and disabled
+  // season eligibility; "warm" would resolve to summer.
+  for (const word of ['cool', 'warm', 'mild']) {
+    const toolContext = { requireDeclaredReading: true, freshExecutionRequest: true, season: 'current season' }
+    await executeTool('declare_intent', { want: 'text', setting: 'includes_outdoors', season: word }, toolContext)
+    assert.equal(toolContext.executionRouterSeason, 'current season', word)
+  }
+  assert.deepEqual(STYLIST_TOOLS.find(tool => tool.name === 'declare_intent').input_schema.properties.season.enum, ['spring', 'summer', 'fall', 'winter'])
+})
+
 test('the last declaration wins: a later setting replaces the earlier one\'s weather mode', async () => {
   const toolContext = { requireDeclaredReading: true, freshExecutionRequest: true }
   await executeTool('declare_intent', { want: 'text', setting: 'indoor_only' }, toolContext)

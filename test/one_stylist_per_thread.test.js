@@ -55,6 +55,19 @@ test('the fingerprint covers the stable prompt only, and the turn context rides 
   assert.equal(withTurnContext('unchanged', ''), 'unchanged')
 })
 
+// Live check 2026-11-11: every follow-up rebuilt with stable_prompt_changed. The loop fingerprinted the
+// prompt after systemToPlainText had removed the breakpoint marker, so the "stable" hash covered the date
+// and thread state too. The captures showed the stable halves byte-identical between turns.
+test('the loop fingerprints the prompt with its breakpoint marker, so a new turn\'s context does not end the conversation', async () => {
+  const { systemToPlainText } = await import('../styling-engine/provider.js')
+  const nextTurn = `STABLE: constitution and manifest\n${PROMPT_CACHE_BREAKPOINT}\nCURRENT DATE: Thursday`
+  assert.notEqual(stablePromptFingerprint(systemToPlainText(system), 'm'), stablePromptFingerprint(systemToPlainText(nextTurn), 'm'), 'stripped text cannot tell the halves apart')
+  assert.equal(stablePromptFingerprint(system, 'm'), stablePromptFingerprint(nextTurn, 'm'))
+  const provider = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(provider, /stablePromptFingerprint\(system, target\.model\)/)
+  assert.doesNotMatch(provider, /stablePromptFingerprint\(plainSystem/)
+})
+
 test('a turn saves the conversation the next turn continues; a failed turn or another provider ends it', () => {
   const sessionId = 'thread_one_stylist'
   saveStylistConversationState({ established: { occasion: 'city' } }, sessionId)
