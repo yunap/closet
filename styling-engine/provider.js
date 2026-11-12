@@ -628,6 +628,15 @@ export const stylistProviderOverride = STYLIST_PROVIDER_OVERRIDE
   ? { provider: STYLIST_PROVIDER_OVERRIDE, model: STYLIST_MODEL_OVERRIDE }
   : null
 
+// The Stylist chat's own model (owner, 2026-11-11: "switch to Flash 3.7"; docs/one-stylist-per-thread.md). With one
+// stylist answering every typed turn, Flash-Lite missed judgment calls the check set records (the "Really? jeans?"
+// doubt failed every run on it and passed on 3.7 Flash). Chat only: the other ~35 call sites of
+// stylistProviderOverride keep STYLIST_MODEL_OVERRIDE. CHAT_STYLIST_MODEL_OVERRIDE sets another Gemini model.
+export const CHAT_STYLIST_MODEL = process.env.CHAT_STYLIST_MODEL_OVERRIDE || 'gemini-3.7-flash'
+export const chatStylistProviderOverride = stylistProviderOverride?.provider === 'gemini'
+  ? { provider: 'gemini', model: CHAT_STYLIST_MODEL }
+  : stylistProviderOverride
+
 
 // resolveGeminiKey (real per-user BYOK resolution, plan Stage D) is imported from lib/apiKeys.js
 // above — it used to be a standalone `process.env.GEMINI_API_KEY` read here, kept only for the

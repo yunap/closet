@@ -149,3 +149,14 @@ test('a planner result states the dates it planned for, and names the range the 
   assert.deepEqual(withPlannedDates('search_wardrobe', [{ id: 1 }], { plannedDatesForReply: { start: '2026-11-19', end: '2026-11-22' } }), [{ id: 1 }])
   assert.deepEqual(withPlannedDates('plan_outfit_set', { status: 'success' }, {}), { status: 'success' })
 })
+
+// Owner, 2026-11-11: the Stylist chat runs on 3.7 Flash; every other feature keeps its own model.
+test('the chat stylist has its own model, 3.7 Flash by default on Gemini, and only /ask uses it', async () => {
+  const { CHAT_STYLIST_MODEL } = await import('../styling-engine/provider.js')
+  assert.equal(CHAT_STYLIST_MODEL, process.env.CHAT_STYLIST_MODEL_OVERRIDE || 'gemini-3.7-flash')
+  const provider = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(provider, /export const chatStylistProviderOverride = stylistProviderOverride\?\.provider === 'gemini'\n\s+\? \{ provider: 'gemini', model: CHAT_STYLIST_MODEL \}\n\s+: stylistProviderOverride/)
+  const route = fs.readFileSync(new URL('../routes/ai.js', import.meta.url), 'utf8')
+  assert.equal(route.split('chatStylistProviderOverride').length - 1, 2, 'imported once, used once: /ask')
+  assert.match(route, /providerOverride: req\.body\.provider === 'sonnet' \? \{ provider: 'anthropic' \} : chatStylistProviderOverride/)
+})

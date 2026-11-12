@@ -19,6 +19,7 @@ import {
   askStylistWithTools,
   resolveAiTarget,
   stylistProviderOverride,
+  chatStylistProviderOverride,
   boundedAtomicMultiLookResponse,
   stripPieceIdCitations,
   recordToolLoopUsage,
@@ -7119,7 +7120,7 @@ router.post('/ask', async (req, res) => {
       // the manual "Retry with Sonnet" escape hatch — it wins over the env default for this one
       // call, forcing Anthropic regardless of STYLIST_PROVIDER_OVERRIDE. Otherwise the env default
       // applies (null when unset, so every existing caller is unaffected).
-      providerOverride: req.body.provider === 'sonnet' ? { provider: 'anthropic' } : stylistProviderOverride
+      providerOverride: req.body.provider === 'sonnet' ? { provider: 'anthropic' } : chatStylistProviderOverride
     }
     // Computed once, up front, from the same providerOverride every call below reads from
     // toolContext — so the router/compact/bounded-atomic response branches (none of which go
