@@ -103,6 +103,23 @@ test('a distinctive word ranks newest first; a common word does not outrank rece
   db.prepare("DELETE FROM chat_threads WHERE id LIKE 'thread_filler_%' OR id LIKE 'thread_lisbon_%'").run()
 })
 
+test('a word the user said outranks the same word only in a card\'s garment names', () => {
+  addThread('thread_objection', { title: 'Party at home', updatedAt: '2026-10-02 10:00:00', messages: [{ role: 'user', text: 'Party at home tonight.' }, { role: 'user', text: 'I am not a fan of those trainers.' }] })
+  addThread('thread_card_only', { title: 'Coffee run', updatedAt: '2026-11-08 10:00:00', messages: [{ role: 'user', text: 'Coffee run.' }, { role: 'assistant', text: '', structuredOutfits: [{ label: 'Easy', pieces: [{ id: sandals, name: 'white trainers' }] }] }] })
+  const [first] = searchPastConversations({ query: 'trainers', currentSessionId: 'thread_current' }).conversations
+  assert.equal(first.title, 'Party at home')
+  db.prepare("DELETE FROM chat_threads WHERE id IN ('thread_objection', 'thread_card_only')").run()
+})
+
+test('a plan in a result lists what was packed', () => {
+  addThread('thread_packed', { title: 'Seattle weekend', messages: [{ role: 'user', text: 'Seattle this weekend.' }] })
+  saveStylistConversationState({ plan: { kind: 'trip', location: 'Seattle, WA', start: '2026-11-20', end: '2026-11-22' }, packing_roster: { roster_ids: [dress, goneBlazer], roster_pieces: [{ id: dress, name: 'green silk slip dress', category: 'dress' }, { id: goneBlazer, name: 'old navy blazer', category: 'outerwear' }] } }, 'thread_packed')
+  const [seattle] = searchPastConversations({ query: 'Seattle', currentSessionId: 'thread_current' }).conversations
+  assert.deepEqual(seattle.plan.packed.map(p => [p.id, p.still_in_wardrobe]), [[dress, true], [goneBlazer, false]])
+  db.prepare("DELETE FROM chat_threads WHERE id = 'thread_packed'").run()
+  db.prepare("DELETE FROM stylist_conversation_state WHERE session_id = 'thread_packed'").run()
+})
+
 test('a piece no longer active is marked, and garment names in cards are searchable', () => {
   const [errands] = searchPastConversations({ query: 'the navy blazer', currentSessionId: 'thread_current' }).conversations
   assert.equal(errands.title, 'Saturday errands')

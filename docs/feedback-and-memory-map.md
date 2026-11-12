@@ -745,7 +745,7 @@ a complaint into corrected data rather than into prompt text.
 | `getOutfitsForPieceMemory` (`rules.js`) | `/evaluate-piece` (`ai.js/1138`) | prompt text |
 | `getCalibrationMemoryForStylist` (`core.js`) | `/evaluate-piece` (`ai.js`), whole-wardrobe (`core.js`) | prompt text |
 | `getStylistConversationState` (`conversationState.js`) | tool loop and freeform conversation pipeline | **thread-only** |
-| `searchPastConversations` (`pastConversations.js`) | the `search_past_conversations` tool (`tools.js`), model-called; added 2026-11-11 | **history** — the user's own words, cards shown and their verdicts from the user's other threads; no assistant prose |
+| `searchPastConversations` (`pastConversations.js`) | the `search_past_conversations` tool (`tools.js`), model-called; added 2026-11-11 | **history** — the user's own words, cards shown and their verdicts from the user's other threads, plus a dated plan's packed pieces (`packing_roster`); no assistant prose |
 | `openPlansFromOtherThreads` (`pastConversations.js`) | full stylist payload (`buildStylistConversationPayload`, `core.js`), below the cache breakpoint; added 2026-11-11 | **context** — one line per other thread's dated plan that has not ended; no weather |
 | `getRecentWholeWardrobeSessionInfluence` (`rules.js`) | whole-wardrobe generation (`ai.js`) | **deterministic suppression** |
 

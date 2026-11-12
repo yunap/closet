@@ -33,7 +33,10 @@ a plan made in one. It costs nothing on turns that don't use it.
   other conversations. `limit` is 1–5, default 3.
 - **Matching.** Whole words from the query (stop words dropped) are matched against each thread's title,
   the user's messages, and the cards' titles and garment names.
-- **Ranking.** Threads that share the query's distinctive words come first, newest first. A word is
+- **Ranking.** Distinctive words the user themselves said (title and user messages, rarity measured over
+  user messages) come first. Then distinctive words anywhere, including the cards' garment names. Then
+  recency. This was refined by the live check below; the first version follows.
+- **Ranking (first version).** Threads that share the query's distinctive words come first, newest first. A word is
   distinctive when it is found in few threads: at most 10% of them, or two. A place or an event is
   distinctive; "pack" or "dinner" is not. Only when no query word is distinctive does the number of
   matched words decide.
@@ -50,7 +53,8 @@ a plan made in one. It costs nothing on turns that don't use it.
     and diagnostic-only cards are left out.
   - `user_verdicts`: the user's reactions recorded against the thread (`stylist_feedback` rows whose
     payload names the thread), with any note they typed.
-  - `plan`: the thread's dated plan, if it has one.
+  - `plan`: the thread's dated plan, if it has one, with `packed` (the suitcase: the thread's
+    `packing_roster` pieces, each with `still_in_wardrobe`; added after the live check).
 - **What it never returns:** the assistant's prose, or a card's reasons and watch-for text. Her earlier
   reasoning would come back as if it were fact ([assistant text is not user evidence]). A card title is
   hers too, and is kept only so a card can be told apart.
@@ -85,6 +89,53 @@ router sends a request that refers to an earlier, separate conversation to `full
 - **Undated plans** (a capsule without dates) are not open plans.
 - **No plans, no block.** With no open plans the block is empty and the prompt is unchanged (Engineering
   Principle 6).
+
+## Live check, 2026-11-11
+
+**How it was run.**
+- Six messages, each in a new thread, through the real `/api/ai/ask` route in a development server.
+- Data: a copy of the owner's data (`sqlite3 .backup` of `wardrobe.db` and `system.db`, a `cp -c` clone
+  of `uploads/`). The live data was never opened.
+- Models: `gemini-3.5-flash-lite` for the stylist, `gemini-3.7-flash` for the router.
+- Script: `scratch/run_cross_thread_live_set.mjs`, untracked, with `--dry-run`. Each case was scored from
+  the provider wire captures, not from the reply alone.
+- The Portland thread's `plan` was set on the copy from that turn's own recorded resolved values; plans
+  made before this change have none.
+- Cost from `ai_call_log`: about 29¢ for eight stylist turns (first run of A–F, then B and F again after
+  the fixes below). Add about 3.5¢ for the router-only checks.
+
+| Case | Message | Result |
+|---|---|---|
+| A | "What did you suggest for the gallery opening?" | **Pass.** She searched for "gallery opening" and recounted the three cards of the 11 Nov thread exactly (titles and pieces checked against the thread), then offered to revisit them. No cards. |
+| B | "For my Portland trip, what should I wear if Saturday's dinner turns cold?" | **Partial**, twice. She found the plan and kept its "Saturday Dinner Out" look (98, 183, 155), adding a jacket. Both runs added a jacket that was not packed (207, then 250) and did not say so. The second run already had the plan's `packed` list (below). No forecast was used: her search passed no place or date. |
+| C | "Remind me what we picked for my sister's graduation." | **Pass.** She searched "graduation", then "sister", then made an empty search, and said she had no record of it. She offered to build one. |
+| D | "What should I wear to brunch with my sister on Sunday the 22nd?" | **Pass.** It went `single_outfit`, with no search and no mention of Portland. |
+| E | "Help me think through Friday evening, I'll be out with my friend." | **Miss.** The router saw the plan and chose `full_stylist` (words), and her prompt carried the open-plans block. She still answered as if it were an evening at home, with no mention that Friday falls in the Portland trip. A model judgment miss, not missing information. |
+| F | "I'm hosting another get-together at home this Saturday. Last time I told you I wasn't a fan of the sneakers…" | **Fail, then pass after the fixes.** In the first run she searched "hosting home", the 2 Oct conversation with the objection was not returned, and she answered as if she remembered it ("swapping out the sneakers"). In the second run she searched "get-together home sneakers", then "sneakers". The objection thread came first, and she proposed flats. |
+
+**Fixed during the check:**
+- **Ranking.** The user's own words now outrank a word that appears only in a card's garment names, and
+  how rare a word is in user messages is measured over user messages alone.
+  - Before: "sneakers" appears in hundreds of cards' garment names but in few objections, so it never
+    counted as distinctive, and newer threads with sneakers on a card won.
+  - After, on the copy: "sneakers" and "get-together sneakers" both put the 2 Oct objection first.
+  - "hosting home" alone still cannot find it.
+- **Packed pieces.** A plan in a result now includes `packed`, the suitcase, from the thread's
+  `packing_roster`. The cards alone do not show it, since a card's packed layer is not one of its pieces.
+- **Tool description.**
+  - Pass all of the user's distinctive words.
+  - Say only what the results show; if the conversation is not among them, say so rather than answer as
+    if remembered.
+  - Name any piece added that is not in `packed`.
+
+**Left for a decision:**
+- **B, unpacked pieces.** In the trip's own thread, the packing roster makes an unpacked piece a "proposed
+  packing-set change", which she has to name. In a new thread that roster is not in force, and naming the
+  rule in the tool description did not make her follow it. Two structural options:
+  - When a new thread's request is about an open plan, adopt that plan's packing roster for the turn.
+  - Point the user back to the plan's own thread.
+- **E, the trip day.** The block reached her and she did not use it on Flash-Lite. One run; no wording
+  change was tried.
 
 ## Authority
 

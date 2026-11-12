@@ -202,9 +202,11 @@ export function searchPastConversations({ query = '', currentSessionId = '', lim
     const cardNames = entry.messages.flatMap(message => (message?.role === 'assistant' && Array.isArray(message.structuredOutfits))
       ? message.structuredOutfits.flatMap(outfit => [outfit?.label, ...(Array.isArray(outfit?.pieces) ? outfit.pieces.map(piece => piece?.name) : [])])
       : [])
-    const haystack = wordSet([entry.row.title, ...entry.userMessages, ...cardNames].join(' '))
-    const matched = words.filter(word => haystack.has(word))
-    return { ...entry, matched }
+    const userHaystack = wordSet([entry.row.title, ...entry.userMessages].join(' '))
+    const cardHaystack = wordSet(cardNames.join(' '))
+    const matched = words.filter(word => userHaystack.has(word) || cardHaystack.has(word))
+    const matchedInUserWords = words.filter(word => userHaystack.has(word))
+    return { ...entry, matched, matchedInUserWords }
   })
   // Ranking: threads that share the query's DISTINCTIVE words (found in few threads, like a place or
   // an event), newest first. A common word ("pack", "dinner") must not outrank recency: on the real
@@ -214,10 +216,21 @@ export function searchPastConversations({ query = '', currentSessionId = '', lim
   const documentFrequency = new Map(words.map(word => [word, scored.filter(entry => entry.matched.includes(word)).length]))
   const distinctiveLimit = Math.max(2, Math.ceil(parsed.length * 0.1))
   const distinctive = new Set(words.filter(word => documentFrequency.get(word) > 0 && documentFrequency.get(word) <= distinctiveLimit))
+  // How rare a word is in what users SAID, measured on their words alone: "sneakers" is in hundreds of
+  // cards' garment names but in few objections.
+  const userFrequency = new Map(words.map(word => [word, scored.filter(entry => entry.matchedInUserWords.includes(word)).length]))
+  const distinctiveInUserWords = new Set(words.filter(word => userFrequency.get(word) > 0 && userFrequency.get(word) <= distinctiveLimit))
+  // The user's own words outrank a garment name on a card (live check 2026-11-11, case F: "sneakers" was
+  // in the user's objection in one thread and only in card garment names in the newer ones).
   const ranked = scored
     .filter(entry => entry.matched.length)
-    .map(entry => ({ ...entry, distinctiveCount: entry.matched.filter(word => distinctive.has(word)).length }))
-    .sort((a, b) => b.distinctiveCount - a.distinctiveCount
+    .map(entry => ({
+      ...entry,
+      userDistinctiveCount: entry.matchedInUserWords.filter(word => distinctiveInUserWords.has(word)).length,
+      distinctiveCount: entry.matched.filter(word => distinctive.has(word)).length,
+    }))
+    .sort((a, b) => b.userDistinctiveCount - a.userDistinctiveCount
+      || b.distinctiveCount - a.distinctiveCount
       || (a.distinctiveCount ? 0 : b.matched.length - a.matched.length)
       || String(b.row.updated_at).localeCompare(String(a.row.updated_at)))
     .slice(0, cap)
@@ -238,14 +251,21 @@ export function searchPastConversations({ query = '', currentSessionId = '', lim
         : [0, ...userMessages.map((text, index) => (words.some(word => wordSet(text).has(word)) ? index : -1)).filter(index => index > 0)])
       for (let index = userMessages.length - 1; index >= 0 && keep.size < MAX_USER_MESSAGES; index -= 1) keep.add(index)
       const shown = [...keep].sort((a, b) => a - b).slice(0, MAX_USER_MESSAGES).map(index => userMessages[index])
-      const plan = safeJsonParse(row.state_json, {})?.plan
+      const state = safeJsonParse(row.state_json, {})
+      const plan = state?.plan
+      // What the plan packed — the suitcase, which the cards alone do not show (a card's assigned
+      // layer is not one of its pieces). Live check 2026-11-11, case B: an unpacked jacket was added
+      // to the Saturday dinner look with nothing saying it was not in the suitcase.
+      const packed = (Array.isArray(state?.packing_roster?.roster_pieces) ? state.packing_roster.roster_pieces : [])
+        .filter(piece => piece && Number(piece.id))
+        .map(piece => ({ id: Number(piece.id), name: String(piece.name || ''), category: String(piece.category || ''), still_in_wardrobe: activeIds.has(Number(piece.id)) }))
       return {
         title: String(row.title || ''),
         started: dayOf(row.created_at),
         last_active: dayOf(row.updated_at),
         matched_words: matched,
         user_said: shown.map(text => clip(text)),
-        ...(plan?.start ? { plan: { kind: plan.kind, location: plan.location || '', start: plan.start, end: plan.end || plan.start } } : {}),
+        ...(plan?.start ? { plan: { kind: plan.kind, location: plan.location || '', start: plan.start, end: plan.end || plan.start, ...(packed.length ? { packed } : {}) } } : {}),
         cards_shown: cardsFromMessages(messages, activeIds),
         user_verdicts: verdicts.get(row.id) || [],
       }
