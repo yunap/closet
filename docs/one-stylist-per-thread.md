@@ -479,6 +479,40 @@ from the adapter's first version on.
 - Speed is unlikely to change much: latency tracks output tokens (correlation 0.96), not input. Cost per continued
   call rises slightly, since the system prompt is resent; most of it should come from the cache.
 
+## The single-outfit guidance, restored (2026-11-12)
+
+**Owner:** the boss's-dinner answer on the one stylist (thread_1794470249476) was worse than the single-outfit
+route's (thread_1794365607999).
+
+**What the old answer had:**
+- a complete look with a coat for the way there;
+- a reason and styling instructions on the card;
+- two worked jeans outfits on the doubt.
+
+**The cause.** Retiring the single-outfit route carried over two parts of its prompt (`readTheSituation`,
+`HOW_A_DAY_AWAY_WORKS`) and dropped the rest:
+- the wearability contract, with "layering applies to travel to a venue";
+- the 8–12-piece visual workbench;
+- the rules for the note;
+- `why_it_works` as a required field.
+
+None of these was in the full stylist's prompt.
+
+**Restored.**
+- `ONE_OUTFIT_GUIDANCE` (`prompts.js`) goes in the full stylist's stable prompt, after the situation read.
+- `why_it_works` is required on `propose_outfit`.
+- A one-card proposal with a note now ends the turn with that note on a new request too, unless the outfit
+  check left notes for her to answer. As on the single-outfit route, this saves the closing call.
+
+**Live recheck** (entries 2 and 3, 3.7 Flash, low thinking, $0.37):
+- **Better:** the boss's-dinner card now carries a cream trench "for the arrival and departure transit",
+  tweed trousers, boots and earrings, with a reason and styling instructions. The hosting options give
+  hosting reasons (plating food, pouring drinks).
+- **Not yet in that run:** the reply showed only the note's first paragraph, because the note was still
+  dropped on new requests. That is what the ending change fixes, offline only.
+- **The doubt failed again** ("You can definitely wear jeans!"). At low thinking on 3.7 Flash it has passed
+  2 of 4; the two runs at medium passed.
+
 ## Decisions (2026-11-11)
 
 The owner's direction: these conversations should be as good as they can be, and a quick question gets

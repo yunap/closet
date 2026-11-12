@@ -9056,7 +9056,7 @@ test('a follow-up states the thread\'s stored forecast, not a weather word found
 // thread_1791353402050: on a follow-up, the note she wrote with the outfit was a good short reply,
 // and the closing call after it re-answered every earlier question. A one-card follow-up now ends
 // with that note; a fresh request, a multi-card turn, or a proposal with no note is unchanged.
-test('a one-card follow-up proposal with a stylist note ends the turn with that note', async () => {
+test('a one-card proposal with a stylist note ends the turn with that note, on a follow-up or a new request', async () => {
   const proposal = extra => ({
     label: 'More interesting', occasion: 'city',
     pieces: [{ id: seeded.top, role: 'primary_top' }, { id: seeded.bottom, role: 'primary_bottom' }, { id: seeded.shoe, role: 'shoes' }],
@@ -9073,9 +9073,12 @@ test('a one-card follow-up proposal with a stylist note ends the turn with that 
   await executeTool('propose_outfit', proposal({}), noNote)
   assert.notEqual(noNote.followupProposalCompleted, true, 'no note: the closing reply still happens')
 
+  // 2026-11-12: a new request for one outfit ends on its note too, as the single-outfit route did
+  // (docs/one-stylist-per-thread.md); a dropped note left a reply that only repeated its first paragraph.
   const fresh = contextFor({ turnMode: 'new_request' })
-  await executeTool('propose_outfit', proposal({ stylist_note: 'x' }), fresh)
-  assert.notEqual(fresh.followupProposalCompleted, true)
+  await executeTool('propose_outfit', proposal({ stylist_note: 'For a dinner at a boss\'s home, here is my pick.' }), fresh)
+  assert.equal(fresh.followupProposalCompleted, true)
+  assert.equal(fresh.followupStylistNote, "For a dinner at a boss's home, here is my pick.")
 
   const several = contextFor({ turnMode: 'followup', declaredIntent: { want: 'cards', outfitCount: 3 } })
   await executeTool('propose_outfit', proposal({ stylist_note: 'x' }), several)

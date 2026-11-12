@@ -82,7 +82,8 @@ test('generate_outfits schema exposes styling intent enums', () => {
   assert.ok(planTool, 'plan_outfit_set tool must exist')
   assert.ok(!STYLIST_TOOLS.some(t => t.name === 'render_outfit'), 'render_outfit must be retired')
   assert.deepEqual(proposeTool.input_schema.properties.occasion.enum, OCCASION_VALUES)
-  assert.deepEqual(proposeTool.input_schema.required, ['pieces'])
+  // why_it_works required since 2026-11-12 (docs/one-stylist-per-thread.md: the single-outfit route required it).
+  assert.deepEqual(proposeTool.input_schema.required, ['pieces', 'why_it_works'])
   assert.ok(proposeTool.input_schema.properties.pieces.items.properties.role.enum.includes('primary_top'), 'propose_outfit pieces carry a role enum')
   assert.match(proposeTool.description, /ONE (complete, )?coherent outfit/, 'propose_outfit is one outfit, not a roster group')
   assert.match(proposeTool.description, /NEVER pass multiple pieces of the same role/, 'propose_outfit forbids same-role groups')

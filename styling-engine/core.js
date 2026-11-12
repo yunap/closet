@@ -17,7 +17,7 @@ import { logAiCall, estimateOpenAIImageCostUsd, getAiTelemetryContext, runWithAi
 import { getImageRenderProvider, renderWithGeminiImageModel } from './geminiImage.js'
 import { getStylistConversationState, saveStylistConversationState } from './conversationState.js'
 import { localIsoDate, openPlansFromOtherThreads, openPlansPromptText } from './pastConversations.js'
-import { readTheSituation } from './prompts.js'
+import { ONE_OUTFIT_GUIDANCE, readTheSituation } from './prompts.js'
 import { restoreWeatherProfile, serializeWeatherProfile } from './weather.js'
 
 export { getStylistConversationState, saveStylistConversationState }
@@ -5199,6 +5199,8 @@ export async function buildStylistConversationPayload(body) {
     // retirement (2026-11-11, docs/one-stylist-per-thread.md); every ordinary request now reaches this prompt.
     'READ THE SITUATION FIRST:',
     readTheSituation('Before you search or compose'),
+    '',
+    ONE_OUTFIT_GUIDANCE,
     '',
     'OCCASION & CLIMATE PROFILES (RULES-AS-DATA):',
     'Classify the user\'s event/activity and weather description into one of the profiles below. A profile\'s prohibited_materials and prohibited_footwear are hard constraints and you MUST apply them. The profile\'s vibe describes the social register it covers; it is not a list of required garments, and no garment category is banned by season. Each profile\'s `keywords` are illustrative examples of the kind of request it covers, not an exhaustive or literal match list — real requests will use wording none of them anticipated. Classify by the social register and setting the request actually implies, not by matching a surface noun: the same noun can describe very different registers (e.g. "market" spans a routine grocery/farmers-market errand, which is casual/city, versus a craft fair, wine festival, or artisan market outing, which is outdoor_daytime_social). When a request is a plain errand or everyday task with no festival/social/event framing, default to the permissive casual or city profiles rather than a narrower one.',

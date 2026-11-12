@@ -178,3 +178,18 @@ test('the chat stylist has its own model, 3.7 Flash by default on Gemini, and on
   assert.equal(route.split('chatStylistProviderOverride').length - 1, 2, 'imported once, used once: /ask')
   assert.match(route, /providerOverride: req\.body\.provider === 'sonnet' \? \{ provider: 'anthropic' \} : chatStylistProviderOverride/)
 })
+
+// 2026-11-12, owner: the boss's-dinner answer on the one stylist was worse than on the old single-outfit route
+// (no coat for the way there, a one-sentence reason). That route's guidance had not moved with it; restored.
+test('the full stylist carries the one-outfit guidance the single-outfit route had, and every card needs its reason', async () => {
+  const { ONE_OUTFIT_GUIDANCE, STYLIST_COMPETENCE_CONTRACT } = await import('../styling-engine/prompts.js')
+  assert.ok(ONE_OUTFIT_GUIDANCE.includes(STYLIST_COMPETENCE_CONTRACT), 'the wearability contract')
+  assert.match(ONE_OUTFIT_GUIDANCE, /including travel to and from a venue/)
+  assert.match(ONE_OUTFIT_GUIDANCE, /Put 8–12 pieces on a visual workbench/)
+  assert.match(ONE_OUTFIT_GUIDANCE, /a reason that would stop being true for a different occasion or a different outfit/)
+  const payload = await buildStylistConversationPayload({ question: 'What should I wear to dinner?', history: [], pieces: [], sessionId: 'one-outfit-guidance', currentDate: '2026-11-12T12:00:00-08:00' })
+  const stable = String(payload.system).split(PROMPT_CACHE_BREAKPOINT)[0]
+  assert.ok(stable.includes(ONE_OUTFIT_GUIDANCE), 'in the stable half, so it is cached and sent on every call')
+  const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
+  assert.deepEqual(STYLIST_TOOLS.find(t => t.name === 'propose_outfit').input_schema.required, ['pieces', 'why_it_works'])
+})

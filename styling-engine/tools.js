@@ -1507,7 +1507,7 @@ export const STYLIST_TOOLS = [
         },
         label: { type: "string", description: "Creative outfit title." },
         occasion_context: { type: "string", description: "The occasion / vibe / style lane this outfit is for." },
-        why_it_works: { type: "string", description: "Brief styling rationale — the concept, not the mechanics." },
+        why_it_works: { type: "string", description: "The card's one-line reason: why this outfit suits THIS occasion, in a way that would stop being true for a different occasion or outfit — the concept, not the mechanics, and not a copy of stylist_note." },
         stylist_note: { type: "string", description: "Your reply to the wearer for this outfit, as plain prose in your own voice; it is shown as the chat reply above the card. When your instructions describe a Stylist Note, this is it. On a follow-up, answer the wearer's latest message only — what you changed or chose and why — and leave earlier questions that were already answered alone. Do not list the garments; the card shows them." },
         styling_instructions: { type: "string", description: "How the pieces physically relate to each other when worn, when that relationship isn't obvious from the pieces alone: layering order (what goes over/under what), where a belt or tie lands and which layer it cinches, tuck/drape behavior between two specific garments, sleeve/hem interaction between layers. Concrete and actionable, not a restatement of why_it_works — write it the way you would explain it to the person putting the outfit on. Omit for a simple outfit with no layering or positioning decision (e.g. a plain top + bottom + shoes)." },
         missing_gaps: { type: "array", items: { type: "string" }, description: "Slots the wardrobe can't fill (e.g. 'lightweight rain shell'). List the gap here instead of inventing a piece." },
@@ -1520,7 +1520,8 @@ export const STYLIST_TOOLS = [
         weather_estimate: WEATHER_ESTIMATE_SCHEMA,
         roster_piece_ids_removed: { type: "array", items: { type: "integer" }, description: "ONLY when a trip has an active packing roster and you are confident a piece is no longer needed for the trip — not merely unused in this one card. Explicit substitution ('swap the sandals for the boots because the forecast changed') belongs here; do not infer a removal just because this card happens not to use a roster piece, since one card not showing a shared item is normal and expected." }
       },
-      required: ["pieces"]
+      // Required since 2026-11-11 (the single-outfit route required it until its retirement; docs/one-stylist-per-thread.md).
+      required: ["pieces", "why_it_works"]
     }
   }
 ]
@@ -3012,8 +3013,12 @@ async function executeToolInternal(name, rawArgs, toolContext = {}) {
         // cards or a plan; otherwise the closing call stands.
         const followupNote = typeof stylist_note === 'string' ? stylist_note.trim() : ''
         const declaredCount = Number(toolContext.declaredIntent?.outfitCount) || 0
-        if (followupNote && toolContext.turnMode && toolContext.turnMode !== 'new_request'
-          && declaredCount <= 1 && !toolContext.pendingPlan) {
+        // 2026-11-12: new requests too. The single-outfit route ended on its card with this note as the reply; since
+        // its retirement a new request's note was dropped and the closing call wrote the reply again (live: it
+        // repeated the note's first paragraph and lost the pick and its reasons). As on that route, a proposal
+        // that drew system notes gets the closing call, so she can answer them.
+        const proposalDrewNotes = finalAnnotations.length > 0
+        if (followupNote && declaredCount <= 1 && !toolContext.pendingPlan && !proposalDrewNotes) {
           toolContext.followupProposalCompleted = true
           toolContext.followupStylistNote = followupNote
         }
