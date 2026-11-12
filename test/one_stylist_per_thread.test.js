@@ -49,10 +49,30 @@ test('every Gemini call carries the system prompt, continued or not, and a conti
   const provider = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
   assert.match(provider, /system_instruction: plainSystem,\n\s+\.\.\.\(continuation \? \{ previous_interaction_id: continuation \} : \{\}\),/)
   assert.doesNotMatch(provider, /continuation \? \{ previous_interaction_id: continuation \} : \{ system_instruction: plainSystem \}/)
-  assert.doesNotMatch(provider, /withTurnContext\(/, 'the turn context is in the system prompt now, not prefixed to the message')
+  // The chat on Gemini keeps the system prompt stable and carries the turn context in the message (next test).
+  assert.match(provider, /plainSystem: loopPlainSystem/)
   assert.match(provider, /complete: !turn\.hasToolCalls,/)
   assert.equal(volatilePromptTail(system), 'CURRENT DATE: Wednesday\nTHREAD STATE: {}')
   assert.equal(stablePromptFingerprint(system, 'm'), stablePromptFingerprint(`STABLE: constitution and manifest\n${PROMPT_CACHE_BREAKPOINT}\nCURRENT DATE: Thursday`, 'm'))
+})
+
+// Fair run 2026-11-11: with the turn's context in the system prompt, no continued turn's first call hit the cache
+// ("Really? jeans?" read 131,780 tokens, none cached). The chat's Gemini system prompt is now the stable half only.
+test('for the chat on Gemini the system prompt is the stable half and the turn context opens the turn\'s message', async () => {
+  const { splitPromptForGeminiThread, TURN_CONTEXT_HEADER } = await import('../styling-engine/provider.js')
+  const history = [{ role: 'user', content: 'Plan my trip.' }, { role: 'assistant', content: 'Here it is.' }, { role: 'user', content: 'And shoes?' }]
+  const split = splitPromptForGeminiThread(system, history)
+  assert.equal(split.plainSystem, 'STABLE: constitution and manifest')
+  assert.deepEqual(split.messages.slice(0, 2), history.slice(0, 2), 'earlier turns are untouched')
+  assert.ok(split.messages[2].content.startsWith(TURN_CONTEXT_HEADER))
+  assert.match(split.messages[2].content, /CURRENT DATE: Wednesday[\s\S]*The user's message:\nAnd shoes\?$/)
+  // Two turns with different context share the same system prompt, so the cached prefix carries over.
+  const nextTurn = splitPromptForGeminiThread(`STABLE: constitution and manifest\n${PROMPT_CACHE_BREAKPOINT}\nCURRENT DATE: Thursday`, history)
+  assert.equal(nextTurn.plainSystem, split.plainSystem)
+  const images = splitPromptForGeminiThread(system, [{ role: 'user', content: [{ type: 'image', source: {} }, { type: 'text', text: 'this?' }] }])
+  assert.equal(images.messages[0].content[0].type, 'text')
+  assert.equal(images.messages[0].content.length, 3)
+  assert.equal(splitPromptForGeminiThread('no marker here', history).plainSystem, 'no marker here')
 })
 
 test('a turn saves the conversation the next turn continues; a failed turn or another provider ends it', () => {

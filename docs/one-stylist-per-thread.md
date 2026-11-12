@@ -457,8 +457,14 @@ a turn's first had therefore run without the stylist's instructions, constitutio
 from the adapter's first version on.
 
 **Changes to this design:**
-- The system prompt, including this turn's context, is sent on every call. The turn-context prefix on a
-  continued turn's message is removed.
+- The system prompt is sent on every call.
+  - **[amended the same day, after the fair run]** For the chat on Gemini it is the stable half only
+    (constitution, profiles, wardrobe list). The turn's context opens the turn's message
+    (`splitPromptForGeminiThread`).
+  - With the turn's context in the system prompt, every turn's request started differently, so no continued
+    turn's first call reused the cache: "Really? jeans?" read 131,780 tokens with none cached, 14¢ against
+    1.9¢.
+  - Other callers of the loop keep the whole prompt in the system slot.
 - The prompt-fingerprint rule is removed. A changed wardrobe list or prompt now reaches a continued conversation
   directly.
 - A conversation is continued only from an interaction that ended in a reply (`complete`). A turn ended by an

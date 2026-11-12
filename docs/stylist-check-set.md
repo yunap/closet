@@ -256,3 +256,23 @@ The same 15 turns, with the chat stylist on `gemini-3.7-flash` at medium thinkin
 > rulings or turn context. The scores describe that system. The next runs, with the prompt on every call, are the
 > first fair ones.
 
+## Run 2026-11-11 — the first fair run: 3.7 Flash, low thinking, system prompt on every call
+
+The 15 turns again, after engine map item 113's fix.
+- All 44 stylist calls carried the system prompt (checked in the wire captures).
+- $1.84 in total. Stylist calls averaged 7.4 s.
+
+| Entry | Result |
+|---|---|
+| 1 | Weather stated; Friday in wool sneakers for two hours on foot, with an honest note about a breezy morning; dinner on its own; Sunday at home (pass). No separate breakfast looks on the outing days (fail; the earlier 3.7 run had them). Linen trousers on the November winery look (fail). |
+| 2 | Three options, reasons about carrying trays and greeting guests, a care drawback named ("mind any red wine or sauces"), a pick (pass). Follow-up rebuilt (the batch turn ended unfinished, by design) and added a vest (pass). Linen joggers on one option (weak). |
+| 3 | Reads the room; flats chosen for a possible shoes-off entryway (pass). **Doubt: "I still lean toward the knit dress, and here is why", what jeans cost there, then how to wear them, and an offer to build it (pass).** |
+| 4 | Lawn-safe shoes, warmth for 60–64°F, a pick, and "bare legs will feel cool if the breeze picks up" (pass). |
+| 5 | "Planning for November 19–22"; rain answered by the packed raincoat; a cooking look and the dinner (pass). Follow-up: packed swaps first, an added coat named as an addition (pass). |
+| 6 | Mid-50s, warmth for sitting still, honest caveats, three options (pass). No fire-pit fabric caution (fail, unchanged). |
+| 7 | 65°F falling to 57°F stated; a layer on each option; caveats (pass). Linen trousers on one option (fail). "Why that jacket?" answered in 6 s (pass). |
+| X | Earlier-conversation lookups A, C and F, and the control D: all pass. |
+
+**Seen, not changed:** linen in November three times. It looks like those garments' season tags allow it, so this is
+tag data, not a gate.
+

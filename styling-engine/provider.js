@@ -2087,6 +2087,32 @@ export function stylistContinuationDecision(saved = null, { provider = '', model
   return { continue: true, reason: 'continued' }
 }
 
+// Fair run 2026-11-11: with the whole prompt in system_instruction, this turn's context (thread state, date,
+// feedback) made each turn's request start differently, so no continued turn's first call ever reused the cache:
+// "Really? jeans?" read 131,780 tokens with none cached (14¢ against 1.9¢). For the chat on Gemini the stable half
+// (constitution, profiles, wardrobe list) is the system prompt on every call, and the turn's context opens the
+// turn's message. The prefix the provider can cache, system prompt and conversation so far, then stays the same
+// from turn to turn; only the new message is new.
+export const TURN_CONTEXT_HEADER = 'TURN CONTEXT — for this turn only. It replaces the turn context sent with earlier messages in this conversation (today\'s date, the thread state, saved feedback and this turn\'s directives):'
+
+export function withTurnContext(content, tail = '') {
+  if (!tail) return content
+  const preface = `${TURN_CONTEXT_HEADER}\n\n${tail}\n\n— end of turn context —\n\nThe user's message:`
+  if (Array.isArray(content)) return [{ type: 'text', text: preface }, ...content]
+  return `${preface}\n${String(content || '')}`
+}
+
+export function splitPromptForGeminiThread(system = '', messages = []) {
+  const tail = volatilePromptTail(system)
+  const stable = systemToPlainText(String(system || '').split(PROMPT_CACHE_BREAKPOINT)[0]).trim()
+  if (!tail || !messages.length) return { plainSystem: systemToPlainText(system), messages }
+  const last = messages[messages.length - 1]
+  return {
+    plainSystem: stable,
+    messages: [...messages.slice(0, -1), { ...last, content: withTurnContext(last.content, tail) }],
+  }
+}
+
 async function callProviderTurn(provider, ctx) {
   if (provider === 'gemini') return callGeminiTurn(ctx)
   if (provider === 'openai') return callOpenAiTurn(ctx)
@@ -2138,7 +2164,11 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   // process-global AI_PROVIDER constant, without touching this function's several returns.
   toolContext.resolvedProviderTarget = target
 
-  let currentMessages = [...messages]
+  // The chat on Gemini: stable system prompt, turn context in the turn's message (splitPromptForGeminiThread).
+  const geminiThread = toolContext.continueThread === true && target.provider === 'gemini'
+  const threadSplit = geminiThread ? splitPromptForGeminiThread(system, messages) : null
+  const loopPlainSystem = threadSplit ? threadSplit.plainSystem : plainSystem
+  let currentMessages = threadSplit ? [...threadSplit.messages] : [...messages]
   let providerContinuation = null
   let syncedHistoryLength = 0
   // docs/one-stylist-per-thread.md. Only /ask opts in (toolContext.continueThread); the other callers of
@@ -2146,7 +2176,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   const continuation = toolContext.continueThread === true
     ? stylistContinuationDecision(toolContext.savedStylistContinuation, { provider: target.provider, model: target.model })
     : null
-  const rebuildMessages = [...messages]
+  const rebuildMessages = [...currentMessages]
   let continuedThisTurn = false
   if (continuation?.continue && currentMessages.length) {
     providerContinuation = toolContext.savedStylistContinuation.interaction_id
@@ -2207,7 +2237,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     let turn
     try {
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
+        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries, continuation: providerContinuation,
         tools: availableTools, maxTokens,
@@ -2222,7 +2252,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       currentMessages = [...rebuildMessages]
       toolContext.freeformDiagnostics.stylistContinuation = 'continuation_failed'
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
+        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries: currentMessages, continuation: null,
         tools: availableTools, maxTokens,
