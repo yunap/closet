@@ -2054,6 +2054,8 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
 // The conversation is rebuilt from stored memory (today's path) when it cannot be continued.
 export const STYLIST_CONTINUATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000 // decision 4
 export const STYLIST_CONTINUATION_MAX_INPUT_TOKENS = 150000 // decision 3, provisional
+// A result a turn ended without sending, kept for the next turn; trimmed so thread state stays small.
+export const PENDING_RESULT_MAX_CHARS = 20000
 
 // The stable half of the stylist system prompt (constitution, profiles, wardrobe manifest): the prefix the
 // provider's implicit cache can reuse from one call and one turn to the next. Used to check that two turns'
@@ -2180,9 +2182,16 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
   let continuedThisTurn = false
   if (continuation?.continue && currentMessages.length) {
     providerContinuation = toolContext.savedStylistContinuation.interaction_id
-    // The earlier turns are already in the provider's conversation; only the new message is sent. The
-    // current system prompt, with this turn's context, goes on every call (callGeminiTurn).
-    syncedHistoryLength = currentMessages.length - 1
+    // The earlier turns are already in the provider's conversation; only the new message is sent, after any
+    // tool results the last turn still owed its interaction (pending_results).
+    const pending = Array.isArray(toolContext.savedStylistContinuation.pending_results) ? toolContext.savedStylistContinuation.pending_results : []
+    const last = currentMessages[currentMessages.length - 1]
+    currentMessages = [
+      ...currentMessages.slice(0, -1),
+      ...pending.map(result => ({ role: 'tool_result', toolCallId: result.toolCallId, name: result.name, text: result.text, images: [] })),
+      last,
+    ]
+    syncedHistoryLength = currentMessages.length - 1 - pending.length
     continuedThisTurn = true
   }
   if (continuation) {
@@ -2348,6 +2357,20 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         }
         const extracted = extractToolResultImages(result)
         currentMessages.push({ role: 'tool_result', toolCallId: tc.id, name: tc.name, text: extracted.textResult, images: extracted.images })
+      }
+      // A turn can end here, on a card and her note or on an options batch, with this interaction still owed
+      // these results. They are kept with the stored conversation and sent first on the next turn, so it can
+      // continue (live 2026-11-12: ending on her note made every next turn rebuild, last_turn_unfinished). If
+      // the loop goes on instead, the next call replaces this state.
+      if (toolContext.stylistContinuationState && toolContext.stylistContinuationState.interaction_id === providerContinuation) {
+        toolContext.stylistContinuationState = {
+          ...toolContext.stylistContinuationState,
+          complete: true,
+          pending_results: turn.toolCalls.map(tc => {
+            const entry = currentMessages.find(m => m.role === 'tool_result' && m.toolCallId === tc.id)
+            return { toolCallId: tc.id, name: tc.name, text: String(entry?.text || '').slice(0, PENDING_RESULT_MAX_CHARS) }
+          }),
+        }
       }
       if (toolContext.atomicMultiLookCompleted) {
         return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }

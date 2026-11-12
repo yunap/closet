@@ -513,6 +513,17 @@ None of these was in the full stylist's prompt.
 - **The doubt failed again** ("You can definitely wear jeans!"). At low thinking on 3.7 Flash it has passed
   2 of 4; the two runs at medium passed.
 
+**Rerun of entry 3 after the note change** ($0.14):
+- The reply is her full note: what the occasion asks, the pick and why, boots that clear the hems, and the trench
+  for evening transit.
+- The turn took 22 s with three calls and no closing call. Its first call read 95% from the cache.
+- **New fault:** ending on the note left the turn's interaction owed the proposal's result, so the follow-up
+  rebuilt (`last_turn_unfinished`).
+  - Fixed offline: the owed results are kept with the stored conversation (`pending_results`) and sent first on
+    the next turn, as function results ahead of the new message.
+  - This also covers turns that end on an options batch.
+- The doubt failed again ("Jeans can absolutely work"). At low thinking it is now 2 of 5.
+
 ## Decisions (2026-11-11)
 
 The owner's direction: these conversations should be as good as they can be, and a quick question gets

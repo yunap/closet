@@ -193,3 +193,30 @@ test('the full stylist carries the one-outfit guidance the single-outfit route h
   const { STYLIST_TOOLS } = await import('../styling-engine/tools.js')
   assert.deepEqual(STYLIST_TOOLS.find(t => t.name === 'propose_outfit').input_schema.required, ['pieces', 'why_it_works'])
 })
+
+// Live 2026-11-12: ending a one-outfit turn on her note left its interaction owed the proposal's result, and the next
+// turn rebuilt (last_turn_unfinished). The owed results are kept and sent first on the next turn.
+test('results a turn ended without sending are kept and sent first on the next turn', async () => {
+  const provider = fs.readFileSync(new URL('../styling-engine/provider.js', import.meta.url), 'utf8')
+  assert.match(provider, /complete: true,\n\s+pending_results: turn\.toolCalls\.map/)
+  assert.match(provider, /\.\.\.pending\.map\(result => \(\{ role: 'tool_result', toolCallId: result\.toolCallId, name: result\.name, text: result\.text, images: \[\] \}\)\),\n\s+last,/)
+  assert.match(provider, /syncedHistoryLength = currentMessages\.length - 1 - pending\.length/)
+  // Stored with the conversation, so the next turn can read them.
+  const sessionId = 'thread_pending_results'
+  persistFullStylistTurnState({
+    toolContext: { continueThread: true, generatedOutfits: [], stylistContinuationState: { provider: 'gemini', model: 'gemini-3.7-flash', interaction_id: 'int_9', complete: true, last_input_tokens: 60000, pending_results: [{ toolCallId: 'c1', name: 'propose_outfit', text: '{"status":"success"}' }] } },
+    answer: 'Here is my pick.', freeformTurnToken: 't9', sessionId,
+  })
+  const stored = getStylistConversationState(sessionId).stylist_continuation
+  assert.deepEqual(stored.pending_results, [{ toolCallId: 'c1', name: 'propose_outfit', text: '{"status":"success"}' }])
+  assert.equal(stylistContinuationDecision({ ...stored }, { provider: 'gemini', model: 'gemini-3.7-flash', now: Date.parse(stored.last_turn_at) + 1000 }).reason, 'continued')
+  // Gemini receives them as function results ahead of the new message.
+  const { canonicalHistoryToGeminiInput } = await import('../styling-engine/provider.js')
+  const input = canonicalHistoryToGeminiInput([
+    { role: 'tool_result', toolCallId: 'c1', name: 'propose_outfit', text: '{"status":"success"}', images: [] },
+    { role: 'user', content: 'Really? I was thinking of jeans.' },
+  ])
+  assert.equal(input[0].type, 'function_result')
+  assert.equal(input[0].call_id, 'c1')
+  assert.equal(input[1].type, 'text')
+})
