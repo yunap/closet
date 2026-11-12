@@ -203,3 +203,21 @@ norm varies by place, age and circle. The lines above that concern it are scored
 by a model, and a reading that is wrong for this wearer's circle is recorded as that wearer's context, not as a rule
 for everyone.
 
+## Run 2026-11-11 — one stylist per thread (Flash-Lite)
+
+The first run on the one-stylist build ([one-stylist-per-thread.md](one-stylist-per-thread.md)).
+- Stylist `gemini-3.5-flash-lite`, composers `gemini-3.7-flash`.
+- Entries 2, 3 and 7 were rerun after the continuation and season fixes; their rerun is scored.
+- Scored from the reply and the cards; card notes were not read.
+- The earlier runs above were on `gemini-3.7-flash`, so this is not a like-for-like model comparison.
+
+| Entry | Result |
+|---|---|
+| 1 | Six looks, including at-home mornings, a Friday walking look in wool sneakers, and separate winery and dinner looks; no weather question; nothing cashmere or silk for the stove (pass). The reply layers a plaid fleece coat over the winery look that is not on its card (fail). |
+| 2 | Three options; the reply says the host moves between kitchen and living room, but states no assumption about cooking or serving (weak). Follow-up "a little warmer" swapped the second card's top, continued in 8 s (pass). |
+| 3 | First reply reads the room ("polished, respectful… without feeling overly formal"), cutout flats, a coat for the way (pass). On the doubt she dresses the jeans without saying whether she still stands by her pick (fail, both runs; item 105's passing run was on 3.7 Flash). |
+| 4 | Three options; the third has cutout flats for a lawn (fail, unchanged); before the season fix, linen trousers in November (not rerun). |
+| 5 | Dates stated as 19–22 November (pass); Saturday dinner, a cooking-evenings look, no packing question (pass); rain not mentioned (weak). Follow-up "if it turns cold" adds the packed trench, no replan (pass). |
+| 6 | Three options with layers for sitting outside; no fire-pit caution and no reading of how dressed the dinner is (fail, as before). |
+| 7 | After the season fix: three options, each with a layer (lambskin jacket, bouclé jacket, vest), the evening's mid-50s to mid-60s stated, ankle boots and loafers (pass); the reading of the room is thin (weak, as before). Follow-up "why that jacket?" answered in 4 s from the conversation (pass). |
+

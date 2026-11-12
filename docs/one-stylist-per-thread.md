@@ -1,7 +1,7 @@
 # One stylist per thread
 
-**Status:** active — built 2026-11-11 on `feat/one-stylist-per-thread` (owner: "build it"). Offline suite green;
-**not yet verified live**. Keep-or-revert follows the check-set run described under "Build". The design below is as
+**Status:** active — built and live-checked 2026-11-11 on `feat/one-stylist-per-thread` (owner: "build it").
+Verdict: keep (see "Live check"). Keep-or-revert follows the check-set run described under "Build". The design below is as
 proposed; what was built, and what moved where, is in "As built".
 
 ## The question
@@ -279,6 +279,74 @@ route.
 - Re-pointed to `declare_intent`: the occasion/activity/season lock, the indoor-destination setting, answer
   in words, and the trip replan guard.
 - New: `test/one_stylist_per_thread.test.js`.
+
+## Live check (2026-11-11)
+
+**How it was run.**
+- 15 turns through the real `/api/ai/ask`, on a copy of the owner's data (the live data was never opened).
+  The script is `scratch/run_one_stylist_live_set.mjs`, untracked, with `--dry-run`.
+- Models: stylist `gemini-3.5-flash-lite` (the app default), composers `gemini-3.7-flash`.
+- Turns: the seven check-set entries as typed; follow-ups in the same thread on entries 2, 3, 5 and 7; the
+  cross-thread cases A, C, D and F.
+- Cost: $0.78 for the 15 turns, then $0.27 to rerun entries 2, 3 and 7 after two fixes. That is $1.05
+  against the $1.13 approved.
+- Per-entry scores are in [stylist-check-set.md](stylist-check-set.md).
+
+**Fixed during the check** (commit "fingerprint the marked prompt; a declared season is a season name
+only"):
+1. **No follow-up was continued.** All four rebuilt with `stable_prompt_changed`. The loop fingerprinted
+   the prompt after the breakpoint marker had been stripped, and the captures showed the stable halves
+   byte-identical between turns.
+2. **The stylist declared `season: "cool"` on most turns.** Locked as-is, it matched no season rule, and
+   out-of-season pieces came back: linen trousers on November evenings in 4.1 and 7.1. "warm" would
+   have locked as summer. Now only a season's own name is taken, and the field is an enum.
+
+**Continuation, after the fix.** Every follow-up on the rerun continued.
+
+| Follow-up | Rebuilt (first run) | Continued (rerun) |
+|---|---|---|
+| 2.2 "a little warmer" | 14 s, 3.1¢ | 8 s, 1.1¢ |
+| 7.2 "why that jacket?" | 7 s, 2.6¢ | 4 s, 0.9¢, one call, no tools |
+| 3.2 "Really? jeans?" | 27 s, 4.7¢ | 38 s, 6.8¢ |
+
+- In 3.2, turn 1's searched photographs stay in the conversation: the first call read 95,000 tokens, 96%
+  cached, at 7.9 s against ~5 s for a cold 55,000.
+- Quick answers met decision 2: 7.2 took 4 s, and the cross-thread lookups XA and XC took 6–7 s, against
+  ~7 s for today's router plus compact call.
+
+**Reading and routing.**
+- She declared a reading on every turn that used a wardrobe tool, and passed place, date, evening and
+  walking where the user gave them (6.1, 7.1).
+- The trip follow-up (5.2) answered from the plan. There was no replan.
+- "A few options" gave three on every options request.
+- After the season fix, 7.1 had a real layer on all three looks and stated the evening's mid-50s to
+  mid-60s.
+
+**Still failing, not caused by this change:**
+- **3.2, the doubt.** She dresses the jeans without saying whether she still stands by her pick. This
+  failed both times, rebuilt and continued. Item 105's fix is in `STYLIST_SYSTEM` and was present; its
+  passing run was on `gemini-3.7-flash`, this check on Flash-Lite.
+- **2.1** states no assumption about cooking or serving.
+- **4.1**'s third option has cutout flats for a lawn.
+- **6.1** gives no fire-pit caution.
+
+These are known check-set failures, seen before on the router's paths.
+
+**Gap found:**
+- **Trip follow-ups always rebuild.** The lean trip follow-up prompt (`tripFollowupTurn`) leaves out the
+  wardrobe manifest, so its stable half never matches the trip's first turn. Closing it means keeping the
+  manifest on trip follow-ups and moving the trip guidance below the breakpoint.
+- The size limit stays provisional at 150,000 tokens. One continued photo turn reached 95,000, so it would
+  be hit after two or three more.
+
+**Verdict: keep.**
+- The architecture did what it was for: one stylist, her own reading, and follow-ups continued faster and
+  cheaper.
+- Both faults it introduced were found by this check and fixed.
+- The remaining failures are the check set's existing ones.
+
+**Next:** delete the unreachable router code (one commit, see "As built"), then close the trip follow-up
+gap.
 
 ## Decisions (2026-11-11)
 
