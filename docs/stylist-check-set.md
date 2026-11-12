@@ -283,3 +283,22 @@ tag data, not a gate.
 - On the doubt she dressed the jeans without saying whether she still stands by her pick (fail). Across four runs
   on 3.7 Flash the doubt line has passed three times.
 
+## Run 2026-11-12 — medium thinking on each turn's first call (3.7 Flash)
+
+Entries 1 and 3, twice each, about $1.04.
+
+| Entry | Run 1 | Run 2 |
+|---|---|---|
+| 1 | Saturday breakfast look; Friday's washable market look explained (pass) | Friday and Saturday cooking looks with the reason (pass) |
+| 3 | First turn failed: "I ran out of steps…", two calls cut at the output cap (fail; fixed, see one-stylist-per-thread.md). Doubt: "Jeans can absolutely work…" (fail) | Doubt: named the cost, no stance (partial) |
+
+Follow-ups continued, but only about 55.7k of 132–145k input tokens were cached.
+
+**Rerun of entry 3 after the headroom fix ($0.30):** the first turn finished (two calls wrote 1,702 and 3,209
+output tokens, above the old cap). It used the packed Portland suitcase, because the test copy's open trip covers
+that Friday, and named the plan. The doubt reply said why the trousers were a cautious pick and that jeans cost
+nothing there, then swapped them in (pass).
+
+**Rerun of entry 3 with continued turns kept at low ($0.18):** the follow-up read 96% of its first call from the
+cache; the turn cost 5.1¢ against 11.2¢. First answer: turtleneck, tweed trousers, flats, and the wool overcoat on
+the card (pass). Doubt: the risk of jeans named and a dark-denim swap, but no stance on her pick (partial).

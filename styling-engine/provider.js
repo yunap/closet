@@ -529,9 +529,13 @@ export function boundedCapsuleFinalAnswer(answerText = '', toolContext = {}) {
   }
 }
 
-export function freeformToolLoopFallbackAnswer(toolContext = {}) {
+export const TRUNCATED_TURN_FALLBACK_ANSWER = 'My reply was cut off twice before I could finish it, so I stopped rather than show you half an answer. Please ask me again.'
+export function freeformToolLoopFallbackAnswer(toolContext = {}, { reason = '' } = {}) {
   const outfits = Array.isArray(toolContext.generatedOutfits) ? toolContext.generatedOutfits : []
   if (!outfits.length) {
+    // 2026-11-12: a turn cut off at the output cap twice fell through to the validation message below, which told her
+    // something false about what had happened.
+    if (reason === 'truncation') return TRUNCATED_TURN_FALLBACK_ANSWER
     return 'I ran out of steps before I could finish this one — my outfit proposals kept getting rejected by validation before a card could land. Ask me to try again: I will verify the exact pieces first and keep the piece you asked about pinned as the anchor.'
   }
 
@@ -610,6 +614,10 @@ const GEMINI_THINKING_LEVEL = process.env.GEMINI_THINKING_LEVEL || 'low'
 // the loop's cap gets headroom. Set GEMINI_STYLIST_LOOP_THINKING_LEVEL=low to revert.
 const GEMINI_STYLIST_LOOP_THINKING_LEVEL = process.env.GEMINI_STYLIST_LOOP_THINKING_LEVEL || 'medium'
 const GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS = 4000
+// Low thinking still thinks, and Gemini counts it against max_output_tokens. With no headroom at low, a proposal that
+// carries her full note (ONE_OUTFIT_GUIDANCE, 2026-11-12) was cut off at 1,496 of 1,500 tokens twice in a row and the
+// turn ended on the "ran out of steps" fallback. Unused tokens cost nothing.
+const GEMINI_STYLIST_LOOP_LOW_THINKING_HEADROOM_TOKENS = 2500
 
 // The one shared, app-wide text/vision provider config. Owner ruling 2026-08-30: only calls that
 // generate an image (runOpenAIImageGeneration and friends) are hardcoded to OpenAI — every other
@@ -643,10 +651,17 @@ export const chatStylistProviderOverride = stylistProviderOverride?.provider ===
 // and answered follow-ups in 5–20 s against 10–27 s. Flash-Lite, and every caller that is not /ask, keep 'medium'.
 // CHAT_STYLIST_THINKING_LEVEL sets another level for the chat on 3.7 Flash.
 export const CHAT_STYLIST_THINKING_LEVEL = process.env.CHAT_STYLIST_THINKING_LEVEL || 'low'
-export function chatThinkingLevelFor(toolContext = {}, target = {}) {
-  return toolContext.continueThread === true && target.provider === 'gemini' && /^gemini-3\.7-flash(?:-|$)/.test(String(target.model || ''))
-    ? CHAT_STYLIST_THINKING_LEVEL
-    : ''
+// 2026-11-12: the first call of a turn thinks at medium. It is where she reads the request, plans the slots and takes a
+// stance; on 3.7 Flash at low she twice skipped the at-home plan's breakfast slots and kept her pick on "Really?
+// jeans?" 2 times in 5, while every medium run did both. Later calls (tool mechanics, the reply) stay at low.
+export const CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL = process.env.CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL || 'medium'
+// A turn that continues the stored conversation stays at one level. Gemini's cache is kept per thinking level: in the
+// 2026-11-12 runs every call read the previous call's whole input from the cache unless the level changed, and then
+// it read only what an earlier call at its own level had left (a follow-up's medium first call: 55.7k of 143k).
+const continuedLevelOptions = providerContinuation => ({ continued: Boolean(providerContinuation) })
+export function chatThinkingLevelFor(toolContext = {}, target = {}, iteration = 0, { continued = false } = {}) {
+  if (!(toolContext.continueThread === true && target.provider === 'gemini' && /^gemini-3\.7-flash(?:-|$)/.test(String(target.model || '')))) return ''
+  return iteration === 0 && !continued ? CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL : CHAT_STYLIST_THINKING_LEVEL
 }
 
 
@@ -1950,7 +1965,7 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
     ...(continuation ? { previous_interaction_id: continuation } : {}),
     input,
     generation_config: {
-      max_output_tokens: maxTokens + (loopThinkingLevel === 'low' ? 0 : GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS),
+      max_output_tokens: maxTokens + (loopThinkingLevel === 'low' ? GEMINI_STYLIST_LOOP_LOW_THINKING_HEADROOM_TOKENS : GEMINI_STYLIST_LOOP_THINKING_HEADROOM_TOKENS),
       thinking_level: loopThinkingLevel,
     },
     ...(tools.length ? { tools: tools.map(toGeminiFunctionDeclaration) } : {})
@@ -2054,6 +2069,8 @@ export async function callGeminiTurn({ plainSystem, unsyncedEntries, continuatio
 // The conversation is rebuilt from stored memory (today's path) when it cannot be continued.
 export const STYLIST_CONTINUATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000 // decision 4
 export const STYLIST_CONTINUATION_MAX_INPUT_TOKENS = 150000 // decision 3, provisional
+// A result a turn ended without sending, kept for the next turn; trimmed so thread state stays small.
+export const PENDING_RESULT_MAX_CHARS = 20000
 
 // The stable half of the stylist system prompt (constitution, profiles, wardrobe manifest): the prefix the
 // provider's implicit cache can reuse from one call and one turn to the next. Used to check that two turns'
@@ -2178,11 +2195,21 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     : null
   const rebuildMessages = [...currentMessages]
   let continuedThisTurn = false
+  // Raised after a reply is cut off at the output cap. Most cut-offs are thinking, not the reply (2026-11-12: two calls
+  // in a row stopped at 1,496 of 1,500 tokens), so asking for a shorter answer at the same cap cannot fix them.
+  let turnMaxTokens = maxTokens
   if (continuation?.continue && currentMessages.length) {
     providerContinuation = toolContext.savedStylistContinuation.interaction_id
-    // The earlier turns are already in the provider's conversation; only the new message is sent. The
-    // current system prompt, with this turn's context, goes on every call (callGeminiTurn).
-    syncedHistoryLength = currentMessages.length - 1
+    // The earlier turns are already in the provider's conversation; only the new message is sent, after any
+    // tool results the last turn still owed its interaction (pending_results).
+    const pending = Array.isArray(toolContext.savedStylistContinuation.pending_results) ? toolContext.savedStylistContinuation.pending_results : []
+    const last = currentMessages[currentMessages.length - 1]
+    currentMessages = [
+      ...currentMessages.slice(0, -1),
+      ...pending.map(result => ({ role: 'tool_result', toolCallId: result.toolCallId, name: result.name, text: result.text, images: [] })),
+      last,
+    ]
+    syncedHistoryLength = currentMessages.length - 1 - pending.length
     continuedThisTurn = true
   }
   if (continuation) {
@@ -2237,10 +2264,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
     let turn
     try {
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
+        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target, iter, continuedLevelOptions(providerContinuation)), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries, continuation: providerContinuation,
-        tools: availableTools, maxTokens,
+        tools: availableTools, maxTokens: turnMaxTokens,
       })
     } catch (err) {
       // The stored conversation could not be continued (expired, deleted, or the provider refused it):
@@ -2252,10 +2279,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       currentMessages = [...rebuildMessages]
       toolContext.freeformDiagnostics.stylistContinuation = 'continuation_failed'
       turn = await callProviderTurn(target.provider, {
-        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target), captureCallId, iterationIndex: iter,
+        system, plainSystem: loopPlainSystem, model: target.model, thinkingLevel: chatThinkingLevelFor(toolContext, target, iter, continuedLevelOptions(providerContinuation)), captureCallId, iterationIndex: iter,
         canonicalMessages: currentMessages,
         unsyncedEntries: currentMessages, continuation: null,
-        tools: availableTools, maxTokens,
+        tools: availableTools, maxTokens: turnMaxTokens,
       })
     }
     syncedHistoryLength = currentMessages.length
@@ -2301,9 +2328,10 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         retriedChecks.add('providerTruncation')
         bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterations')
         toolContext._pendingFreeformRetryReason = 'providerTruncation'
+        turnMaxTokens = maxTokens + Math.max(maxTokens, Number(turn.usage?.outputTokens) || 0)
         currentMessages.push({
           role: 'user',
-          content: 'Your last reply was cut off by the token limit before it finished — any tool call or claim in it may be incomplete, so it was discarded. Give a shorter, complete answer this time.'
+          content: 'Your last reply was cut off by the token limit before it finished — any tool call or claim in it may be incomplete, so it was discarded. The limit has been raised; give the complete reply again.'
         })
         continue
       }
@@ -2313,7 +2341,7 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
       // shipped/executed as if it were a normal, complete turn. One retry is already spent, so
       // stop here rather than risk shipping content that may be silently incomplete twice over.
       bumpFreeformDiagnostic(toolContext, 'providerTruncatedIterationsUnrecovered')
-      return { answer: freeformToolLoopFallbackAnswer(toolContext), savedCorrections }
+      return { answer: freeformToolLoopFallbackAnswer(toolContext, { reason: 'truncation' }), savedCorrections }
     }
 
     // A turn with no text and no tool call (live thread_1791415285620: Gemini spent 574 output
@@ -2348,6 +2376,20 @@ export async function askStylistWithTools({ system, messages, maxTokens = 1500, 
         }
         const extracted = extractToolResultImages(result)
         currentMessages.push({ role: 'tool_result', toolCallId: tc.id, name: tc.name, text: extracted.textResult, images: extracted.images })
+      }
+      // A turn can end here, on a card and her note or on an options batch, with this interaction still owed
+      // these results. They are kept with the stored conversation and sent first on the next turn, so it can
+      // continue (live 2026-11-12: ending on her note made every next turn rebuild, last_turn_unfinished). If
+      // the loop goes on instead, the next call replaces this state.
+      if (toolContext.stylistContinuationState && toolContext.stylistContinuationState.interaction_id === providerContinuation) {
+        toolContext.stylistContinuationState = {
+          ...toolContext.stylistContinuationState,
+          complete: true,
+          pending_results: turn.toolCalls.map(tc => {
+            const entry = currentMessages.find(m => m.role === 'tool_result' && m.toolCallId === tc.id)
+            return { toolCallId: tc.id, name: tc.name, text: String(entry?.text || '').slice(0, PENDING_RESULT_MAX_CHARS) }
+          }),
+        }
       }
       if (toolContext.atomicMultiLookCompleted) {
         return { answer: boundedAtomicMultiLookResponse(toolContext), savedCorrections }

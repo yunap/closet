@@ -479,6 +479,104 @@ from the adapter's first version on.
 - Speed is unlikely to change much: latency tracks output tokens (correlation 0.96), not input. Cost per continued
   call rises slightly, since the system prompt is resent; most of it should come from the cache.
 
+## The single-outfit guidance, restored (2026-11-12)
+
+**Owner:** the boss's-dinner answer on the one stylist (thread_1794470249476) was worse than the single-outfit
+route's (thread_1794365607999).
+
+**What the old answer had:**
+- a complete look with a coat for the way there;
+- a reason and styling instructions on the card;
+- two worked jeans outfits on the doubt.
+
+**The cause.** Retiring the single-outfit route carried over two parts of its prompt (`readTheSituation`,
+`HOW_A_DAY_AWAY_WORKS`) and dropped the rest:
+- the wearability contract, with "layering applies to travel to a venue";
+- the 8–12-piece visual workbench;
+- the rules for the note;
+- `why_it_works` as a required field.
+
+None of these was in the full stylist's prompt.
+
+**Restored.**
+- `ONE_OUTFIT_GUIDANCE` (`prompts.js`) goes in the full stylist's stable prompt, after the situation read.
+- `why_it_works` is required on `propose_outfit`.
+- A one-card proposal with a note now ends the turn with that note on a new request too, unless the outfit
+  check left notes for her to answer. As on the single-outfit route, this saves the closing call.
+
+**Live recheck** (entries 2 and 3, 3.7 Flash, low thinking, $0.37):
+- **Better:** the boss's-dinner card now carries a cream trench "for the arrival and departure transit",
+  tweed trousers, boots and earrings, with a reason and styling instructions. The hosting options give
+  hosting reasons (plating food, pouring drinks).
+- **Not yet in that run:** the reply showed only the note's first paragraph, because the note was still
+  dropped on new requests. That is what the ending change fixes, offline only.
+- **The doubt failed again** ("You can definitely wear jeans!"). At low thinking on 3.7 Flash it has passed
+  2 of 4; the two runs at medium passed.
+
+**Rerun of entry 3 after the note change** ($0.14):
+- The reply is her full note: what the occasion asks, the pick and why, boots that clear the hems, and the trench
+  for evening transit.
+- The turn took 22 s with three calls and no closing call. Its first call read 95% from the cache.
+- **New fault:** ending on the note left the turn's interaction owed the proposal's result, so the follow-up
+  rebuilt (`last_turn_unfinished`).
+  - Fixed offline: the owed results are kept with the stored conversation (`pending_results`) and sent first on
+    the next turn, as function results ahead of the new message.
+  - This also covers turns that end on an options batch.
+- The doubt failed again ("Jeans can absolutely work"). At low thinking it is now 2 of 5.
+
+## Medium thinking on each turn's first call (2026-11-12)
+
+The chat now thinks at medium on a turn's first call (`CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL`) and at low after
+it. Live test: entries 1 and 3, twice each, 3.7 Flash, about $1.04.
+
+- **Breakfast looks are back** in both at-home plans (thread_1794470249474 had lost them). Run 2 gives Friday and
+  Saturday cooking looks with the reason; run 1 gives a Saturday breakfast look and explains Friday's washable
+  market look.
+- **The doubt is still not fixed:** run 1 failed ("Jeans can absolutely work…"); run 2 named the cost but took no
+  stance. It passed when the first pick was a knit dress and failed when it was a silk blouse with trousers, so
+  the pick may matter more than the thinking level.
+- **Follow-ups continued** with the owed results sent first. But only about 55.7k of 132–145k input tokens came
+  from the cache, about the size of the system prompt alone. Not yet explained.
+- **One turn failed** (run 1, the boss's dinner): "I ran out of steps before I could finish this one". Its third
+  and fourth calls stopped at the output cap (1,496 of 1,500 tokens). At low thinking `callGeminiTurn` gave no
+  headroom over `maxTokens`, but low on 3.7 still thinks, and the thinking counts against the cap. The first call
+  at medium had the 4,000-token headroom, so the failure appeared only after the split.
+  - **Fixed:** low-thinking calls now get 2,500 tokens of headroom
+    (`GEMINI_STYLIST_LOOP_LOW_THINKING_HEADROOM_TOKENS`). Unused tokens are not billed. Covered by
+    `test/gemini_call_turn.test.js`.
+  - **The retry after a cut-off now gets more room.** It used to run at the same cap with "give a shorter answer",
+    which cannot help when thinking used the room; in run 1 the retry was cut off at 1,496 tokens too. The retry now
+    gets `maxTokens` plus the larger of `maxTokens` and what the cut-off call wrote.
+  - **A turn cut off twice now says so.** It used to fall back to "my outfit proposals kept getting rejected by
+    validation", which was false. It now says the reply was cut off twice and asks her to ask again
+    (`TRUNCATED_TURN_FALLBACK_ANSWER`).
+  - **Rerun live** (entry 3, $0.30): the boss's-dinner turn finished. Its third and fourth calls wrote 1,702 and
+    3,209 output tokens, so both would have been cut at the old 1,500 cap.
+  - In that run she dressed the dinner from the packed Portland suitcase and said so. That is the open-plans rule
+    working: the test copy holds a Portland trip planned for Nov 12–15, which covers Friday the 13th.
+  - Doubt: "The black trousers were my conservative pick… dark, clean jeans cost you virtually nothing", and a
+    jeans swap card. She takes a stance and gives the reason she changed it (pass).
+- **Why follow-ups cached only part of their input:** Gemini keeps its cache separately for each thinking level.
+  In the rerun's calls (ai_call_log 3560–3573), every call read the previous call's whole input from the cache,
+  except where the level changed:
+  - the first turn's second call (low after medium) read 0;
+  - the follow-up's first call (medium after low) read 55.7k of 143k, which is what the first turn's medium call had
+    left;
+  - the follow-up's second call (low) read 136.8k, all of the previous turn's history.
+
+  That one call cost 7.4¢ against about 2¢ fully cached.
+  - **Fixed:** a turn that continues the stored conversation now thinks at low from its first call, so its history
+    reads from the cache. New conversations, and turns that rebuild, still start at medium, which is where the
+    breakfast looks came back.
+  - On the doubt line the level has made no clear difference (low 2 of 5; medium fail, partial, pass).
+  - **Rerun live** (entry 3, $0.18):
+    - The follow-up's first call read 132k of 137k from the cache (96%) and cost 1.7¢ against 7.4¢. The whole
+      follow-up turn cost 5.1¢ against 11.2¢.
+    - The first turn's second call (low after medium) still read only the cached system prompt, as expected.
+    - The first answer: cashmere turtleneck, tweed trousers, flats and the wool overcoat on the card.
+    - Doubt (low): "You can certainly wear jeans", with the risk named and dark denim swapped in, but no word on
+      whether she still prefers her pick (partial).
+
 ## Decisions (2026-11-11)
 
 The owner's direction: these conversations should be as good as they can be, and a quick question gets

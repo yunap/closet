@@ -364,7 +364,7 @@ test('two consecutive truncated turns do not silently return a blank answer', as
     toolContext: { allowedToolNames: [], skipFreeformOutputChecks: true, providerOverride: { provider: 'gemini' } },
   })
   assert.notEqual(result.answer, '')
-  assert.match(result.answer, /ran out of steps/)
+  assert.match(result.answer, /cut off twice/)
 })
 
 test('two consecutive truncated turns do not ship the second one\'s partial prose as a complete answer', async () => {
@@ -384,5 +384,41 @@ test('two consecutive truncated turns do not ship the second one\'s partial pros
     toolContext: { allowedToolNames: [], skipFreeformOutputChecks: true, providerOverride: { provider: 'gemini' } },
   })
   assert.notEqual(result.answer, 'Wear the navy sweater with')
-  assert.match(result.answer, /ran out of steps/)
+  assert.match(result.answer, /cut off twice/)
+})
+
+// 2026-11-12 live run: a low-thinking 3.7 call capped at maxTokens (1500) was cut off at 1,496 output tokens twice in a
+// row, because thinking counts against max_output_tokens, and the turn ended on the "ran out of steps" fallback.
+test('a low-thinking call still gets output headroom for its thinking', async () => {
+  const done = { id: 'interaction_h', status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'text', text: 'ok' }] }], usage: {} }
+  queueGeminiResponse(done)
+  queueGeminiResponse(done)
+  await callGeminiTurn(baseArgs({ thinkingLevel: 'low', maxTokens: 1500 }))
+  await callGeminiTurn(baseArgs({ thinkingLevel: 'medium', maxTokens: 1500 }))
+  const [low, medium] = requestsSeen.map(r => r.generation_config)
+  assert.equal(low.thinking_level, 'low')
+  assert.ok(low.max_output_tokens > 1500, `low got ${low.max_output_tokens}`)
+  assert.ok(medium.max_output_tokens >= low.max_output_tokens)
+})
+
+// 2026-11-12: the retry after a cut-off ran at the same cap and was cut off again, because thinking, not the reply,
+// had used the room. The retry now gets a higher cap.
+test('the retry after a cut-off reply gets a higher output cap', async () => {
+  queueGeminiResponse({
+    id: 'interaction_cap1', status: 'incomplete', steps: [], output_text: '',
+    usage: { total_tokens: 3000, total_input_tokens: 1000, total_output_tokens: 2000 },
+  })
+  queueGeminiResponse({
+    id: 'interaction_cap2', status: 'completed',
+    steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Wear the navy sweater.' }] }],
+    usage: { total_tokens: 1100, total_input_tokens: 1000, total_output_tokens: 100 },
+  })
+  const result = await askStylistWithTools({
+    system: 'system prompt',
+    messages: [{ role: 'user', content: 'what should I wear?' }],
+    toolContext: { allowedToolNames: [], skipFreeformOutputChecks: true, providerOverride: { provider: 'gemini' } },
+  })
+  assert.equal(result.answer, 'Wear the navy sweater.')
+  const [first, retry] = requestsSeen.map(r => r.generation_config.max_output_tokens)
+  assert.ok(retry > first, `retry cap ${retry} should exceed ${first}`)
 })
