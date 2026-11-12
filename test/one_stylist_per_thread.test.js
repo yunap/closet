@@ -159,10 +159,13 @@ test('a planner result states the dates it planned for, and names the range the 
 
 // 2026-11-11: low thinking for the chat on 3.7 Flash; medium stays for Flash-Lite (where low meant no reasoning)
 // and for every caller of the loop that is not /ask.
-test('the chat stylist thinks at low on 3.7 Flash only', async () => {
-  const { chatThinkingLevelFor, CHAT_STYLIST_THINKING_LEVEL } = await import('../styling-engine/provider.js')
+test('the chat stylist on 3.7 Flash thinks at medium on a turn\'s first call and low after it, and only there', async () => {
+  const { chatThinkingLevelFor, CHAT_STYLIST_THINKING_LEVEL, CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL } = await import('../styling-engine/provider.js')
   assert.equal(CHAT_STYLIST_THINKING_LEVEL, process.env.CHAT_STYLIST_THINKING_LEVEL || 'low')
-  assert.equal(chatThinkingLevelFor({ continueThread: true }, { provider: 'gemini', model: 'gemini-3.7-flash' }), CHAT_STYLIST_THINKING_LEVEL)
+  assert.equal(CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL, process.env.CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL || 'medium')
+  assert.equal(chatThinkingLevelFor({ continueThread: true }, { provider: 'gemini', model: 'gemini-3.7-flash' }, 0), CHAT_STYLIST_FIRST_CALL_THINKING_LEVEL)
+  assert.equal(chatThinkingLevelFor({ continueThread: true }, { provider: 'gemini', model: 'gemini-3.7-flash' }, 1), CHAT_STYLIST_THINKING_LEVEL)
+  assert.equal(chatThinkingLevelFor({ continueThread: true }, { provider: 'gemini', model: 'gemini-3.7-flash' }, 4), CHAT_STYLIST_THINKING_LEVEL)
   assert.equal(chatThinkingLevelFor({ continueThread: true }, { provider: 'gemini', model: 'gemini-3.5-flash-lite' }), '', 'Flash-Lite keeps the loop default')
   assert.equal(chatThinkingLevelFor({}, { provider: 'gemini', model: 'gemini-3.7-flash' }), '', 'callers other than /ask keep the loop default')
   assert.equal(chatThinkingLevelFor({ continueThread: true }, { provider: 'anthropic', model: 'claude-sonnet-4-6' }), '')
